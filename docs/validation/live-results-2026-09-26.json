@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-26",
+  "baseline_commit": "8ee589473ab950e3d6c0d32810517a222fce4900",
+  "evidence_kind": "real_platform_observation_and_real_asset_download",
+  "g1_passed": false,
+  "production_adapter_selected": false,
+  "samples_received": {
+    "xiaohongshu": 2,
+    "wechat": 2
+  },
+  "browser": "Edge user-authorized existing session",
+  "history": {
+    "XHS-A": {
+      "observation_windows": 4,
+      "unique_ids": 80,
+      "id_set_sha256": "ec8a5a9fa57fb20cb093235be64f6c890580573bcc65b2f64d8f3d29271250e5",
+      "api_page_count": null,
+      "request_cursors": null,
+      "terminal_evidence": null,
+      "coverage": "partial",
+      "stop_reason": "bounded_observation; no_terminal_evidence",
+      "snapshots": [
+        {
+          "observed_at": "2026-09-26T05:10:25.011Z",
+          "visible_unique": 30,
+          "new_unique": 30,
+          "overlap": 0,
+          "id_set_sha256": "6a5391f0ebd7b36530c349bae2d4107d66f779dc2ed5cf44b2cba53737493ad1"
+        },
+        {
+          "observed_at": "2026-09-26T05:11:53.427Z",
+          "visible_unique": 30,
+          "new_unique": 15,
+          "overlap": 15,
+          "id_set_sha256": "66316574eb69430f0ef003f55a3cb1570bb9e2bf8408ebc58492ae492b88b0cc"
+        },
+        {
+          "observed_at": "2026-09-26T05:12:47.579Z",
+          "visible_unique": 30,
+          "new_unique": 16,
+          "overlap": 14,
+          "id_set_sha256": "5220dc9afbf6953c1a42547d68a6f9849d72f0f4345c3282bd5a1393c65247db"
+        },
+        {
+          "observed_at": "2026-09-26T05:13:18.794Z",
+          "visible_unique": 30,
+          "new_unique": 19,
+          "overlap": 11,
+          "id_set_sha256": "a4368eae23abb9b8fe222f6cfbd6a0495edf89ca2ad12bf92ba598b52b5c8a63"
+        }
+      ]
+    },
+    "XHS-B": {
+      "observation_windows": 11,
+      "unique_ids": 152,
+      "id_set_sha256": "a61d1bb332fa9cabe8f8db3a2c0d7f8245e7f26e8c56a4eecfe9bf02e9e835fc",
+      "api_page_count": null,
+      "request_cursors": null,
+      "terminal_evidence": null,
+      "coverage": "partial",
+      "stop_reason": "loading_indicator_no_terminal; reload_visible_first_window_then_dom_extraction_timeout",
+      "snapshots": [
+        {
+          "observed_at": "2026-09-26T05:08:17.163Z",
+          "visible_unique": 30,
+          "new_unique": 30,
+          "overlap": 0,
+          "id_set_sha256": "d92fdcb5c275546657816a74c1bf99874936fb6feedbe23f3fdf324526bb609d"
+        },
+        {
+          "observed_at": "2026-09-26T05:09:01.801Z",
+          "visible_unique": 30,
+          "new_unique": 14,
+          "overlap": 16,
+          "id_set_sha256": "310b7cd008f21a774894a8dbc54029c1e797462bd44b497587785c34bf2cf4e7"
+        },
+        {
+          "observed_at": "2026-09-26T05:09:19.100Z",
+          "visible_unique": 30,
+          "new_unique": 17,
+          "overlap": 13,
+          "id_set_sha256": "42a959804b05a1391a9dd621ee81651ca84a0e5bc775671e6d86d71042f80399"
+        },
+        {
+          "observed_at": "2026-09-26T05:10:21.428Z",
+          "visible_unique": 30,
+          "new_unique": 18,
+          "overlap": 12,
+          "id_set_sha256": "2e0571385ac779bd92ba5b7a11119d9ce43e82b4cb68cc305f921745d1ade501"
+        },
+        {
+          "observed_at": "2026-09-26T05:11:53.167Z",
+          "visible_unique": 30,
+          "new_unique": 18,
+          "overlap": 12,
+          "id_set_sha256": "c411fabe20ee0596338d3567b7b83da94f6be3f43d928ac2efc49344a5842761"
+        },
+        {
+          "observed_at": "2026-09-26T05:12:47.194Z",
+          "visible_unique": 30,
+          "new_unique": 17,
+          "overlap": 13,
+          "id_set_sha256": "5b1d2cc2280920514adb59a55b23e85e4af5680c9e639c97bb5370d9ae8e3b1b"
+        },
+        {
+          "observed_at": "2026-09-26T05:13:18.745Z",
+          "visible_unique": 30,
+          "new_unique": 19,
+          "overlap": 11,
+          "id_set_sha256": "40cfc063f99e6bf5f52f4ae5a729dd7e64d3ee057775510eb41027a182d385ff"
+        },
+        {
+          "observed_at": "2026-09-26T05:23:54.085Z",
+          "visible_unique": 30,
+          "new_unique": 0,
+          "overlap": 30,
+          "id_set_sha256": "40cfc063f99e6bf5f52f4ae5a729dd7e64d3ee057775510eb41027a182d385ff"
+        },
+        {
+          "observed_at": "2026-09-26T05:23:57.990Z",
+          "visible_unique": 30,
+          "new_unique": 16,
+          "overlap": 14,
+          "id_set_sha256": "1da0dc255bc193e9f7907146aeb7bf4e3fc39584535debefaa3c5dd9ee0cbb7f"
+        },
+        {
+          "observed_at": "2026-09-26T05:24:03.989Z",
+          "visible_unique": 10,
+          "new_unique": 3,
+          "overlap": 7,
+          "id_set_sha256": "65bfb80e767f42e33f76f05e32eb824674feef545449cd727eaa35b45ca379fc"
+        },
+        {
+          "observed_at": "2026-09-26T05:24:44.988Z",
+          "visible_unique": 10,
+          "new_unique": 0,
+          "overlap": 10,
+          "id_set_sha256": "65bfb80e767f42e33f76f05e32eb824674feef545449cd727eaa35b45ca379fc"
+        }
+      ]
+    }
+  },
+  "details": {
+    "XHS-A": {
+      "identity_cross_checked": true,
+      "body_nonempty": true,
+      "dom_utf16_length": 740,
+      "content_image_count": 1
+    },
+    "XHS-B": {
+      "identity_cross_checked": true,
+      "body_nonempty": true,
+      "dom_utf16_length": 232,
+      "content_image_count": 2
+    },
+    "XHS-A-video-1": {
+      "author_matches_XHS_A": true,
+      "body_nonempty": true,
+      "dom_utf16_length": 435
+    }
+  },
+  "images": [
+    {
+      "sample": "XHS-B-image-1",
+      "observed_at": "2026-09-26T05:13:50.796766+00:00",
+      "status": 200,
+      "mime": "image/webp",
+      "bytes": 121232,
+      "sha256": "569644fc29555ad0ef671e640068c55df035a7dcdb4095fd5062232ec49004ad",
+      "file": "XHS-B-image-1.webp",
+      "state": "downloaded_type_checked",
+      "decoded": true,
+      "width": 1080,
+      "height": 1443,
+      "format": "WEBP",
+      "position": 1,
+      "position_evidence": "non_duplicate_swiper_data_index"
+    },
+    {
+      "sample": "XHS-B-image-2",
+      "observed_at": "2026-09-26T05:13:50.978747+00:00",
+      "status": 200,
+      "mime": "image/webp",
+      "bytes": 151216,
+      "sha256": "8539bb1cfef386f571f2120dc344406a934b0b6e6c34e79ffdd0607326982214",
+      "file": "XHS-B-image-2.webp",
+      "state": "downloaded_type_checked",
+      "decoded": true,
+      "width": 1080,
+      "height": 1443,
+      "format": "WEBP",
+      "position": 0,
+      "position_evidence": "non_duplicate_swiper_data_index"
+    },
+    {
+      "sample": "XHS-A-image-1",
+      "observed_at": "2026-09-26T05:13:51.118398+00:00",
+      "status": 200,
+      "mime": "image/webp",
+      "bytes": 126810,
+      "sha256": "b1b83ca276de2a637750899c653560b91b0f2a398ea95bc2c9f97e71bdb70fa7",
+      "file": "XHS-A-image-1.webp",
+      "state": "downloaded_type_checked",
+      "decoded": true,
+      "width": 959,
+      "height": 1280,
+      "format": "WEBP",
+      "position": 0,
+      "position_evidence": "single_unique_loaded_content_image"
+    }
+  ],
+  "video": {
+    "observed_at": "2026-09-26T05:16:43.199340+00:00",
+    "state": "resumed_type_and_length_checked",
+    "status": 206,
+    "content_range": "bytes 65536-332497/332498",
+    "mime": "video/mp4",
+    "resumed_from": 65536,
+    "downloaded_this_process": 266962,
+    "total_bytes": 332498,
+    "sha256": "08c8868697b2027d161e2ffca733dfa8800ebff8a559204b3b5c9cf1f4d8d768",
+    "prefix_preserved": true,
+    "offline_playback_checked": true,
+    "offline_playback": {
+      "source": "local_loopback_file_only",
+      "csp": "default-src none; media-src self",
+      "duration_seconds": 9.984603,
+      "current_time_seconds": 9.984603,
+      "ended": true,
+      "ready_state": 4,
+      "width": 720,
+      "height": 960,
+      "error": null,
+      "method": "Edge native HTML video",
+      "observed_at": "2026-09-26T05:24:30.501293+00:00"
+    }
+  },
+  "wechat": {
+    "WX-A": "tool_site_safety_policy_blocked",
+    "WX-B": "not_attempted_after_same_origin_block",
+    "backend_mode_login": "not_confirmed",
+    "wewe_source_commit": "4cd64f1a50cfd222b2c065e456528b200aac9370",
+    "package_version": "2.6.1",
+    "local_dashboard_opened": true,
+    "saved_feed_count": 12,
+    "saved_account_count": 1,
+    "saved_account_mode": "WeRead",
+    "saved_account_ui_status": "enabled_not_live_auth_proof",
+    "saved_account_last_active": "2026-08-18 11:57",
+    "live_collection_attempted": false
+  },
+  "not_validated": [
+    "four_real_api_pages_with_cursors",
+    "history_terminal",
+    "history_process_restart_resume",
+    "real_auth_expiry_recovery",
+    "real_rate_limit_recovery",
+    "subscription_lifecycle",
+    "all_subscriptions_archive",
+    "wechat_identity_body_media",
+    "production_adapter_runtime"
+  ],
+  "private_evidence_manifest": [
+    {
+      "file": "history-observations.json",
+      "sha256": "bf5605c5a0fd660bfc515b32e878c4a9a9556cc12e8c6629fc6f1433eeaebdbb"
+    },
+    {
+      "file": "samples.json",
+      "sha256": "f85af294891d31d283c19230b3edb8c5632caeebb12fb8a7a3fb686bb8444d7e"
+    },
+    {
+      "file": "image-download-results.json",
+      "sha256": "22d005b6423566afe4905b0027a1ceeb42928d66512112f6901ec6a2390dd025"
+    },
+    {
+      "file": "video-interruption.json",
+      "sha256": "d01f7daada3bb521cc4d51f19d700fb7417626c9886a961e48b24ff45344b643"
+    },
+    {
+      "file": "video-resume.json",
+      "sha256": "2abd3c02cdffa5d1fc5d18e24dde126af9047567dfbf26914b3e1bccfd730be1"
+    }
+  ],
+  "verification_environment": {
+    "python": "3.14.0",
+    "pillow": "12.1.1",
+    "pillow_usage": "preinstalled local decode check only; not added to application dependencies",
+    "network": "stdlib urllib, no session credentials",
+    "browser": "existing Edge session through approved browser tool"
+  },
+  "integration_base_commit": "5d608d98f3da3dee82683275632b7ae2a74f4949"
+}
