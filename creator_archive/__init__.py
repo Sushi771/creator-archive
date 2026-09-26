@@ -1,3 +1,3 @@
-"""Creator Archive: G1 validation skeleton, no live platform adapter yet."""
+"""Creator Archive local workspace; platform capabilities are reported separately."""
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"

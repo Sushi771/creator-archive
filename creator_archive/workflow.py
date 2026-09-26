@@ -283,10 +283,17 @@ class ArchiveWorkflow:
                 now: float | None = None) -> dict:
         """Scan a fixed subscription snapshot. A failed author does not stop others."""
         batch_id, runs = self._batch(mode, batch_id, include_paused)
-        now = time.time() if now is None else now
+        fixed_now = now
+        now = time.time() if fixed_now is None else fixed_now
         for run in runs:
             run_id = run["id"]
-            if run["state"] == "succeeded" or run["retry_at"] > now:
+            current_time = time.time() if fixed_now is None else fixed_now
+            if run["state"] == "succeeded" or run["retry_at"] > current_time:
+                continue
+            with self.connect() as db:
+                platform_retry = db.execute("SELECT coalesce(max(retry_at),0) FROM runs WHERE platform=?", (run["platform"],)).fetchone()[0]
+            if platform_retry > current_time:
+                self._stop(run_id, "rate_limited", "rate_limited", platform_retry)
                 continue
             if run["state"] == "needs_login" and not login_confirmed:
                 continue
@@ -308,7 +315,8 @@ class ArchiveWorkflow:
                     self._commit_page(run_id, current, page)
                 except AdapterFailure as error:
                     state = error.category if error.category in {"needs_login", "rate_limited"} else "partial"
-                    retry_at = now + max(error.retry_after, 5) if state == "rate_limited" else 0
+                    failure_time = time.time() if fixed_now is None else fixed_now
+                    retry_at = failure_time + max(error.retry_after, 5) if state == "rate_limited" else 0
                     self._stop(run_id, state, error.category, retry_at)
                     break
                 except ValueError as error:
@@ -449,8 +457,45 @@ class ArchiveWorkflow:
                                                json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
                 corpus_path = _managed_write(base / "corpus.jsonl",
                                              "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in corpus).encode("utf-8"))
+                # A complete author index is independent of the interactive API's
+                # page size. Link actual managed filenames, including hash-suffixed
+                # replacements when an earlier export was edited by the user.
+                index_rows = []
+                for item in manifest_items:
+                    label = escape(item["item_id"])
+                    article = item["files"].get("index.html")
+                    if article:
+                        href = escape(quote(Path(article).as_posix(), safe="/"), quote=True)
+                        entry = f'<a href="{href}">{label}</a> · 正文已保存'
+                    else:
+                        entry = f"{label} · 正文缺失，待补齐"
+                    for asset in item["assets"]:
+                        if asset["state"] != "complete":
+                            continue
+                        local = self.root / "archive" / asset["relative_path"]
+                        href = escape(quote(local.relative_to(base).as_posix(), safe="/"), quote=True)
+                        asset_label = "图片" if asset["kind"] == "image" else "视频"
+                        entry += f' · <a href="{href}">{asset_label} {escape(asset["asset_id"])}</a>'
+                    index_rows.append(f"<li>{entry}</li>")
+                coverage_text = ("已观察到当前可获取范围的明确末页" if
+                                 manifest["coverage"] == "complete_for_accessible_scope" and manifest["terminal_evidence"]
+                                 else "历史覆盖尚未确认，不能据此认为已到末页")
+                index_html = (
+                    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+                    '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                    f'<title>{escape(author["display_name"])} · 作者归档</title></head><body>'
+                    f'<main><h1>{escape(author["display_name"])} · 作者归档</h1>'
+                    f'<p>平台：{escape(platform)} · 作者ID：{escape(author_id)}</p>'
+                    f'<p>已保存 {len(items)} 条作品记录；正文已保存 {len(corpus)} 条，缺失 {len(items) - len(corpus)} 条。</p>'
+                    f'<p>历史覆盖：{coverage_text}。此状态仅针对列表，不代表正文或媒体完整。</p>'
+                    f'<p>媒体预期总数未知；已登记但缺失或校验失败的附件：{missing_assets} 个。</p>'
+                    f'<nav><a href="{escape(quote(manifest_path.name), quote=True)}">归档清单</a> · '
+                    f'<a href="{escape(quote(corpus_path.name), quote=True)}">正文语料 JSONL</a></nav>'
+                    '<h2>全部已保存作品</h2><ol>' + "".join(index_rows) + '</ol></main></body></html>'
+                )
+                index_path = _managed_write(base / "index.html", index_html.encode("utf-8"))
                 result.append({"platform": platform, "author_id": author_id, "items": len(items),
-                               "details": len(corpus), "manifest": str(manifest_path), "corpus": str(corpus_path),
+                               "details": len(corpus), "manifest": str(manifest_path), "corpus": str(corpus_path), "index": str(index_path),
                                "coverage": manifest["coverage"], "missing_registered_assets": missing_assets,
                                "media_coverage": "unknown_expected_count"})
         return {"authors": result, "archive_root": str(self.root / "archive")}

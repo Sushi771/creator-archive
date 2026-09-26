@@ -177,6 +177,51 @@
           "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371"
         }
       ]
+    },
+    {
+      "name": "playwright",
+      "version": "1.58.0",
+      "license": "Apache-2.0",
+      "license_files": [
+        {
+          "path": "playwright-1.58.0.dist-info/licenses/LICENSE",
+          "sha256": "7fab1461b41970ff376f1c9303a637076bfaaeb71cd12dd3a1c44aaf59a1a2b9"
+        },
+        {
+          "path": "playwright/driver/LICENSE",
+          "sha256": "b4c7840e841ab8f14543646bd941d01a459fb0f8ce1249244341b2a63272ca79"
+        },
+        {
+          "path": "playwright/driver/package/LICENSE",
+          "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+        }
+      ]
+    },
+    {
+      "name": "pyee",
+      "version": "13.0.1",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "pyee-13.0.1.dist-info/licenses/LICENSE",
+          "sha256": "1ff556ca206b107f10e1c562ae454d3292e0296c3510eb90eb7f114caee32a66"
+        }
+      ]
+    },
+    {
+      "name": "greenlet",
+      "version": "3.5.6",
+      "license": "MIT AND PSF-2.0",
+      "license_files": [
+        {
+          "path": "greenlet-3.5.6.dist-info/licenses/LICENSE",
+          "sha256": "ab977b654605670319509481ece49198f405a129372ac38c96f51cd96c2f452e"
+        },
+        {
+          "path": "greenlet-3.5.6.dist-info/licenses/LICENSE.PSF",
+          "sha256": "69efa689cc7aec7736236d3039c1d665e4b0c734a5bfea5abf633023abb2fff4"
+        }
+      ]
     }
   ]
 }

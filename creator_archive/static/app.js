@@ -1,44 +1,167 @@
+"use strict";
 const $ = (id) => document.getElementById(id);
-const platformName = {wechat: "公众号", xiaohongshu: "小红书"};
-const stateName = {queued:"待处理",running:"扫描中",succeeded:"模拟历史已遍历",partial:"未完成",needs_login:"需模拟重新登录",rate_limited:"模拟限流冷却",failed:"失败"};
+const platformName = {wechat:"公众号",xiaohongshu:"小红书"};
+const stateName = {queued:"排队中",running:"执行中",succeeded:"任务完成",complete:"已完成",partial:"部分完成",needs_login:"需要登录",rate_limited:"等待冷却",failed:"未完成",blocked:"接入受限",interrupted:"已中断",pending:"待验证",unavailable:"暂不可用"};
+const coverageName = {complete_for_accessible_scope:"已观察到可获取列表末页",scanning:"历史扫描进行中",blocked:"历史扫描受阻",complete:"历史列表已至末页",complete_observed:"历史列表已至末页",partial:"历史列表不完整",unknown:"历史覆盖未知",not_started:"尚未扫描"};
+const modeName = {full:"全部历史",latest:"检查更新",archive:"本地归档",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
-const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常"};
-async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} : {
-    method:"POST", headers:{"Content-Type":"application/json","X-Creator-Archive":"local-validation"}, body:JSON.stringify(body)
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "请求格式无效");
-  return data;
-}
-async function refresh() {
-  const data = await api("/api/status");
-  $("runs").replaceChildren();
-  for (const run of data.runs) {
-    const row = document.createElement("tr");
-    for (const value of [`${platformName[run.platform]} / ${run.author_id}`, `${run.pages} 页`, run.item_count,
-      `${stateName[run.state] || "未完成"}${reasonName[run.reason] ? ` · ${reasonName[run.reason]}` : ""}`, "未实测 / 未实测"]) {
-      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
-    }
-    $("runs").append(row);
+const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
+const ui = {workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:""};
+const num = (v) => Number(v || 0).toLocaleString("zh-CN");
+const nameOf = (p) => platformName[p] || p || "未知平台";
+function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
+function badge(text,tone="") {return node("span",text,`badge ${tone}`);}
+function empty(target,title,description="") {const n=node("div",null,"empty");n.append(node("strong",title));if(description)n.append(node("span",description));target.replaceChildren(n);}
+function notify(text,error=false) {$("feedback").textContent=text;$("feedback").className=`feedback${error?" error":""}`;$("feedback").hidden=false;}
+function formatTime(v) {if(!v)return "";const date=new Date(typeof v==="number"?v*1000:v);return Number.isNaN(date.getTime())?"":date.toLocaleString("zh-CN",{hour12:false});}
+function safeLink(url,label) {if(typeof url!=="string")return null;try{const parsed=new URL(url,location.origin);if(!["http:","https:"].includes(parsed.protocol))return null;const a=node("a",label);a.href=parsed.href;a.target="_blank";a.rel="noopener noreferrer";return a;}catch{return null;}}
+async function api(path,body) {const response=await fetch(path,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json","X-Creator-Archive":"local-validation"},body:JSON.stringify(body)});let data;try{data=await response.json();}catch{throw new Error("本机服务未返回可读取的结果，请检查启动窗口后刷新。");}if(!response.ok){let message=typeof data.detail==="string"?data.detail:data.message;if(!message&&Array.isArray(data.detail))message=data.detail.map(x=>x.msg).join("；");throw new Error(message||`操作未完成（HTTP ${response.status}），已保存资料仍保留，请检查服务后重试。`);}return data;}
+function actionButton(label,action,small=true) {const b=node("button",label,`secondary${small?" small":""}`);b.type="button";b.addEventListener("click",()=>perform(b,action));return b;}
+async function perform(button, action) {
+  if (ui.busy) {
+    notify("上一操作处理中，请等待结果后再操作。已有资料与进度会保留。");
+    return;
   }
-  if (!data.runs.length) {const row=document.createElement("tr");const cell=document.createElement("td");cell.colSpan=5;cell.textContent="尚无模拟任务。运行验证后将在这里显示检查点。";row.append(cell);$("runs").append(row);}
+  ui.busy = true;
+  ui.mutationEpoch += 1;
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "处理中…";
+  try {
+    await action();
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    ui.busy = false;
+    button.disabled = false;
+    button.textContent = original;
+    if (ui.pendingRefresh) {
+      ui.pendingRefresh = false;
+      refresh(true).catch(error => notify(error.message, true));
+    }
+  }
 }
-$("link-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {const r=await api("/api/links/classify",{text:$("link").value});$("link-result").textContent=`${platformName[r.platform]} · ${kindName[r.kind]}。${r.message}${r.candidate_author_id ? `。候选 ID：${r.candidate_author_id}` : ""}`;}
-  catch(error){$("link-result").textContent=error.message;}
-});
-async function runDemo(inject) {
-  $("run-demo").disabled=$("resume").disabled=true;
-  try {await api("/api/demo/run",{inject_failures:inject});await refresh();$("run-result").textContent="模拟执行已返回。请查看逐博主状态；冷却中的任务需到期后再次继续。所有结果均不计入真实 G1。";}
-  catch(error){$("run-result").textContent=error.message;}
-  finally{$("run-demo").disabled=$("resume").disabled=false;}
+function authorBy(platform,id) {return ui.workspace?.subscriptions.find(x=>x.platform===platform&&x.author_id===id);}
+function displayAuthor(platform,id) {return authorBy(platform,id)?.display_name||id||"全部作者";}
+function renderSubscriptions(subscriptions) {$("nav-count").textContent=num(subscriptions.length);const list=$("subscription-list");list.replaceChildren();if(!subscriptions.length){empty(list,"从第一位作者开始","粘贴链接添加订阅，或在「数据与接入」导入已有真实验证资料。");return;}for(const sub of subscriptions){const row=node("article",null,"subscription-row"),info=node("div",null,"author-info"),text=node("div");info.append(node("div",(sub.display_name||sub.author_id||"?").slice(0,1),"avatar"));text.append(node("h3",sub.display_name||sub.author_id),node("div",`${nameOf(sub.platform)} · ${sub.author_id}`,"meta"));const tags=node("div",null,"badges");tags.append(badge(sub.enabled?"订阅中":"已暂停",sub.enabled?"":"neutral"),badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文`,"neutral"));text.append(tags);if(sub.message)text.append(node("p",sub.message,"hint"));info.append(text);const actions=node("div",null,"author-actions");actions.append(actionButton("查看作品",async()=>{ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}),actionButton("全部历史",()=>startJob("full",sub)),actionButton("检查更新",()=>startJob("latest",sub)),actionButton("归档",()=>startJob("archive",sub)),actionButton(sub.enabled?"暂停":"启用",async()=>{await api("/api/subscriptions/toggle",{platform:sub.platform,author_id:sub.author_id,enabled:!sub.enabled});notify(`${sub.display_name||sub.author_id}：已${sub.enabled?"暂停":"启用"}订阅。已有资料保留。`);await refresh(true);}));if(!sub.identity_verified&&sub.platform==="xiaohongshu")actions.append(actionButton("核验作者",async()=>{const result=await api("/api/subscriptions/verify",{platform:sub.platform,author_id:sub.author_id});notify(result.message||"作者核验已返回，请查看身份状态。");await refresh(true);}));if(sub.archive_url){const link=safeLink(sub.archive_url,"打开归档");if(link)actions.append(link);}row.append(info,actions);list.append(row);}}
+function renderJobs(runs) {const list=$("job-list");list.replaceChildren();if(!runs.length){empty(list,"还没有任务","添加作者后获取历史，或将已有作品按作者归档。任务进度会保存在本机。");return;}for(const run of [...runs].sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))){const card=node("article",null,"job-card"),top=node("div",null,"job-top"),title=node("div");title.append(node("h3",`${run.display_name||displayAuthor(run.platform,run.author_id)} · ${modeName[run.mode]||run.mode||"采集任务"}`),node("div",`${nameOf(run.platform)} · 任务 #${run.id}`,"meta"));const tone=["failed","blocked","needs_login","partial","rate_limited","interrupted"].includes(run.state)?"warning":"";top.append(title,badge(run.reason==="validation_import"?"历史观察已导入":stateName[run.state]||run.state||"待处理",tone));const progress=run.mode==="archive"?`本次已导出 ${num(run.item_count)} 个作品记录${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""}`:`本次已保存 ${num(run.pages)} 页 · ${num(run.item_count)} 个 ID${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""} · ${coverageName[run.coverage]||"历史覆盖未知"}`;card.append(top,node("p",progress,"job-progress"));if(run.message||run.reason||run.next_step){const issue=node("div",null,"job-issue");issue.append(node("p",run.message||reasonName[run.reason]||`原因：${run.reason||"尚未确定"}`));if(run.next_step)issue.append(node("p",`下一步：${run.next_step}`));card.append(issue);}const bottom=node("div",null,"job-bottom");bottom.append(node("span",formatTime(run.updated_at)?`更新于 ${formatTime(run.updated_at)}`:"进度已持久保存"));const actions=node("div",null,"actions");if(run.can_resume)actions.append(actionButton("从检查点继续",async()=>{await api(`/api/jobs/${encodeURIComponent(run.id)}/resume`,{});notify("已请求继续任务，成功页和已有资料会复用。请查看任务状态。");await refresh(true);}));const archiveUrl=run.archive_url||run.export?.archive_url;if(archiveUrl){const link=safeLink(archiveUrl,"打开归档");if(link)actions.append(link);}for(const author of run.export?.authors||[]){const label=displayAuthor(author.platform,author.author_id);for(const [url,title] of [[author.manifest_url,`${label} · 清单`],[author.corpus_url,`${label} · 正文语料`]]){const link=safeLink(url,title);if(link)actions.append(link);}}bottom.append(actions);card.append(bottom);list.append(card);}}
+function renderPlatforms(platforms) {const list=$("platform-list");list.replaceChildren();for(const p of platforms){const card=node("article",null,"platform-card"),heading=node("h3",nameOf(p.platform));heading.append(badge(p.status==="experimental"?"实验接入":p.available?"接入可用":"接入未完成",p.status==="experimental"||!p.available?"warning":""));card.append(heading,node("p",p.message||"尚无可验证的接入状态。"));if(p.platform==="xiaohongshu"){const actions=node("div",null,"actions");actions.append(actionButton("打开专用登录浏览器",async()=>{const result=await api("/api/platforms/xiaohongshu/login",{});notify(result.message||"已请求打开专用浏览器，请在浏览器中自行登录，再从检查点继续任务。");await refresh();}));card.append(actions);}list.append(card);}if(!platforms.length)empty(list,"暂无平台状态","请刷新本机服务。");}
+function renderFilters(subscriptions) {const selected=ui.filter;$("filter-author").replaceChildren(new Option("全部作者",""));for(const sub of subscriptions)$("filter-author").append(new Option(`${sub.display_name||sub.author_id} · ${nameOf(sub.platform)}`,`${sub.platform}|${sub.author_id}`));$("filter-author").value=selected;if($("filter-author").value!==selected){ui.filter="";ui.offset=0;}}
+function dataSignature(value) {
+  // Timestamp-only changes must not replace focused or hovered action buttons.
+  return JSON.stringify(value, (key, data) => key === "updated_at" ? undefined : data);
 }
-$("run-demo").onclick=()=>runDemo(true);
-$("resume").onclick=()=>runDemo(false);
-$("refresh").onclick=()=>refresh().catch(e=>$("run-result").textContent=e.message);
-$("theme").onchange=()=>{document.documentElement.dataset.theme=$("theme").value;localStorage.setItem("creator-archive-theme",$("theme").value);};
-$("theme").value=localStorage.getItem("creator-archive-theme") || "system";
-document.documentElement.dataset.theme=$("theme").value;
-refresh().catch(e=>$("run-result").textContent=e.message);
+async function refresh(forceItems = false, background = false) {
+  if (ui.refreshPromise) {
+    if (background) return ui.refreshPromise;
+    // A user action needs a snapshot captured after the mutation, not an older poll.
+    try { await ui.refreshPromise; } catch {}
+    return refresh(forceItems, background);
+  }
+  if (background && ui.busy) {
+    ui.pendingRefresh = true;
+    return;
+  }
+  const epoch = ui.mutationEpoch;
+  const request = (async () => {
+    try {
+      const w = await api("/api/workspace");
+      if (epoch !== ui.mutationEpoch || (background && ui.busy)) {
+        ui.pendingRefresh = true;
+        return;
+      }
+      w.subscriptions = w.subscriptions || [];
+      w.runs = w.runs || [];
+      ui.workspace = w;
+      $("stat-subscriptions").textContent = num(w.stats?.subscriptions ?? w.subscriptions.length);
+      $("stat-items").textContent = num(w.stats?.items);
+      $("stat-details").textContent = num(w.stats?.details);
+      $("stat-attention").textContent = num(w.runs.filter(r => ["failed", "blocked", "needs_login", "rate_limited", "partial", "interrupted"].includes(r.state)).length);
+      const subscriptionsSignature = dataSignature(w.subscriptions);
+      const runsSignature = dataSignature(w.runs);
+      const platformsSignature = dataSignature(w.platforms || []);
+      if (subscriptionsSignature !== ui.subscriptionsSignature) {
+        renderSubscriptions(w.subscriptions);
+        renderFilters(w.subscriptions);
+        ui.subscriptionsSignature = subscriptionsSignature;
+      }
+      if (runsSignature !== ui.runsSignature) {
+        renderJobs(w.runs);
+        ui.runsSignature = runsSignature;
+      }
+      if (platformsSignature !== ui.platformsSignature) {
+        renderPlatforms(w.platforms || []);
+        ui.platformsSignature = platformsSignature;
+      }
+      $("data-dir").textContent = w.data_dir || "未提供目录";
+      $("archive-dir").textContent = w.archive_dir || "首次归档后生成";
+      $("connection").textContent = "本机服务已连接 · 数据已持久保存";
+      $("connection-dot").classList.remove("offline");
+      $("updated").textContent = `更新 ${new Date().toLocaleTimeString("zh-CN", {hour12:false})}`;
+      const itemSignature = JSON.stringify([w.stats?.items, w.stats?.details, w.stats?.assets, w.subscriptions.map(sub => [sub.platform, sub.author_id])]);
+      if (forceItems || itemSignature !== ui.itemsSignature) {
+        const loaded = await loadItems(() => epoch === ui.mutationEpoch && (!background || !ui.busy));
+        if (loaded !== false) ui.itemsSignature = itemSignature;
+      }
+      // A fresh foreground snapshot also fulfils a poll deferred during this action.
+      ui.pendingRefresh = epoch !== ui.mutationEpoch || (background && ui.busy);
+    } catch (error) {
+      $("connection").textContent = "连接已中断 · 请检查启动窗口，然后刷新";
+      $("connection-dot").classList.add("offline");
+      throw error;
+    }
+  })();
+  ui.refreshPromise = request;
+  try { await request; }
+  finally { if (ui.refreshPromise === request) ui.refreshPromise = null; }
+}
+async function startJob(mode,sub) {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;}const result=await api("/api/jobs",body);notify(result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);$("jobs").scrollIntoView();}
+async function loadItems(canApply = () => true) {const request=++ui.itemRequest;const params=new URLSearchParams({offset:String(ui.offset),limit:String(ui.limit)});if(ui.filter){const [platform,author_id]=ui.filter.split("|");params.set("platform",platform);params.set("author_id",author_id);}if($("filter-assets").checked)params.set("has_assets","true");const data=await api(`/api/items?${params}`);if(request!==ui.itemRequest||!canApply())return false;ui.total=data.total||0;$("item-count").textContent=`${num(ui.total)} 个作品`;$("page-info").textContent=`第 ${Math.floor(ui.offset/ui.limit)+1} / ${Math.max(1,Math.ceil(ui.total/ui.limit))} 页`;$("prev-page").disabled=ui.offset===0;$("next-page").disabled=ui.offset+ui.limit>=ui.total;const list=$("item-list");list.replaceChildren();if(!data.items?.length){empty(list,$("filter-assets").checked?"没有符合条件的附件作品":"此处还没有作品",$("filter-assets").checked?"可切换作者、取消附件筛选，或导入本机已校验的附件资料。":"导入已有资料或运行可用的历史任务后，作品会显示在这里。");return;}data.items.forEach((item,index)=>{const row=node("article",null,"item-row"),main=node("div",null,"item-main"),title=node("button",item.title||item.item_id,"item-title");title.addEventListener("click",()=>openItem(item).catch(e=>notify(e.message,true)));main.append(title,node("div",`${displayAuthor(item.platform,item.author_id)} · ${nameOf(item.platform)}${item.published_at?` · ${item.published_at}`:""}`,"meta"));row.append(node("span",num(ui.offset+index+1),"item-number"),main,badge(item.detail_state==="complete"?"正文已保存":item.asset_count?`${num(item.asset_count)} 个附件 · 缺正文`:"仅列表记录",item.detail_state==="complete"?"":"warning"),actionButton("查看",()=>openItem(item)));list.append(row);});}
+
+function appendLocalMedia(container, asset) {
+  if (!asset.url && !asset.archive_url) return;
+  let url;
+  try {
+    url = new URL(asset.url || asset.archive_url, location.origin);
+    if (url.origin !== location.origin || !["http:", "https:"].includes(url.protocol)) return;
+  } catch { return; }
+  if (!["image", "video"].includes(asset.kind)) return;
+  const figure = node("figure", null, "local-media");
+  const media = node(asset.kind === "video" ? "video" : "img");
+  const caption = node("figcaption", asset.kind === "video" ? "本机已保存视频 · 点击播放" : "本机已保存图片");
+  if (asset.kind === "video") {
+    media.controls = true;
+    media.preload = "metadata";
+    media.playsInline = true;
+    media.setAttribute("aria-label", `本地视频 ${asset.asset_id || ""}`);
+  } else {
+    media.alt = `本地归档图片 ${asset.asset_id || ""}`;
+    media.loading = "lazy";
+  }
+  media.addEventListener("error", () => {
+    caption.textContent = "此附件无法预览，可能是文件不可用或浏览器不支持该格式。请使用上方「打开附件」检查；已有记录保留。";
+    caption.classList.add("media-error");
+  }, {once:true});
+  media.src = url.href;
+  figure.append(media, caption);
+  container.append(figure);
+}
+
+async function openItem(item) {const result=await api(`/api/items/${encodeURIComponent(item.platform)}/${encodeURIComponent(item.item_id)}`);const data=result.item||result;$("detail-title").textContent=data.title||data.item_id||item.item_id;const content=$("detail-content");content.replaceChildren(node("p",`${displayAuthor(data.platform||item.platform,data.author_id||item.author_id)} · ${nameOf(data.platform||item.platform)}`,"meta"));const tags=node("div",null,"badges");tags.append(badge(data.detail_state==="complete"?"正文已保存":"正文尚未保存",data.detail_state==="complete"?"":"warning"),badge(`本地附件 ${num(data.assets?.length)} 个`,"neutral"),badge("媒体完整性未确认","warning"));content.append(tags);if(data.detail_state==="complete"&&data.detail_text)content.append(node("pre",data.detail_text));else content.append(node("div","正文尚未保存；已有附件（若有）可在下方查看。历史列表覆盖与正文、媒体完整性分开计算。","detail-warning"));const links=node("div",null,"detail-links");for(const [url,label]of [[data.source_url,"查看原始作品"],[data.archive_url,"打开本地归档"]]){const link=safeLink(url,label);if(link)links.append(link);}content.append(links);if(data.assets?.length){content.append(node("h3","已登记本地附件"));for(const asset of data.assets){const entry=node("p",`${asset.kind==="video"?"视频":"图片"} · ${asset.asset_id||"附件"} · ${asset.state==="complete"?"本地文件已验证":"完整性待确认"}`,"meta");const link=safeLink(asset.url||asset.archive_url,"打开附件");if(link)entry.append(document.createTextNode(" · "),link);content.append(entry);appendLocalMedia(content,asset);}}if(!$("item-dialog").open)$("item-dialog").showModal();}
+$("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined});$("link-result").textContent=result.message||"订阅已保存。作者核验与采集能力请查看订阅和平台状态。";notify($("link-result").textContent);await refresh(true);});});
+$("classify").onclick=()=>perform($("classify"),async()=>{if(!$("link").reportValidity())return;const r=await api("/api/links/classify",{text:$("link").value});$("link-result").textContent=`${nameOf(r.platform)} · ${kindName[r.kind]||r.kind}。${r.message||""}${r.candidate_author_id?` 候选作者 ID：${r.candidate_author_id}`:""}`;});
+for(const b of document.querySelectorAll("[data-job]"))b.onclick=()=>perform(b,()=>startJob(b.dataset.job));
+$("refresh").onclick=()=>perform($("refresh"),async()=>{await refresh(true);notify("已刷新本机持久状态。");});
+$("import-validation").onclick=()=>perform($("import-validation"),async()=>{const r=await api("/api/import/validation",{});notify(r.message||"已有验证资料已导入工作区，原件保留。请查看作者、作品以及正文缺失标记。");await refresh(true);$("subscriptions").scrollIntoView();});
+$("filter-assets").onchange=()=>{ui.offset=0;loadItems().catch(e=>notify(e.message,true));};
+$("filter-author").onchange=()=>{ui.filter=$("filter-author").value;ui.offset=0;loadItems().catch(e=>notify(e.message,true));};
+$("prev-page").onclick=()=>{ui.offset=Math.max(0,ui.offset-ui.limit);loadItems().catch(e=>notify(e.message,true));};
+$("next-page").onclick=()=>{if(ui.offset+ui.limit>=ui.total)return;ui.offset+=ui.limit;loadItems().catch(e=>notify(e.message,true));};
+$("close-detail").onclick=()=>$("item-dialog").close();
+$("item-dialog").addEventListener("close",()=>{for(const video of $("detail-content").querySelectorAll("video"))video.pause();});
+$("item-dialog").addEventListener("click",event=>{if(event.target===$("item-dialog")){const r=$("item-dialog").getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)$("item-dialog").close();}});
+async function runDemo(inject) {const result=await api("/api/demo/run",{inject_failures:inject});$("demo-result").textContent="模拟结果，仅用于离线流程验证，不计入真实资料与 G1。冷却任务到期后可继续。";const list=$("demo-runs");list.replaceChildren();for(const r of result.runs||[])list.append(node("div",`${nameOf(r.platform)} / ${r.author_id} · ${num(r.pages)} 页 · ${num(r.item_count)} ID · ${stateName[r.state]||r.state}${r.reason?` · ${reasonName[r.reason]||r.reason}`:""}`,"demo-result-row"));}
+$("run-demo").onclick=()=>perform($("run-demo"),()=>runDemo(true));$("resume-demo").onclick=()=>perform($("resume-demo"),()=>runDemo(false));
+try{$("theme").value=localStorage.getItem("creator-archive-theme")||"system";}catch{}document.documentElement.dataset.theme=$("theme").value;$("theme").onchange=()=>{document.documentElement.dataset.theme=$("theme").value;try{localStorage.setItem("creator-archive-theme",$("theme").value);}catch{}};
+for(const a of document.querySelectorAll(".sidebar nav a"))a.addEventListener("click",()=>{for(const other of document.querySelectorAll(".sidebar nav a"))other.classList.toggle("active",other===a);});
+refresh(true).catch(e=>notify(e.message,true));setInterval(()=>{if(!document.hidden&&!ui.busy)refresh(false,true).catch(()=>{});},4000);
