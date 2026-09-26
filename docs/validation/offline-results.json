@@ -5,7 +5,7 @@
   "g1_passed": false,
   "python": "3.14.0",
   "os": "Windows",
-  "tests_run": 21,
+  "tests_run": 34,
   "failures": 0,
   "errors": 0,
   "skipped": 0,
@@ -30,6 +30,19 @@
     "test_validation.ScanTests.test_timeout_retries_only_failed_page",
     "test_validation.ScanTests.test_transaction_rolls_back_partial_page_on_wrong_author",
     "test_validation.ScanTests.test_unknown_exception_is_not_persisted",
-    "test_validation.ScanTests.test_version_change_cannot_reuse_cursor"
+    "test_validation.ScanTests.test_version_change_cannot_reuse_cursor",
+    "test_workflow.WorkflowTests.test_completed_author_stays_complete_when_adapter_later_unavailable",
+    "test_workflow.WorkflowTests.test_failed_author_and_missing_platform_do_not_stop_other_authors",
+    "test_workflow.WorkflowTests.test_missing_local_asset_is_not_silently_reported_as_available",
+    "test_workflow.WorkflowTests.test_missing_terminal_proof_cannot_mark_author_complete",
+    "test_workflow.WorkflowTests.test_new_process_continues_fixed_batch_from_committed_cursor",
+    "test_workflow.WorkflowTests.test_offline_export_references_local_asset_and_preserves_user_edit",
+    "test_workflow.WorkflowTests.test_padded_wechat_biz_can_be_preserved_as_stable_identity",
+    "test_workflow.WorkflowTests.test_verified_subscriptions_and_four_page_evidence_for_both_platforms",
+    "test_xhs_adapter.DetailMediaTests.test_missing_sources_and_wrong_identity_are_explicit",
+    "test_xhs_adapter.DetailMediaTests.test_preserves_image_order_and_video_variants",
+    "test_xhs_adapter.PageAdapterTests.test_ambiguous_or_broken_response_does_not_mark_complete",
+    "test_xhs_adapter.PageAdapterTests.test_explicit_terminal_and_transport_error",
+    "test_xhs_adapter.PageAdapterTests.test_four_api_pages_new_store_resume_and_deduplicate"
   ]
 }

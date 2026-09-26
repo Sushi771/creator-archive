@@ -1,0 +1,456 @@
+"""Local archive workflow shared by platform adapters.
+
+This module never obtains credentials or makes platform requests itself. An adapter
+must supply verified author identity and pages with a trustworthy terminal signal.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from hashlib import sha256
+from html import escape
+from pathlib import Path
+import json
+import os
+import re
+import sqlite3
+import tempfile
+import time
+from typing import Mapping
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
+from .validation import AdapterFailure, HistoryAdapter, Page
+
+
+PLATFORMS = {"wechat", "xiaohongshu"}
+MODES = {"full", "latest", "archive"}
+
+
+def _id(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_+/=-]{1,128}", value):
+        raise ValueError("invalid_stable_id")
+    return quote(value, safe="")
+
+
+def _canonical_source_url(platform: str, value: str) -> str:
+    """Retain only public article identity parameters, never share-session tokens."""
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("invalid_detail")
+    try:
+        if parsed.port not in (None, 443):
+            raise ValueError("invalid_detail")
+    except ValueError:
+        raise ValueError("invalid_detail") from None
+    host = parsed.hostname.lower()
+    allowed = ({"mp.weixin.qq.com"} if platform == "wechat" else
+               {"www.xiaohongshu.com", "xiaohongshu.com"})
+    if host not in allowed:
+        raise ValueError("invalid_detail")
+    query = ""
+    if platform == "wechat" and parsed.path == "/s":
+        query = urlencode([(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+                           if key in {"__biz", "mid", "idx", "sn"}])
+    return urlunsplit(("https", host, parsed.path, query, ""))
+
+
+def _managed_write(path: Path, content: bytes) -> Path:
+    """Never overwrite a changed file, including a user's edits to a generated file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if path.read_bytes() == content:
+            return path
+        digest = sha256(content).hexdigest()[:12]
+        path = path.with_name(f"{path.stem}.{digest}{path.suffix}")
+        if path.exists():
+            if path.read_bytes() == content:
+                return path
+            raise ValueError("managed_file_conflict")
+    temp = path.with_name(path.name + f".{os.getpid()}.part")
+    try:
+        with temp.open("xb") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+    return path
+
+
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _managed_copy(path: Path, source: Path, mime: str) -> tuple[Path, int, str]:
+    """Stream a local media file into managed storage with bounded memory."""
+    signatures = {"image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n",
+                  "image/webp": b"RIFF", "video/mp4": b""}
+    if mime not in signatures:
+        raise ValueError("unsupported_mime")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    digest = sha256()
+    size = 0
+    header = b""
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".part", prefix="media-",
+                                         dir=path.parent, delete=False) as output, Path(source).open("rb") as input_file:
+            temp = Path(output.name)
+            while chunk := input_file.read(1024 * 1024):
+                if len(header) < 12:
+                    header = (header + chunk)[:12]
+                output.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if not size or not header.startswith(signatures[mime]):
+            raise ValueError("invalid_media_file")
+        if mime == "image/webp" and header[8:12] != b"WEBP":
+            raise ValueError("invalid_media_file")
+        if mime == "video/mp4" and header[4:8] != b"ftyp":
+            raise ValueError("invalid_media_file")
+        hexdigest = digest.hexdigest()
+        if path.exists():
+            if path.stat().st_size == size and _file_sha256(path) == hexdigest:
+                return path, size, hexdigest
+            path = path.with_name(f"{path.stem}.{hexdigest[:12]}{path.suffix}")
+            if path.exists():
+                if path.stat().st_size == size and _file_sha256(path) == hexdigest:
+                    return path, size, hexdigest
+                raise ValueError("managed_file_conflict")
+        os.replace(temp, path)
+        temp = None
+        return path, size, hexdigest
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
+class ArchiveWorkflow:
+    """Durable per-author scans and offline exports; one local caller at a time."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.db_path = self.root / "archive.sqlite3"
+        with self.connect() as db:
+            db.executescript("""
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    platform TEXT NOT NULL, author_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL, identity_evidence TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL,
+                    PRIMARY KEY(platform,author_id));
+                CREATE TABLE IF NOT EXISTS runs (
+                    id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL, platform TEXT NOT NULL,
+                    author_id TEXT NOT NULL, mode TEXT NOT NULL, adapter_version TEXT NOT NULL,
+                    cursor TEXT, pages INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL DEFAULT 'queued', coverage TEXT NOT NULL DEFAULT 'unknown',
+                    reason TEXT, terminal_evidence TEXT, retry_at REAL NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(batch_id,platform,author_id));
+                CREATE TABLE IF NOT EXISTS batches (
+                    id INTEGER PRIMARY KEY, mode TEXT NOT NULL, created_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS items (
+                    platform TEXT NOT NULL, item_id TEXT NOT NULL, author_id TEXT NOT NULL,
+                    published_at TEXT NOT NULL, detail_text TEXT, source_url TEXT,
+                    detail_state TEXT NOT NULL DEFAULT 'missing',
+                    PRIMARY KEY(platform,item_id));
+                CREATE TABLE IF NOT EXISTS pages (
+                    run_id INTEGER NOT NULL, page_number INTEGER NOT NULL,
+                    request_cursor TEXT NOT NULL, next_cursor TEXT, item_ids TEXT NOT NULL,
+                    terminal_evidence TEXT, observed_at REAL NOT NULL,
+                    PRIMARY KEY(run_id,page_number), UNIQUE(run_id,request_cursor));
+                CREATE TABLE IF NOT EXISTS assets (
+                    platform TEXT NOT NULL, item_id TEXT NOT NULL, asset_id TEXT NOT NULL,
+                    position INTEGER NOT NULL, kind TEXT NOT NULL, relative_path TEXT NOT NULL,
+                    bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL,
+                    PRIMARY KEY(platform,item_id,asset_id));
+            """)
+
+    @contextmanager
+    def connect(self):
+        db = sqlite3.connect(self.db_path, timeout=10)
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute("PRAGMA foreign_keys=ON")
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def subscribe(self, platform: str, author_id: str, display_name: str,
+                  *, verified: bool, evidence: str) -> None:
+        if platform not in PLATFORMS or not verified or not re.fullmatch(r"[A-Za-z0-9:_ -]{1,128}", evidence):
+            raise ValueError("verified_identity_required")
+        _id(author_id)
+        if not display_name.strip():
+            raise ValueError("display_name_required")
+        with self.connect() as db:
+            db.execute("""INSERT INTO subscriptions VALUES(?,?,?,?,1,?)
+                ON CONFLICT(platform,author_id) DO UPDATE SET display_name=excluded.display_name,
+                identity_evidence=excluded.identity_evidence""",
+                (platform, author_id, display_name.strip(), evidence.strip(), time.time()))
+
+    def set_enabled(self, platform: str, author_id: str, enabled: bool) -> None:
+        with self.connect() as db:
+            result = db.execute("UPDATE subscriptions SET enabled=? WHERE platform=? AND author_id=?",
+                                (int(enabled), platform, author_id))
+            if result.rowcount != 1:
+                raise KeyError((platform, author_id))
+
+    def subscriptions(self) -> list[dict]:
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM subscriptions ORDER BY platform,author_id")]
+
+    def _batch(self, mode: str, batch_id: int | None, include_paused: bool) -> tuple[int, list[dict]]:
+        if mode not in MODES:
+            raise ValueError("invalid_mode")
+        with self.connect() as db:
+            if batch_id is None:
+                cur = db.execute("INSERT INTO batches(mode,created_at) VALUES(?,?)", (mode, time.time()))
+                batch_id = cur.lastrowid
+                scope = db.execute("SELECT platform,author_id FROM subscriptions" +
+                                   ("" if include_paused else " WHERE enabled=1") +
+                                   " ORDER BY platform,author_id").fetchall()
+                for row in scope:
+                    db.execute("""INSERT INTO runs(batch_id,platform,author_id,mode,adapter_version,updated_at)
+                        VALUES(?,?,?,?,?,?)""",
+                        (batch_id, row["platform"], row["author_id"], mode, "pending", time.time()))
+            else:
+                row = db.execute("SELECT mode FROM batches WHERE id=?", (batch_id,)).fetchone()
+                if row is None or row["mode"] != mode:
+                    raise ValueError("batch_mode_mismatch")
+            runs = [dict(row) for row in db.execute(
+                "SELECT * FROM runs WHERE batch_id=? ORDER BY platform,author_id", (batch_id,))]
+        return batch_id, runs
+
+    def _stop(self, run_id: int, state: str, reason: str, retry_at: float = 0) -> None:
+        coverage = "blocked" if state in {"needs_login", "rate_limited", "failed"} else "partial"
+        with self.connect() as db:
+            db.execute("UPDATE runs SET state=?,coverage=?,reason=?,retry_at=?,updated_at=? WHERE id=?",
+                       (state, coverage, reason, retry_at, time.time(), run_id))
+
+    def _commit_page(self, run_id: int, cursor: str | None, page: Page) -> None:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row["cursor"] != cursor or row["state"] == "succeeded":
+                raise ValueError("stale_checkpoint")
+            seen = {r[0] for r in db.execute("SELECT request_cursor FROM pages WHERE run_id=?", (run_id,))}
+            requested = cursor or ""
+            if type(page.has_more) is not bool:
+                raise ValueError("invalid_page")
+            if page.has_more:
+                if not page.items:
+                    raise ValueError("empty_nonterminal_page")
+                if not isinstance(page.next_cursor, str) or not page.next_cursor:
+                    raise ValueError("missing_cursor")
+                if page.next_cursor == requested or page.next_cursor in seen:
+                    raise ValueError("repeated_cursor")
+            elif page.next_cursor is not None or not page.terminal_evidence:
+                raise ValueError("missing_terminal_evidence")
+            for item in page.items:
+                if not item.item_id or item.author_id != row["author_id"]:
+                    raise ValueError("identity_mismatch")
+                _id(item.item_id)
+                old = db.execute("SELECT author_id FROM items WHERE platform=? AND item_id=?",
+                                 (row["platform"], item.item_id)).fetchone()
+                if old and old[0] != item.author_id:
+                    raise ValueError("identity_mismatch")
+                db.execute("""INSERT INTO items(platform,item_id,author_id,published_at)
+                    VALUES(?,?,?,?) ON CONFLICT(platform,item_id)
+                    DO UPDATE SET published_at=excluded.published_at""",
+                    (row["platform"], item.item_id, item.author_id, item.published_at))
+            db.execute("INSERT INTO pages VALUES(?,?,?,?,?,?,?)",
+                       (run_id, row["pages"] + 1, requested, page.next_cursor,
+                        json.dumps([i.item_id for i in page.items]), page.terminal_evidence, time.time()))
+            db.execute("""UPDATE runs SET cursor=?,pages=pages+1,state=?,coverage=?,reason=NULL,
+                terminal_evidence=?,retry_at=0,updated_at=? WHERE id=?""",
+                (page.next_cursor, "running" if page.has_more else "succeeded",
+                 "scanning" if page.has_more else "complete_for_accessible_scope",
+                 page.terminal_evidence, time.time(), run_id))
+
+    def run_all(self, adapters: Mapping[str, HistoryAdapter], *, mode: str = "full",
+                batch_id: int | None = None, include_paused: bool = True,
+                login_confirmed: bool = False, max_pages: int = 100,
+                now: float | None = None) -> dict:
+        """Scan a fixed subscription snapshot. A failed author does not stop others."""
+        batch_id, runs = self._batch(mode, batch_id, include_paused)
+        now = time.time() if now is None else now
+        for run in runs:
+            run_id = run["id"]
+            if run["state"] == "succeeded" or run["retry_at"] > now:
+                continue
+            if run["state"] == "needs_login" and not login_confirmed:
+                continue
+            adapter = adapters.get(run["platform"])
+            if adapter is None:
+                self._stop(run_id, "partial", "adapter_unavailable")
+                continue
+            if run["adapter_version"] == "pending":
+                with self.connect() as db:
+                    db.execute("UPDATE runs SET adapter_version=? WHERE id=?", (adapter.version, run_id))
+            elif run["adapter_version"] != adapter.version:
+                self._stop(run_id, "partial", "adapter_version_changed")
+                continue
+            for _ in range(max_pages):
+                with self.connect() as db:
+                    current = db.execute("SELECT cursor FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+                try:
+                    page = adapter.page(run["author_id"], current)
+                    self._commit_page(run_id, current, page)
+                except AdapterFailure as error:
+                    state = error.category if error.category in {"needs_login", "rate_limited"} else "partial"
+                    retry_at = now + max(error.retry_after, 5) if state == "rate_limited" else 0
+                    self._stop(run_id, state, error.category, retry_at)
+                    break
+                except ValueError as error:
+                    allowed = {"stale_checkpoint", "invalid_page", "missing_cursor", "repeated_cursor",
+                               "empty_nonterminal_page", "missing_terminal_evidence", "identity_mismatch",
+                               "invalid_stable_id"}
+                    self._stop(run_id, "partial", str(error) if str(error) in allowed else "invalid_response")
+                    break
+                except Exception:
+                    self._stop(run_id, "failed", "unexpected_adapter_error")
+                    break
+                if not page.has_more:
+                    break
+            else:
+                self._stop(run_id, "partial", "page_budget_reached")
+        result = self.status(batch_id)
+        if mode == "archive":
+            result["export"] = self.export_all(batch_id=batch_id)
+        return result
+
+    def status(self, batch_id: int | None = None) -> dict:
+        with self.connect() as db:
+            if batch_id is None:
+                row = db.execute("SELECT max(id) FROM batches").fetchone()
+                batch_id = row[0]
+            if batch_id is None:
+                return {"batch_id": None, "runs": [], "evidence_level": "adapter_supplied"}
+            runs = [dict(row) for row in db.execute("""SELECT r.*,
+                (SELECT count(*) FROM items i WHERE i.platform=r.platform AND i.author_id=r.author_id) AS item_count
+                FROM runs r WHERE batch_id=? ORDER BY platform,author_id""", (batch_id,))]
+            return {"batch_id": batch_id, "runs": runs, "evidence_level": "adapter_supplied"}
+
+    def save_detail(self, platform: str, item_id: str, author_id: str,
+                    text: str, source_url: str) -> None:
+        """Record adapter supplied plain text; blank detail remains retryable."""
+        if platform not in PLATFORMS or not text.strip():
+            raise ValueError("invalid_detail")
+        source_url = _canonical_source_url(platform, source_url)
+        with self.connect() as db:
+            old = db.execute("SELECT author_id FROM items WHERE platform=? AND item_id=?",
+                             (platform, item_id)).fetchone()
+            if old is None or old[0] != author_id:
+                raise ValueError("identity_mismatch")
+            db.execute("UPDATE items SET detail_text=?,source_url=?,detail_state='complete' WHERE platform=? AND item_id=?",
+                       (text, source_url, platform, item_id))
+
+    def attach_media(self, platform: str, item_id: str, asset_id: str,
+                     source: Path, *, position: int, kind: str, mime: str) -> Path:
+        """Import an already fetched local file without trusting its basename."""
+        _id(asset_id)
+        if kind not in {"image", "video"} or position < 0:
+            raise ValueError("invalid_asset")
+        with self.connect() as db:
+            row = db.execute("SELECT author_id FROM items WHERE platform=? AND item_id=?",
+                             (platform, item_id)).fetchone()
+        if row is None:
+            raise KeyError((platform, item_id))
+        suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4"}[mime]
+        relative = Path(platform) / _id(row[0]) / _id(item_id) / "assets" / f"{_id(asset_id)}{suffix}"
+        target, size, digest = _managed_copy(self.root / "archive" / relative, Path(source), mime)
+        with self.connect() as db:
+            db.execute("""INSERT INTO assets VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(platform,item_id,asset_id) DO UPDATE SET
+                position=excluded.position,kind=excluded.kind,relative_path=excluded.relative_path,
+                bytes=excluded.bytes,sha256=excluded.sha256,mime=excluded.mime""",
+                (platform, item_id, asset_id, position, kind, str(target.relative_to(self.root / "archive")),
+                 size, digest, mime))
+        return target
+
+    def export_all(self, *, batch_id: int | None = None) -> dict:
+        """Write offline artifacts for the fixed batch scope, preserving edited files."""
+        with self.connect() as db:
+            if batch_id is None:
+                scope = db.execute("SELECT platform,author_id,display_name FROM subscriptions ORDER BY platform,author_id").fetchall()
+            else:
+                scope = db.execute("""SELECT s.platform,s.author_id,s.display_name FROM runs r
+                    JOIN subscriptions s USING(platform,author_id) WHERE r.batch_id=?
+                    ORDER BY s.platform,s.author_id""", (batch_id,)).fetchall()
+            run_map = {(r["platform"], r["author_id"]): dict(r) for r in db.execute(
+                "SELECT * FROM runs WHERE batch_id=?", (batch_id,))} if batch_id is not None else {}
+            result = []
+            for author in scope:
+                platform, author_id = author["platform"], author["author_id"]
+                base = self.root / "archive" / platform / _id(author_id)
+                items = [dict(r) for r in db.execute("SELECT * FROM items WHERE platform=? AND author_id=? ORDER BY published_at,item_id",
+                                                   (platform, author_id))]
+                manifest_items = []
+                corpus = []
+                missing_assets = 0
+                for item in items:
+                    item_dir = base / _id(item["item_id"])
+                    assets = [dict(r) for r in db.execute("SELECT * FROM assets WHERE platform=? AND item_id=? ORDER BY position,asset_id",
+                                                       (platform, item["item_id"]))]
+                    media_md = []
+                    media_html = []
+                    for asset in assets:
+                        local = self.root / "archive" / asset["relative_path"]
+                        asset["state"] = ("complete" if local.is_file() and local.stat().st_size == asset["bytes"]
+                                          and _file_sha256(local) == asset["sha256"] else "missing")
+                        if asset["state"] != "complete":
+                            missing_assets += 1
+                            continue
+                        relative = local.relative_to(item_dir).as_posix()
+                        label = escape(asset["asset_id"])
+                        if asset["kind"] == "image":
+                            media_md.append(f"![{asset['asset_id']}]({relative})")
+                            media_html.append(f'<img src="{escape(relative, quote=True)}" alt="{label}">')
+                        else:
+                            media_md.append(f"[视频 {asset['asset_id']}]({relative})")
+                            media_html.append(f'<video controls src="{escape(relative, quote=True)}"></video>')
+                    files = {}
+                    if item["detail_state"] == "complete":
+                        body = item["detail_text"]
+                        md = (f"# {item['item_id']}\n\n{body}\n\n" + "\n\n".join(media_md) +
+                              f"\n\n来源：{item['source_url']}\n").encode("utf-8")
+                        html = ("<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+                                f"<title>{escape(item['item_id'])}</title><body><article><pre>{escape(body)}</pre>" +
+                                "".join(media_html) + "</article></body></html>").encode("utf-8")
+                        for name, content in (("article.md", md), ("index.html", html)):
+                            files[name] = str(_managed_write(item_dir / name, content).relative_to(base))
+                        corpus.append({"schema_version": 1, "platform": platform, "author_id": author_id,
+                                       "item_id": item["item_id"], "source_url": item["source_url"],
+                                       "published_at": item["published_at"], "text": body,
+                                       "content_hash": sha256(body.encode("utf-8")).hexdigest(),
+                                       "media_refs": [a["relative_path"] for a in assets if a["state"] == "complete"],
+                                       "status": "detail_complete"})
+                    manifest_items.append({"item_id": item["item_id"], "detail_state": item["detail_state"],
+                                           "files": files, "assets": assets})
+                run = run_map.get((platform, author_id))
+                manifest = {"schema_version": 1, "platform": platform, "author_id": author_id,
+                            "display_name": author["display_name"],
+                            "coverage": run["coverage"] if run else "unknown",
+                            "terminal_evidence": run["terminal_evidence"] if run else None,
+                            "missing_registered_assets": missing_assets,
+                            "media_coverage": "unknown_expected_count",
+                            "items": manifest_items}
+                manifest_path = _managed_write(base / "manifest.json",
+                                               json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
+                corpus_path = _managed_write(base / "corpus.jsonl",
+                                             "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in corpus).encode("utf-8"))
+                result.append({"platform": platform, "author_id": author_id, "items": len(items),
+                               "details": len(corpus), "manifest": str(manifest_path), "corpus": str(corpus_path),
+                               "coverage": manifest["coverage"], "missing_registered_assets": missing_assets,
+                               "media_coverage": "unknown_expected_count"})
+        return {"authors": result, "archive_root": str(self.root / "archive")}

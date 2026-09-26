@@ -1,6 +1,17 @@
 # 项目当前状态
 
-更新日期：2026-09-26｜阶段：真实G1，尚未通过｜文档版本：v0.3.8｜应用骨架：v0.3.1
+更新日期：2026-09-26｜阶段：真实G1，尚未通过｜文档版本：v0.3.9｜应用骨架：v0.3.2（统一工作流实验）
+
+## 本任务：双平台工作流与单篇历史误判防护
+
+- 从远端 `codex/g1-validation-skeleton` 的 `f53332f` 建立隔离分支 `codex/dual-platform-integration`，未改用户旧资料。`creator_archive/workflow.py` 新增已核验身份订阅、固定批次、`full/latest/archive` 独立运行、逐页事务检查点、跨作者失败隔离、正文/本地媒体状态与按作者离线 HTML/Markdown/manifest/JSONL。`latest` 当前仍全页遍历，不以置顶或已知作品早停；实验数据放独立 `archive.sqlite3`，没有旧库迁移。`scripts/demo_workflow.py` 给出可操作的两平台模拟入口。手工改过的生成文件保留，新输出用哈希文件名；媒体预期总数未知，清单不得称完整。
+- 小红书新 `XhsPageAdapter` 只处理经外部认证获取的 `user_posted` 页响应，要求作品 ID、布尔 `has_more`、下一游标与身份一致；详情媒体提取保留图片顺序、视频候选和缺失原因。字段参考固定版本公开源码，未复制限制许可项目代码。未接入合法认证传输。两个已有 Edge 作者标签再次绑定超时，无新真实页/末页；原80/152 ID、3图、1视频证据保留。
+- WeWe fork 隔离修复 [`ea22669`](https://github.com/Sushi771/wewe-rss-ss/commit/ea226698aa59d65a456d6ef38355a3a5e6c8bed1) 已提交推送至 `codex/history-state-guard` 并核对远端 SHA/tree/文件。单篇封面不能把历史置完成，也不能伪请求后续页；旧按钮改为“历史未验证”。4项定向 Jest、server/web 构建通过。**真实多篇历史更新仍未实现**，必须有可验证分页来源。运行中的 WeWe PID 48432 与资料未改；只读页面3秒超时，CPU 高占用未复现，根因未知。
+- Creator Archive 全量离线套件34项模拟/本机测试最终复跑通过，`pip check` 与静态前端语法检查通过；它不证明真实 G1。公众号样本的工具站点拒绝继续遵守，不经其他通道访问。G1 尚未通过，正式适配器、完整订阅 UI、真实视频媒体完整性和用户资料升级都不能宣布完成。
+
+下一步先确认用户是否有可自行登录的公众号后台权限，并仅在许可路径验证真实历史分页；小红书恢复允许的登录作者页或提供独立认证读取组件的真实逐页响应。每平台两位作者、至少一位四页、末页与新进程恢复仍是 G1 门槛。建议本可验收代码单元同步后**在同一 Codex 项目开新任务**承接真实平台接入；推荐 `gpt-6-astra`、思考强度 `high`（高），因为需要跨两个平台的认证、分页与运行诊断。推荐不代表已切换设置。
+
+可复制启动句：继续 Creator Archive 双平台真实 G1 接入。推荐模型 gpt-6-astra，思考强度 high（高），用于公众号历史来源与小红书真实游标的跨组件验证。先 fetch 核对 Creator Archive `codex/dual-platform-integration` 和 WeWe `codex/history-state-guard`，读 AGENTS、PROJECT_STATUS、CHANGELOG、docs/03/04/07、G1-live；复用已通过的统一工作流与适配合同。确认用户自行登录条件后验证每平台两作者、至少一作者四页、可信末页及新进程恢复。不要把 WeRead 最新封面、DOM窗口或模拟测试当全历史；遵守 mp.weixin.qq.com 的工具拒绝，不改运行中的 WeWe 用户资料。每可验收单元同步文档、测试并提交推送核对远端。
 
 ## 最新续验：WeWe `4f0b426` 固定审查及本机实测
 
