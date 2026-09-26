@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Creator Archive · 验证台</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><div><span class="eyebrow">CREATOR ARCHIVE / 01</span><h1>博主归档验证台</h1></div><label>外观 <select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label></header>
+<main>
+<section class="notice"><strong>技术验证阶段 · G1 尚未通过</strong><p>公众号和小红书均保留完整订阅要求。当前没有连接真实采集组件；下面的四页历史与故障恢复使用自造数据，正文、图片和视频尚未实测。</p></section>
+<section><span class="eyebrow">01 / 链接入口</span><h2>检查分享链接</h2><p>识别平台与链接类型。作者 ID 候选还需真实组件确认，此操作不会建立订阅。</p><form id="link-form"><label for="link">公众号文章、小红书笔记或博主主页</label><div class="input-row"><input id="link" maxlength="4096" required placeholder="粘贴链接或含链接的分享文本" autocomplete="off"><button type="submit">检查链接</button></div></form><p id="link-result" role="status"></p></section>
+<section><span class="eyebrow">02 / 持久化验证</span><h2>四位模拟博主，逐页留下检查点</h2><p>每平台两位博主，每位四页、60 个唯一作品 ID，含置顶重复项与暂停订阅。第一次在第 3 页注入登录失效和限流；恢复会保留前两页结果。限流冷却为 5 秒。</p><div class="actions"><button id="run-demo">运行模拟并注入故障</button><button id="resume" class="secondary">移除模拟故障并继续</button><button id="refresh" class="secondary">刷新状态</button></div><p id="run-result" role="status"></p><div class="table-wrap"><table><caption>模拟扫描覆盖，与真实媒体完整性独立</caption><thead><tr><th>平台 / 作者</th><th>已扫描</th><th>唯一作品</th><th>扫描状态</th><th>正文 / 媒体</th></tr></thead><tbody id="runs"></tbody></table></div></section>
+<footer>检查点保存在本机。重启应用后可继续；真实采集、归档导出和 ChatGPT 读取等待后续验收。</footer>
+</main><script src="/static/app.js"></script></body></html>

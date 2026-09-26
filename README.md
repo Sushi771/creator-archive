@@ -2,11 +2,11 @@
 
 > 当前阶段：技术验证（已获开发授权）。G1 尚未通过真实平台验收；进度见 PROJECT_STATUS.md。
 
-开发前文档基线 v0.2.2 · 2026-09-26
+验证骨架 v0.3.1 · 2026-09-26
 
 通过公众号文章、小红书笔记或主页链接订阅博主，手动更新全部可获取历史，一键按博主保存正文、图片、可获取视频、离线 HTML、Obsidian Markdown 和 AI 语料。
 
-**已开始固定版本核查与离线验证准备，尚无真实平台通过证据。**首版公众号、小红书；抖音为后续扩展。
+**已有可运行的本地验证骨架和 21 项离线测试，尚无真实平台通过证据。** 首版公众号、小红书；抖音为后续扩展。
 
 仓库：[Sushi771/creator-archive](https://github.com/Sushi771/creator-archive)，默认分支 `main`。本次文档基线接续用户的 Initial commit；后续每次更新须同时维护相关文档、[PROJECT_STATUS.md](PROJECT_STATUS.md) 和 [CHANGELOG.md](CHANGELOG.md)，提交备注记录原因、改动、验证与未完成项。
 
@@ -28,3 +28,21 @@
 先验证可复用组件，后补缺口。单篇下载、主页首屏和最新一篇不能替代作者全历史订阅；缺失、限制与恢复状态必须透明。真实内容、凭据与日志不入 Git。
 
 研究附录仅描述核查日期的固定版本，没有安装运行第三方采集器。本仓库暂不选择分发许可证，采用第三方组件前记录其许可与义务。
+
+## 运行验证台
+
+本机已测试 Python 3.14.0。首次安装在仓库根目录执行：
+
+```powershell
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.lock
+.venv/Scripts/python.exe -m creator_archive
+```
+
+访问 `http://127.0.0.1:8765/`，Ctrl+C 停止。以后直接执行最后一条命令或 `./start.ps1`。
+
+- [运行说明与实验接口](docs/07_验证骨架运行与接口.md)
+- [G1 证据与未实测项](docs/validation/G1-2026-09-26.md)
+- [离线测试结果](docs/validation/offline-results.json)
+
+当前能检查链接类型并演练四位模拟博主的四页历史、去重、失败隔离和跨重启恢复；尚不能订阅或下载真实博主。真实样本与账号补齐后继续 G1，不以模拟结果替代验收。
