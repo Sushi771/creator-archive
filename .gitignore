@@ -27,6 +27,7 @@ logs/
 *.db-*
 *.sqlite*
 *.part
+*.har
 # Build and runtime
 .venv/
 venv/

@@ -5,7 +5,7 @@
   "g1_passed": false,
   "python": "3.14.0",
   "os": "Windows",
-  "tests_run": 34,
+  "tests_run": 42,
   "failures": 0,
   "errors": 0,
   "skipped": 0,
@@ -43,6 +43,14 @@
     "test_xhs_adapter.DetailMediaTests.test_preserves_image_order_and_video_variants",
     "test_xhs_adapter.PageAdapterTests.test_ambiguous_or_broken_response_does_not_mark_complete",
     "test_xhs_adapter.PageAdapterTests.test_explicit_terminal_and_transport_error",
-    "test_xhs_adapter.PageAdapterTests.test_four_api_pages_new_store_resume_and_deduplicate"
+    "test_xhs_adapter.PageAdapterTests.test_four_api_pages_new_store_resume_and_deduplicate",
+    "test_xhs_har.HarTests.test_base64_and_ignored_other_origins_and_authors",
+    "test_xhs_har.HarTests.test_conflict_does_not_overwrite_previously_imported_data",
+    "test_xhs_har.HarTests.test_empty_initial_response_and_cycle_do_not_finish",
+    "test_xhs_har.HarTests.test_four_pages_two_processes_deduplicate_and_strip_secrets",
+    "test_xhs_har.HarTests.test_http_error_or_missing_body_cannot_be_terminal",
+    "test_xhs_har.HarTests.test_invalid_api_envelope_or_identity_remains_failed",
+    "test_xhs_har.HarTests.test_missing_page_then_later_capture_continues_checkpoint",
+    "test_xhs_har.HarTests.test_unrelated_old_database_and_manual_notes_unchanged"
   ]
 }
