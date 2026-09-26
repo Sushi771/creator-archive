@@ -1,12 +1,12 @@
 # Creator Archive｜博主订阅与内容归档
 
-> 当前阶段：开发前文档评审。应用开发须待用户确认；仓库提交历史与远端文件是同步结果的核对依据。
+> 当前阶段：技术验证（已获开发授权）。G1 尚未通过真实平台验收；进度见 PROJECT_STATUS.md。
 
 开发前文档基线 v0.2.2 · 2026-09-26
 
 通过公众号文章、小红书笔记或主页链接订阅博主，手动更新全部可获取历史，一键按博主保存正文、图片、可获取视频、离线 HTML、Obsidian Markdown 和 AI 语料。
 
-**当前只有设计文档与静态调研，尚无应用实现或真实平台验证。** 文档评审后再开发。首版公众号、小红书；抖音为后续扩展。
+**已开始固定版本核查与离线验证准备，尚无真实平台通过证据。**首版公众号、小红书；抖音为后续扩展。
 
 仓库：[Sushi771/creator-archive](https://github.com/Sushi771/creator-archive)，默认分支 `main`。本次文档基线接续用户的 Initial commit；后续每次更新须同时维护相关文档、[PROJECT_STATUS.md](PROJECT_STATUS.md) 和 [CHANGELOG.md](CHANGELOG.md)，提交备注记录原因、改动、验证与未完成项。
 
