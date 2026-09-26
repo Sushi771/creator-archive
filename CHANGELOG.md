@@ -2,6 +2,20 @@
 
 每次更新必须同时修改本文件和受影响文档。记录真实完成情况；应用实现、模拟测试和真实平台验证分别说明。具体 commit SHA 以 Git 历史中对应提交为准。
 
+## 2026-09-26 · v0.2.3 · 首次同步核对与连接状态更正
+
+**原因**：首次文档提交后，Git HTTPS 推送持续被网络连接中断；使用本机已授权凭据经 GitHub Git Data API 完成同步，需要把实际路径和远端核对结果写准确。
+
+**改动**：更新 PROJECT_STATUS.md、docs/05 与本日志，记录旧 GitHub 连接写入仍为 403、本机 Git HTTPS 网络失败和 Git Data API 快进同步；需求及接口不变。
+
+**同步文档**：PROJECT_STATUS.md、docs/05_开发协作与GitHub同步.md、CHANGELOG.md；其他产品和技术文档无内容变化。
+
+**验证**：API 身份为 `Sushi771`；发布的 tree 与 commit SHA 均与本地 Git 完全一致；远端 `main`、16 个文件路径和 blob 哈希逐项匹配。未运行真实平台采集或应用测试。
+
+**同步结果**：本记录随新提交快进更新到远端 `main`，以远端分支与文件核对为准；没有强制推送。
+
+**未完成**：旧 ChatGPT GitHub 连接写入授权、到 `github.com:443` 的 Git HTTPS 连通性、用户需求最终确认、真实平台验证、应用开发与 Codex 本地项目创建。
+
 ## 2026-09-26 · v0.2.2 · 首次文档基线同步与 Codex 项目交接
 
 **原因**：此前 ChatGPT GitHub 连接写入返回 403，远端尚无文档包；需要保留用户的 Initial commit 并建立可供后续开发接手的仓库基线。
@@ -15,7 +29,7 @@
 
 **验证**：检查 Git 版本、已登录账号、远端初始提交、Markdown 相对链接、UTF-8、敏感信息模式和暂存差异；推送后核对远端 `main` 的提交与文件哈希。文档核对不代表公众号或小红书真实采集已通过。
 
-**同步结果**：使用本机已授权的 Git Credential Manager 账号通过 Git HTTPS 推送到 `main`；远端提交与文件核对结果以 Git 历史及交付回复为准。旧 ChatGPT GitHub 连接的写入能力未单独复测。
+**同步结果**：本机 Git HTTPS 推送因网络连接失败；使用 Git Credential Manager 中已授权的账号，经 GitHub Git Data API 将同一本地 tree 与 commit 快进更新到 `main`。远端提交与文件核对结果以 Git 历史及交付回复为准；旧 ChatGPT GitHub 连接写入仍返回 403。
 
 **未完成**：用户对需求的最终确认、真实双平台多页/媒体验证、组件最终选型、应用实现、Codex 本地项目创建与 ChatGPT 工具连接验收。
 

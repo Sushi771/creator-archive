@@ -2,13 +2,15 @@
 
 > 当前阶段：开发前文档评审；首次文档基线接续用户的 Initial commit。远端同步结果以 `main` 和文件核对为准。
 
-版本：v0.2.2｜2026-09-26｜状态：文档阶段，首次仓库基线
+版本：v0.2.3｜2026-09-26｜状态：文档阶段，首次仓库基线
 
 ## 仓库决策与本轮状态
 
 用户已创建并指定 [Sushi771/creator-archive](https://github.com/Sushi771/creator-archive)，默认分支 `main`，创建时可见性为公开；本次未更改可见性。旧 `wewe-rss-ss` 保持为已有应用及参考来源。主仓库保存本产品文档、实现、测试、依赖决策和脱敏验证记录，不上传博主正文、媒体或账号数据。
 
 本次资料接续用户的 Initial commit，建立首次文档基线，包含 README、AGENTS.md、忽略规则、六份设计文档、三个研究附录、CHANGELOG、PROJECT_STATUS、项目管理说明和提交评审模板。当前没有应用代码，也没有真实平台运行验证。后续以本仓库为开发资料的权威来源，历史下载文档包为当时快照。
+
+首次同步时，旧 ChatGPT GitHub 连接的 Git 对象写入仍返回 403，本机 Git HTTPS 到 `github.com:443` 也遇到网络超时或重置。经本机 Git Credential Manager 中已授权的 `Sushi771` 账号，使用 `api.github.com` 的 Git Data API 发布与本地完全相同的 tree 和 commit，并以非强制快进更新 `main`；远端分支、文件路径与 blob 哈希已核对。后续常规 Git 操作仍应先检查 Git HTTPS 连通性，不把旧连接视为已获写入授权。
 
 同步必须完成远端写入并核对分支 SHA 和文件内容才可向用户报告成功；不能以本地 commit 或下载包冒充远端同步。不强推、不覆盖他人更新，不索取个人访问令牌。
 

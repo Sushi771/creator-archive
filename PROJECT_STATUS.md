@@ -1,6 +1,6 @@
 # 项目当前状态
 
-更新日期：2026-09-26（Asia/Shanghai）｜阶段：开发前文档评审｜版本：v0.2.2
+更新日期：2026-09-26（Asia/Shanghai）｜阶段：开发前文档评审｜版本：v0.2.3
 
 本文件是新会话和接手 agent 的首读入口，须每次工作结束时随相关文档更新。最新代码和文档以远端仓库为准，聊天记录是补充背景。
 
@@ -11,6 +11,7 @@
 - 用户已创建 Sushi771/creator-archive；本机 Git 已接续用户的 Initial commit，将文档基线、更新日志、agent规则与评审模板同步至 `main`。
 - 加入项目管理和新会话交接说明。本阶段无应用实现。
 - 已核对双平台 P0 需求覆盖，并明确概述中的视频范围为“可获取视频”；新增 Codex 本地项目设置与按交付目标交接的指引。
+- 首次同步后已核对远端 `main`、16 个文件路径和 blob 哈希，均与本地 Git 提交一致。
 
 ## 已确定的约定
 
@@ -29,7 +30,7 @@
 
 ## 历史连接问题与未验证
 
-- 旧 ChatGPT GitHub 连接的 create-tree 写入曾返回 403 `Resource not accessible by integration`。本次使用本机 Git Credential Manager 中已授权的 `Sushi771` 账号，通过 Git HTTPS 推送；原连接的写入能力未单独复测。
+- 旧 ChatGPT GitHub 连接的 Git 对象写入仍返回 403 `Resource not accessible by integration`。本地 Git HTTPS 推送因连接 `github.com:443` 超时或重置失败；本次使用 Git Credential Manager 中已授权的 `Sushi771` 账号，经 `api.github.com` 的 Git Data API 将完全相同的本地 tree 与 commit 快进更新到 `main`，没有强制覆盖。后续常规 Git 网络连通性仍需检查。
 - 首次同步前重新读取的远端 `main` 为 `0bcc48eded6f0da59fb9caec00e99be01b213a03`（用户 Initial commit）；本次提交保留其为祖先。最新 SHA 以远端 `main` 为准。
 
 - 双平台真实账号与多页采集尚未验证；媒体离线、跨重启恢复和ChatGPT工具接入未验收。
@@ -38,7 +39,7 @@
 
 ## 验证与提交记录
 
-本次检查：本地 Git 与登录账号、远端基线、Markdown 相对链接、UTF-8 文件清单、凭据/含签名链接模式和提交差异。没有运行第三方采集代码，也没有真实平台验证。推送后核对远端 `main`、文件清单与哈希；具体 SHA 见 Git 历史及交付回复，不在同一提交内填入尚未生成的 SHA。
+本次检查：本地 Git 与登录账号、远端基线、Markdown 相对链接、UTF-8 文件清单、凭据/含签名链接模式和提交差异。首次同步后核对远端 `main`、16 个文件路径与 blob 哈希，与本地提交一致。没有运行第三方采集代码，也没有真实平台验证。具体 SHA 见 Git 历史及交付回复，不在同一提交内填入尚未生成的 SHA。
 
 ## 新会话最小阅读范围
 
