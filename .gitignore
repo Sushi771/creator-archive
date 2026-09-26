@@ -1,0 +1,41 @@
+# Credentials and sessions
+.env
+.env.*
+!.env.example
+*cookie*
+*token*
+credentials/
+secrets/
+sessions/
+browser-profile*/
+playwright-profile*/
+*.pem
+*.key
+*.p12
+# User archives, state and logs
+archive/
+archives/
+downloads/
+media/
+corpus/
+vault/
+Obsidian*/
+data/
+logs/
+*.log
+*.db
+*.db-*
+*.sqlite*
+*.part
+# Build and runtime
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+.cache/
+.pytest_cache/
+.DS_Store
+Thumbs.db
