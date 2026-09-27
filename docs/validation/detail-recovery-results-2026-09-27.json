@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "evidence_level": "live_application_and_browser",
+  "g1_passed": false,
+  "old_items": 1391,
+  "history_pages": 90,
+  "bodies": 15,
+  "assets": 35,
+  "old_files": 26,
+  "old_files_hash_unchanged": true,
+  "checkpoint_files": 39,
+  "checkpoint_files_hash_mtime_unchanged": true,
+  "succeeded_item_snapshot_count_unchanged": true,
+  "batch_19": {
+    "state": "partial",
+    "reason": "content_partial",
+    "targets": 7,
+    "succeeded": 6,
+    "reference_missing": 1
+  },
+  "batch_20": {
+    "state": "succeeded",
+    "reason": "content_complete",
+    "targets": 8,
+    "succeeded_before_stop": 1,
+    "succeeded_after_restart": 8
+  },
+  "login_expiry_renewal_live_tested": false,
+  "exported_items": 1391,
+  "exported_body_rows": 15,
+  "old_files_unchanged_after_export": true,
+  "local_new_image_decode": {
+    "complete": true,
+    "width": 1080,
+    "height": 1440,
+    "source": "loopback_archive"
+  }
+}

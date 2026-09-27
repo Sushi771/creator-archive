@@ -44,6 +44,9 @@ MESSAGES = {
     "content_complete": ("本批作品正文和当前可获取媒体已保存。", "可查看离线附件或按作者导出；不代表所有历史作品均已获取。"),
     "metrics_complete": ("本批指标观察已保存，缺失字段仍标未知；历史快照保留。", "可按全库指标排序筛选，或查看作品的观察历史。"),
     "no_local_items": ("当前作者尚无本地作品，本批内容或指标范围为空。", "先获取作者历史列表，再新建内容或指标任务；当前任务不会把空范围当作完成。"),
+    "reference_missing": ("本轮未取得部分历史作品的有效访问引用；旧资料和成功项保留。", "在任务的补充链接入口粘贴同篇完整官方链接后继续；不会重扫39/6页长链。"),
+    "item_unavailable": ("该作品当前不可访问，可能是链接失效、删除或权限变化；旧资料保留。", "在官方页面确认可访问后，补充完整链接重试。其他作品可继续处理。"),
+    "media_failed": ("部分媒体下载或校验失败，成功媒体和正文保留。", "恢复任务会刷新详情并只下载缺失资源。"),
 }
 
 
@@ -113,6 +116,10 @@ class WorkspaceService:
     def open_login(self):
         with self._network_lock:
             self._check_cooldown("xiaohongshu")
+            with self.workflow.connect() as db:
+                if db.execute("SELECT 1 FROM jobs WHERE platform='xiaohongshu' AND mode!='archive' AND state IN ('running','queued') LIMIT 1").fetchone():
+                    raise ValueError("当前小红书采集任务仍在运行；请等待任务暂停，或先用Stop停止再Start启动，然后打开登录窗口。已保存进度会保留。")
+            self._job_sources.clear()
             try:
                 return self.transport().open_login()
             except AdapterFailure as error:
@@ -196,7 +203,7 @@ class WorkspaceService:
                       can_resume=row["state"] not in {"succeeded", "running", "queued"} and cooldown <= time.time())
         if row["mode"] in {"content", "metrics"}:
             progress = db.execute("SELECT count(*),coalesce(sum(state='succeeded'),0),coalesce(sum(state='partial'),0) FROM job_items WHERE job_id=?", (row["id"],)).fetchone()
-            result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],coverage="not_applicable")
+            result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],pending_count=progress[0]-progress[1]-progress[2],coverage="not_applicable")
             result["failed_items"] = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT 20", (row["id"],))]
         message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
         if row["mode"] in {"content", "metrics"} and row["reason"] in {"unavailable", "timeout"}:
@@ -315,11 +322,14 @@ class WorkspaceService:
             raise ValueError("原文链接的作品ID与当前作品不匹配")
         return source_url
 
-    def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None) -> dict:
+    def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None, item_ids=None) -> dict:
         if mode not in {"full", "latest", "archive", "content", "metrics"} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
         if item_id and (not author_id or mode not in {"content","metrics"}):
             raise ValueError("单作品任务须提供平台、作者及内容或指标模式")
+        if item_ids is not None and (not item_ids or len(item_ids)>200 or item_id or not author_id or mode not in {"content","metrics"} or source_url):
+            raise ValueError("指定作品批次须提供同一作者的1至200个ID，且不能同时提供单篇参数；全部作者范围不受此限制")
+        selected = list(dict.fromkeys(item_ids)) if item_ids is not None else None
         source_url = self._validate_source(source_url,platform,item_id,author_id)
         scope = [s for s in self.workspace()["subscriptions"] if not author_id or (s["platform"], s["author_id"]) == (platform, author_id)]
         if not scope:
@@ -329,6 +339,8 @@ class WorkspaceService:
             db.execute("BEGIN IMMEDIATE")
             if item_id and not db.execute("SELECT 1 FROM items WHERE platform=? AND author_id=? AND item_id=?", (platform,author_id,item_id)).fetchone():
                 raise KeyError("item_not_found")
+            if selected and any(not db.execute("SELECT 1 FROM items WHERE platform=? AND author_id=? AND item_id=?", (platform,author_id,i)).fetchone() for i in selected):
+                raise ValueError("指定作品不属于该作者的本地资料；未创建任务")
             for sub in scope:
                 if mode != "archive":
                     self._check_cooldown(sub["platform"], db)
@@ -339,20 +351,55 @@ class WorkspaceService:
                 cur = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)", (sub["platform"], sub["author_id"], mode, time.time(), time.time()))
                 ids.append(cur.lastrowid)
                 if mode in {"content","metrics"}:
-                    db.execute("INSERT INTO job_items(job_id,platform,item_id) SELECT ?,platform,item_id FROM items WHERE platform=? AND author_id=?" + (" AND item_id=?" if item_id else ""),
-                               [cur.lastrowid,sub["platform"],sub["author_id"]] + ([item_id] if item_id else []))
+                    clause = " AND item_id IN (" + ",".join("?" for _ in selected) + ")" if selected else " AND item_id=?" if item_id else ""
+                    db.execute("INSERT INTO job_items(job_id,platform,item_id) SELECT ?,platform,item_id FROM items WHERE platform=? AND author_id=?" + clause,
+                               [cur.lastrowid,sub["platform"],sub["author_id"]] + (selected or ([item_id] if item_id else [])))
         for job_id in ids:
             if source_url:
                 self._job_sources[job_id] = source_url
             self._spawn(job_id)
         return {"job_id": ids[0], "job_ids": ids, "state": "queued", "includes_paused": True}
 
-    def resume(self, job_id, source_url=None) -> dict:
+    def _batch_sources(self, db, job, source_urls):
+        if not source_urls:
+            return {}
+        if job["mode"] not in {"content", "metrics"} or job["platform"] != "xiaohongshu" or len(source_urls) > 200:
+            raise ValueError("每次可为小红书内容或指标任务补充至多200条完整链接，可分批补充")
+        result = {}
+        for url in source_urls:
+            if not isinstance(url, str):
+                raise ValueError("请每行粘贴一条完整官方作品链接")
+            item_id = urlsplit(url).path.rstrip("/").split("/")[-1]
+            value = self._validate_source(url,job["platform"],item_id,job["author_id"])
+            target = db.execute("SELECT state FROM job_items WHERE job_id=? AND item_id=?", (job["id"],item_id)).fetchone()
+            if not target:
+                raise ValueError("补充链接包含原批次以外的作品；原任务与资料未改动")
+            if item_id in result and result[item_id] != value:
+                raise ValueError("同一作品提供了不同链接，请每篇保留一条")
+            if target[0] != "succeeded":
+                result[item_id] = value
+        return result
+
+    def job_failures(self, job_id, offset=0, limit=50):
+        with self.workflow.connect() as db:
+            job = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not job:
+                raise KeyError("job_not_found")
+            total = db.execute("SELECT count(*) FROM job_items WHERE job_id=? AND state='partial'", (job_id,)).fetchone()[0]
+            rows = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT ? OFFSET ?", (job_id,limit,offset))]
+        for row in rows:
+            row["message"], row["next_step"] = MESSAGES.get(row["reason"], MESSAGES["unexpected_error"])
+        return {"total": total,"items":rows,"platform":job["platform"],"author_id":job["author_id"]}
+
+    def resume(self, job_id, source_url=None, source_urls=None) -> dict:
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             job = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not job:
                 raise KeyError("job_not_found")
+            if source_url and source_urls:
+                raise ValueError("请使用单篇链接或多篇链接其中一种方式")
+            sources = self._batch_sources(db,job,source_urls)
             if source_url:
                 targets = db.execute("SELECT item_id FROM job_items WHERE job_id=?", (job_id,)).fetchall()
                 if len(targets) != 1 or job["mode"] not in {"content","metrics"}:
@@ -371,6 +418,8 @@ class WorkspaceService:
             db.execute("UPDATE jobs SET state='queued',reason=NULL,updated_at=? WHERE id=?", (time.time(), job_id))
         if source_url:
             self._job_sources[job_id] = source_url
+        elif sources:
+            self._job_sources[job_id] = {**(self._job_sources.get(job_id) if isinstance(self._job_sources.get(job_id),dict) else {}), **sources}
         self._spawn(job_id)
         return {"job_id": job_id, "state": "queued"}
 
@@ -448,6 +497,8 @@ class WorkspaceService:
             except AdapterFailure as error:
                 if error.category == "rate_limited":
                     self._record_cooldown(job["platform"], retry_after=error.retry_after)
+                if error.category in {"needs_login", "verification_required"}:
+                    self._job_sources.clear()
                 category = error.category if error.category in {"needs_login", "rate_limited"} else "transport_unavailable"
                 self._finish(job_id, category if category != "transport_unavailable" else "blocked", category)
             except Exception:
@@ -464,6 +515,14 @@ class WorkspaceService:
         if not scope_count:
             self._finish(job["id"],"blocked","no_local_items")
             return
+        sources = self._job_sources.get(job["id"], {})
+        # The scope lives in job_items; ephemeral links can be renewed without
+        # changing membership, replaying successful items or advancing pages.
+        with self._network_lock:
+            self._check_cooldown(job["platform"])
+            transport = self.transport()
+            if hasattr(transport, "prepare_details") and not isinstance(sources,str):
+                transport.prepare_details(job["author_id"], [i["item_id"] for i in targets if i["item_id"] not in sources])
         for item in targets:
             if self._stopping.is_set():
                 self._finish(job["id"],"interrupted","process_interrupted")
@@ -473,7 +532,8 @@ class WorkspaceService:
                 with self._network_lock:
                     self._check_cooldown(job["platform"])
                     transport = self.transport()
-                    detail = transport.detail(job["author_id"], item["item_id"], source_url=self._job_sources.get(job["id"],item["source_url"] or ""))
+                    source = sources if isinstance(sources,str) else sources.get(item["item_id"],item["source_url"] or "")
+                    detail = transport.detail(job["author_id"], item["item_id"], source_url=source)
                     if detail.get("item_id") != item["item_id"] or detail.get("author_id") != job["author_id"]:
                         raise AdapterFailure("unavailable")
                     self.workflow.save_metrics(job["platform"], item["item_id"], detail.get("metrics",{}),
@@ -511,6 +571,8 @@ class WorkspaceService:
                             db.execute("UPDATE items SET media_state=? WHERE platform=? AND item_id=?", ("complete_for_observed_detail" if media_complete else "partial",job["platform"],item["item_id"]))
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state=?,reason=? WHERE job_id=? AND platform=? AND item_id=?", ("succeeded" if complete else "partial",None if complete else "content_partial",job["id"],job["platform"],item["item_id"]))
+                if complete and isinstance(sources,dict):
+                    sources.pop(item["item_id"],None)
             except PlatformCooldown:
                 raise
             except Exception as error:
@@ -521,6 +583,8 @@ class WorkspaceService:
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
                 if category in {"rate_limited","needs_login","unavailable","verification_required"}:
+                    if category in {"needs_login","verification_required"}:
+                        self._job_sources.clear()
                     if category == "rate_limited":
                         self._record_cooldown(job["platform"],retry_after=error.retry_after)
                     self._finish(job["id"],category if category in {"rate_limited","needs_login"} else "blocked",category)

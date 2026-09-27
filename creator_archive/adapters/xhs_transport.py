@@ -113,6 +113,48 @@ class XhsBrowserTransport:
         self._detail_links: dict[tuple[str, str], str] = {}
         self._detail_authors: set[str] = set()
 
+    def _profile_links(self, author_id):
+        """Only retain actual profile anchors, after listing identity validation."""
+        links = self._page.locator('a[href]').evaluate_all("nodes => nodes.map(n => n.href)")
+        for link in links:
+            parsed = urlsplit(link)
+            match = re.fullmatch(rf"/(?:explore|user/profile/{author_id})/([0-9a-f]{{24}})", parsed.path)
+            if match and parse_qs(parsed.query).get("xsec_token"):
+                try:
+                    self._detail_links[(author_id, match[1])] = detail_url(match[1], link)
+                except ValueError:
+                    pass
+
+    def prepare_details(self, author_id, item_ids):
+        """Refresh references once per batch/resume, at most three listing pages.
+
+        This does not run or advance a historical scan. Missing references remain
+        explicit gaps; no token, browser credential or response blob is persisted.
+        """
+        targets = set(item_ids)
+        def prepare():
+            if not targets:
+                return
+            self._ensure()
+            if time.monotonic() < self._cooldown_until and self._failure:
+                raise self._failure
+            self._failure = None
+            self._detail_links = {key: value for key, value in self._detail_links.items() if key[0] != author_id}
+            cursor = None
+            seen = set()
+            for _ in range(3):
+                page = XhsPageAdapter(self._fetch).page(author_id, cursor)
+                self._page.wait_for_timeout(300)
+                self._profile_links(author_id)
+                if all((author_id, item) in self._detail_links for item in targets) or not page.has_more:
+                    break
+                if page.next_cursor in seen:
+                    raise TransportFailure("invalid_cursor", "引用刷新出现重复游标；原历史检查点保留，请稍后重试。")
+                seen.add(page.next_cursor)
+                cursor = page.next_cursor
+            self._detail_authors.add(author_id)
+        return self._call(prepare)
+
     def _call(self, function, *args):
         if self._closed:
             raise TransportFailure("unavailable", "平台浏览器已关闭，请重启应用后继续。")
@@ -163,7 +205,7 @@ class XhsBrowserTransport:
                     if href:
                         url_to_open = detail_url(item_id, "https://www.xiaohongshu.com" + href if href.startswith("/") else href)
                     else:
-                        url_to_open = url
+                        raise TransportFailure("reference_missing", "本轮未取得该历史作品的有效访问引用；已保留旧资料，请补充同篇完整官方链接。未重扫历史长链。")
                 else:
                     url_to_open = url
                 # Navigation invalidates the listing page location but never a
@@ -206,7 +248,8 @@ class XhsBrowserTransport:
                     if any(s in text for s in ("安全验证", "请完成验证")):
                         raise TransportFailure("needs_login", "作品详情要求平台安全验证；已保留旧资料，请在独立浏览器处理后恢复任务。")
                     if any(s in text for s in ("当前笔记暂时无法浏览", "内容不存在", "该笔记已被删除", "私密笔记")):
-                        raise TransportFailure("unavailable", "作品详情暂不可访问，可能受链接或平台权限限制；已保留旧资料，请在浏览器确认并补充可访问的完整作品链接后重试。")
+                        self._detail_links.pop((author_id, item_id), None)
+                        raise TransportFailure("item_unavailable", "作品详情暂不可访问，可能受链接或平台权限限制；已保留旧资料，请在浏览器确认并补充可访问的完整作品链接后重试。")
                     if projected is not None and time.monotonic() >= hydration_deadline:
                         return projected
                     self._page.wait_for_timeout(300)
@@ -229,7 +272,7 @@ class XhsBrowserTransport:
                 failure = TransportFailure("rate_limited", "媒体下载收到限流；成功资源已保留，请等待冷却后仅重试缺失资源。", 60)
                 self._failure, self._cooldown_until = failure, time.monotonic() + 60
                 raise failure from None
-            raise TransportFailure("unavailable", "媒体下载或文件校验失败；成功资源已保留，请刷新详情后重试缺失媒体。") from None
+            raise TransportFailure("media_failed", "媒体下载或文件校验失败；成功资源已保留，请刷新详情后重试缺失媒体。") from None
 
     def verify_author(self, author_id: str) -> dict:
         def verify():

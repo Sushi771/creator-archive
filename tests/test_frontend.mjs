@@ -65,3 +65,15 @@ assert.equal(run('jobBody.source_url'),undefined,'Transient source links must ne
 await run('startJob("metrics",undefined,"https://www.xiaohongshu.com/explore/item")');
 assert.equal(run('jobBody.source_url'),undefined,'Transient source links must never leak to all-author batches');
 console.log('Frontend offline checks passed: metric semantics, full-library query contract, pagination, invalid dates, stale response guard, modal errors, metrics-only job payload, explicit transient single-item link scope.');
+
+run('globalThis.recoveryCalls=[];api=async(path,body)=>{recoveryCalls.push({path,body});return body?{job_id:19}:{total:1,items:[{item_id:"failed",message:"引用缺失",next_step:"补充链接"}]};}');
+await run('openRecovery({id:19,can_resume:true})');
+assert.equal(elements['recovery-dialog'].open,true);
+assert.match(elements['recovery-page'].textContent,/1 个未完成/);
+elements['recovery-links'].value=' https://www.xiaohongshu.com/explore/a?xsec_token=synthetic-one\nhttps://www.xiaohongshu.com/explore/b?xsec_token=synthetic-two ';
+await run('$("recovery-resume").onclick()');
+assert.equal(run('recoveryCalls.at(-1).path'),'/api/jobs/19/resume');
+assert.equal(run('recoveryCalls.at(-1).body.source_urls.length'),2);
+assert.equal(elements['recovery-links'].value,'');
+assert.equal(elements['recovery-dialog'].open,false);
+console.log('Recovery frontend checks passed: original job scope, batch links, clear on submission.');

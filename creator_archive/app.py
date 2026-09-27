@@ -43,10 +43,12 @@ class JobInput(BaseModel):
     author_id: str | None = None
     item_id: str | None = None
     source_url: str | None = Field(default=None,max_length=4096)
+    item_ids: list[str] | None = Field(default=None,max_length=200)
 
 
 class ResumeInput(BaseModel):
     source_url: str | None = Field(default=None,max_length=4096)
+    source_urls: list[str] | None = Field(default=None,max_length=200)
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -135,11 +137,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/jobs")
     def start_job(body: JobInput):
-        return service.start(body.mode, body.platform, body.author_id, body.item_id, body.source_url)
+        return service.start(body.mode, body.platform, body.author_id, body.item_id, body.source_url, body.item_ids)
 
     @app.post("/api/jobs/{job_id}/resume")
     def resume(job_id: int, body: ResumeInput | None = None):
-        return service.resume(job_id,body.source_url if body else None)
+        return service.resume(job_id,body.source_url if body else None,body.source_urls if body else None)
+
+    @app.get("/api/jobs/{job_id}/failures")
+    def job_failures(job_id: int, offset: int = Query(default=0,ge=0), limit: int = Query(default=50,ge=1,le=200)):
+        return service.job_failures(job_id,offset,limit)
 
     @app.get("/api/items")
     def items(platform: str | None = None, author_id: str | None = None,
