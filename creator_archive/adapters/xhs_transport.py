@@ -111,6 +111,7 @@ class XhsBrowserTransport:
         self._cooldown_until = 0.0
         self._closed = False
         self._detail_links: dict[tuple[str, str], str] = {}
+        self._verified_detail_links: dict[tuple[str, str], str] = {}
         self._detail_authors: set[str] = set()
 
     def _profile_links(self, author_id):
@@ -126,7 +127,7 @@ class XhsBrowserTransport:
                     pass
 
     def prepare_details(self, author_id, item_ids):
-        """Refresh references once per batch/resume, at most three listing pages.
+        """Reuse verified session links; refresh missing references in three pages.
 
         This does not run or advance a historical scan. Missing references remain
         explicit gaps; no token, browser credential or response blob is persisted.
@@ -140,6 +141,10 @@ class XhsBrowserTransport:
                 raise self._failure
             self._failure = None
             self._detail_links = {key: value for key, value in self._detail_links.items() if key[0] != author_id}
+            self._detail_links.update(self._verified_detail_links)
+            if all((author_id, item) in self._detail_links for item in targets):
+                self._detail_authors.add(author_id)
+                return
             cursor = None
             seen = set()
             for _ in range(3):
@@ -158,7 +163,16 @@ class XhsBrowserTransport:
     def _call(self, function, *args):
         if self._closed:
             raise TransportFailure("unavailable", "平台浏览器已关闭，请重启应用后继续。")
-        return self._worker.submit(function, *args).result()
+        def invoke():
+            try:
+                return function(*args)
+            except AdapterFailure as error:
+                if error.category in {"needs_login", "verification_required"}:
+                    self._detail_links.clear()
+                    self._verified_detail_links.clear()
+                    self._detail_authors.clear()
+                raise
+        return self._worker.submit(invoke).result()
 
     def page(self, author_id: str, cursor: str | None):
         return self._call(lambda: XhsPageAdapter(self._fetch).page(author_id, cursor))
@@ -248,6 +262,7 @@ class XhsBrowserTransport:
                         # canonical metrics-only refresh in this same session.
                         if parse_qs(urlsplit(url_to_open).query).get("xsec_token"):
                             self._detail_links[(resolved_author, item_id)] = url_to_open
+                            self._verified_detail_links[(resolved_author, item_id)] = url_to_open
                         if any(m["value"] is not None for m in projected["metrics"].values()):
                             return projected
                         # Some notes publish body/media in SSR before hydrated
@@ -265,7 +280,11 @@ class XhsBrowserTransport:
                     if any(s in text for s in ("安全验证", "请完成验证")):
                         raise TransportFailure("needs_login", "作品详情要求平台安全验证；已保留旧资料，请在独立浏览器处理后恢复任务。")
                     if any(s in text for s in ("当前笔记暂时无法浏览", "内容不存在", "该笔记已被删除", "私密笔记")):
-                        self._detail_links.pop((author_id, item_id), None)
+                        # resolve_item has no author until the page is verified.
+                        for cache in (self._detail_links, self._verified_detail_links):
+                            for key in list(cache):
+                                if key[1] == item_id and (author_id is None or key[0] == author_id):
+                                    cache.pop(key)
                         raise TransportFailure("item_unavailable", "作品详情暂不可访问，可能受链接或平台权限限制；已保留旧资料，请在浏览器确认并补充可访问的完整作品链接后重试。")
                     if projected is not None and time.monotonic() >= hydration_deadline:
                         return projected
@@ -309,6 +328,7 @@ class XhsBrowserTransport:
             self._author = None
             self._responses.clear()
             self._detail_links.clear()
+            self._verified_detail_links.clear()
             self._detail_authors.clear()
             try:
                 self._page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=30000)
@@ -438,6 +458,7 @@ class XhsBrowserTransport:
         finally:
             self._context = self._page = None
             self._detail_links.clear()
+            self._verified_detail_links.clear()
             self._detail_authors.clear()
             if self._runtime:
                 self._runtime.stop()

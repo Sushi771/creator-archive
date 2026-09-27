@@ -20,7 +20,7 @@ def classify(text: str) -> dict:
     if host in ("www.xiaohongshu.com", "xiaohongshu.com"):
         platform = "xiaohongshu"
         profile = re.fullmatch(r"/user/profile/([0-9a-fA-F]{24})/?", url.path)
-        note = re.fullmatch(r"/(?:explore|discovery/item)/([0-9a-fA-F]{24})/?", url.path)
+        note = re.fullmatch(r"/(?:explore|discovery/item|user/profile/[0-9a-fA-F]{24})/([0-9a-fA-F]{24})/?", url.path)
         if profile:
             kind, candidate = "profile", profile[1].lower()
         elif note:

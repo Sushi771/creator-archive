@@ -134,7 +134,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT enabled FROM subscriptions WHERE author_id=?",(foreign,)).fetchone()[0],0)
             db.execute("UPDATE subscriptions SET display_name='My note' WHERE author_id=?",(foreign,))
             db.execute("UPDATE items SET title='My title' WHERE item_id=?",(item,))
-        self.service.resolve_item(link)
+        self.service.resolve_item(f"https://www.xiaohongshu.com/user/profile/{foreign}/{item}?xsec_token=REGISTRATION_SECRET")
         with self.service.workflow.connect() as db:
             self.assertEqual(db.execute("SELECT display_name FROM subscriptions WHERE author_id=?",(foreign,)).fetchone()[0],"My note")
             self.assertEqual(db.execute("SELECT title FROM items WHERE item_id=?",(item,)).fetchone()[0],"My title")
@@ -236,6 +236,82 @@ service.start('metrics');service.wait(90)
 
 
 class ReferenceTests(unittest.TestCase):
+    def test_verified_deep_link_survives_batch_prepare_and_revalidates_live_detail(self):
+        from tests.test_xhs_content import detail, AUTHOR as author, ITEM
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = XhsBrowserTransport(Path(tmp)/"profile")
+            try:
+                transport._ensure = lambda: None
+                transport._page = MagicMock()
+                transport._page.goto.return_value.status = 200
+                transport._page.evaluate.return_value = detail()
+                url = f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED_ONLY_IN_MEMORY"
+                transport.resolve_item(url)
+                transport._fetch = MagicMock(side_effect=AssertionError("unnecessary author scan"))
+                transport.prepare_details(author, [ITEM])
+                transport._page.evaluate.return_value["note"]["desc"] = "Fresh body"
+                result = transport.detail(author, ITEM)
+                self.assertEqual(result["text"], "Fresh body")
+                self.assertEqual(transport._page.goto.call_count, 2)
+                transport._fetch.assert_not_called()
+                self.assertNotIn("VERIFIED_ONLY_IN_MEMORY", result["source_url"])
+            finally:
+                transport.close()
+            self.assertEqual(transport._verified_detail_links, {})
+
+    def test_mixed_batch_keeps_verified_link_but_discards_unverified_stale_link(self):
+        from tests.test_xhs_content import detail, AUTHOR as author, ITEM
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = XhsBrowserTransport(Path(tmp)/"profile")
+            try:
+                transport._ensure = lambda: None
+                transport._page = MagicMock()
+                transport._page.goto.return_value.status = 200
+                transport._page.evaluate.return_value = detail()
+                url = f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED"
+                transport.resolve_item(url)
+                transport._detail_links[(author, IDS[-1])] = "unverified-stale"
+                transport._page.locator.return_value.evaluate_all.return_value = []
+                calls = []
+                def fetch(a, cursor):
+                    calls.append(cursor)
+                    return {"success": True, "data": {"notes": [{"note_id": IDS[len(calls)], "user": {"user_id": a}}], "cursor": IDS[len(calls)], "has_more": True}}
+                transport._fetch = fetch
+                transport.prepare_details(author, [ITEM, IDS[-1]])
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(transport._detail_links[(author, ITEM)], url)
+                self.assertNotIn((author, IDS[-1]), transport._detail_links)
+            finally:
+                transport.close()
+
+    def test_verified_links_clear_on_login_wall_and_unavailable_item(self):
+        from tests.test_xhs_content import detail, AUTHOR as author, ITEM
+        for category in ("needs_login", "verification_required", "item_unavailable", "resolve_unavailable"):
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as tmp:
+                transport = XhsBrowserTransport(Path(tmp)/"profile")
+                try:
+                    transport._ensure = lambda: None
+                    transport._page = MagicMock()
+                    transport._page.goto.return_value.status = 200
+                    transport._page.evaluate.return_value = detail()
+                    transport.resolve_item(f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED")
+                    if category in {"item_unavailable", "resolve_unavailable"}:
+                        transport._page.evaluate.return_value = None
+                        transport._page.locator.return_value.inner_text.return_value = "当前笔记暂时无法浏览"
+                        action = (lambda: transport.detail(author, ITEM)) if category == "item_unavailable" else (lambda: transport.resolve_item(f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED"))
+                    else:
+                        def action():
+                            def fail():
+                                raise AdapterFailure(category)
+                            transport._call(fail)
+                    with self.assertRaises(AdapterFailure) as error:
+                        action()
+                    self.assertEqual(error.exception.category, "item_unavailable" if category == "resolve_unavailable" else category)
+                    self.assertEqual(transport._verified_detail_links, {})
+                    self.assertEqual(transport._detail_links, {})
+                finally:
+                    transport.close()
+
     def test_resolve_uses_exact_note_author_and_rejects_mismatch_without_scanning(self):
         from tests.test_xhs_content import detail, AUTHOR as observed_author, ITEM
         with tempfile.TemporaryDirectory() as tmp:
@@ -251,6 +327,14 @@ class ReferenceTests(unittest.TestCase):
                 self.assertNotIn("RESOLVE_SECRET",result["source_url"])
                 transport._page.mouse.wheel.assert_not_called()
                 self.assertEqual(transport._page.goto.call_count,1)
+                from creator_archive.links import classify
+                profile_url = f"https://www.xiaohongshu.com/user/profile/{observed_author}/{ITEM}?xsec_token=RESOLVE_SECRET"
+                classified = classify(profile_url)
+                self.assertEqual(classified["kind"], "item")
+                self.assertIsNone(classified["candidate_author_id"])
+                self.assertEqual(transport.resolve_item(profile_url)["author_id"], observed_author)
+                with self.assertRaises(AdapterFailure):
+                    transport.resolve_item(profile_url.replace(observed_author, "c" * 24))
                 transport._page.evaluate.return_value["note"]["noteId"] = IDS[6]
                 with self.assertRaises(AdapterFailure):
                     transport.resolve_item(url)

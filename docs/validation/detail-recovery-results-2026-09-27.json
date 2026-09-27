@@ -105,5 +105,55 @@
     "assets": 38,
     "export_body_rows": 1,
     "old_files_unchanged_after_export": true
+  },
+  "verified_reference_reuse": {
+    "evidence_level": "live_production_service_transport",
+    "failure_injection": false,
+    "initial_reference_pages": 2,
+    "existing_sample_verified": true,
+    "job": 27,
+    "state": "succeeded",
+    "target_count": 2,
+    "item_count": 2,
+    "failed_count": 0,
+    "pending_count": 0,
+    "batch_reference_pages": 0,
+    "same_session_verified_link_count": 2,
+    "real_partial_failure_observed": false,
+    "real_partial_failure_recovery_verified": false,
+    "verified_links_cleared_on_close": true,
+    "original_task19_unchanged": true,
+    "task19_success_snapshots_unchanged": true,
+    "counts": {
+      "items": 1393,
+      "pages": 90,
+      "assets": 40,
+      "details": 17
+    },
+    "old_file_count": 93,
+    "old_file_hash_mtime_unchanged": true,
+    "new_sample_asset_count": 2,
+    "new_sample_assets_valid": true,
+    "new_author_still_paused": true,
+    "access_parameters_not_in_sql_dump": true,
+    "new_sample_image_sizes": [
+      [
+        1080,
+        1440
+      ],
+      [
+        1080,
+        1440
+      ]
+    ],
+    "export_job": 28,
+    "export_state": "succeeded",
+    "running_service_version": "0.4.5",
+    "old_files_unchanged_after_export": true,
+    "exported_corpus_rows": 2,
+    "local_archive_index_readable": true,
+    "parameters_absent_from_text_exports": true,
+    "user_waived_original_task19_link_lookup": true,
+    "real_probe_initial_issue": "profile_note_link_rejected_by_classifier; fixed and repeated successfully"
   }
 }
