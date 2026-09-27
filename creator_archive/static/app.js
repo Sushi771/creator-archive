@@ -227,11 +227,12 @@ function metricValue(metric) {
 }
 function metricEvidence(metric) {
   const parts = [];
-  if (metric?.raw !== null && metric?.raw !== undefined) parts.push(`原始显示：${metric.raw}`);
+  if (metric?.raw === "") parts.push("原始字段：空字符串（没有数字，不能当作 0）");
+  else if (metric?.raw !== null && metric?.raw !== undefined) parts.push(`原始显示：${metric.raw}`);
   parts.push(`来源：${metric?.source || "未采集"}`);
   parts.push(`有效值时间：${hasMetricValue(metric) ? formatTime(metric.collected_at) || "未知" : "未知"}`);
   if (["missing", "failed"].includes(metric?.last_attempt_status)) {
-    parts.push(`最近尝试 ${formatTime(metric.last_attempt_at) || "时间未知"}：${metric.last_attempt_status === "failed" ? "更新失败" : "来源缺失"}；${hasMetricValue(metric) ? "已有有效值及时间保留" : "仍无有效值"}`);
+    parts.push(`最近尝试 ${formatTime(metric.last_attempt_at) || "时间未知"}：${metric.last_attempt_status === "failed" ? "更新失败" : "未取得有效数字，原因未确认"}；${hasMetricValue(metric) ? "已有有效值及时间保留" : "仍无有效值"}`);
   }
   return parts.join(" · ");
 }
@@ -357,7 +358,7 @@ async function openItem(item) {
   content.append(actions,node("p","保存和刷新由持久任务执行。成功媒体复用；仅刷新指标不会重新下载媒体。任务失败时保留已有进度，可到「历史与任务」继续。","hint"));
   content.append(node("h3","互动指标"));
   appendMetrics(content,data.metrics,true);
-  content.append(node("p","0 表示真实零值，未知表示尚无有效数据；约为近似值，≥ 为下界。各字段以自己的有效采集时间为准。","hint"));
+  content.append(node("p","0 表示真实零值，未知表示尚无有效数据；约为近似值，≥ 为下界。各字段以自己的有效采集时间为准。原20篇固定样本中的35项未知，经同页诊断均为原始字段空串、详情互动条无数字；这只解释该次观察，不能推断其他作品、平台原因或永久可用性。查看历史不会触发采集。","hint"));
   if(data.metric_snapshots?.length) {
     const history=node("details",null,"metric-history");
     history.append(node("summary",`查看历史观察（${num(data.snapshot_total??data.metric_snapshots.length)} 次）`));

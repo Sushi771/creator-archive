@@ -33,6 +33,8 @@ assert.match(run('metricEvidence({value:10,source:"detail",collected_at:100,last
 // Expected: the time remains an observation time, never an effective value time.
 assert.match(run('metricEvidence({value:null,quality:"unknown",source:"detail",collected_at:100,last_attempt_at:100,last_attempt_status:"missing"})'),/有效值时间：未知/);
 assert.doesNotMatch(run('metricEvidence({value:null,quality:"unknown",last_attempt_status:"missing"})'),/已有有效值及时间保留/);
+assert.match(run('metricEvidence({value:null,quality:"unknown",raw:"",last_attempt_status:"missing"})'),/原始字段：空字符串.*不能当作 0.*未取得有效数字，原因未确认/);
+assert.doesNotMatch(run('metricEvidence({value:null,quality:"unknown",raw:null,last_attempt_status:"failed"})'),/原始字段：空字符串/);
 run('api=async()=>({item:{platform:"xiaohongshu",author_id:"author",item_id:"sample",metrics:{likes:{value:null,quality:"unknown"}},metric_snapshots:[{collected_at:100,source:"detail",status:"partial",metrics:{likes:{value:null,quality:"unknown"}}}]}})');
 await run('openItem({platform:"xiaohongshu",author_id:"author",item_id:"sample"})');
 const walk=(entry)=>[entry,...(entry?.children||[]).flatMap(walk)];
@@ -43,6 +45,8 @@ assert.match(snapshotLikes?.title||'',/有效值时间：未知/);
 const detailLikes=walk(elements['detail-content']).find(entry=>entry?.className==='metric-grid')?.children?.[0];
 assert.equal(detailLikes?.children?.[1]?.textContent,'未知');
 assert.match(detailLikes?.title||'',/有效值时间：未知/);
+assert.ok(walk(elements['detail-content']).some(entry=>entry?.textContent?.includes('原20篇固定样本中的35项未知')),'Detail explanation scopes live evidence to the fixed sample');
+assert.match(html,/原20篇固定样本的35项未知经诊断为原始空串、页面无数字/);
 run('globalThis.calls=[];api=async path=>{calls.push(path);return {total:42,items:[{platform:"xiaohongshu",author_id:"author",item_id:"cross-page-result",metrics:{likes:{value:200,quality:"exact"}}}]};}');
 elements['filter-author'].value='xiaohongshu|author';
 elements['filter-type'].value='video';elements['filter-sort'].value='likes';elements['filter-order'].value='asc';
