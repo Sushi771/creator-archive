@@ -219,8 +219,9 @@ async function resolveAndSaveItem() {
 }
 const metricNames = {likes:"点赞",collects:"收藏",comments:"评论"};
 const contentTypeNames = {image:"图文",video:"视频",unknown:"类型未知"};
+const hasMetricValue = metric => metric?.value !== null && metric?.value !== undefined && metric.quality !== "unknown";
 function metricValue(metric) {
-  if (metric?.value === null || metric?.value === undefined || metric.quality === "unknown") return "未知";
+  if (!hasMetricValue(metric)) return "未知";
   const prefix = metric.quality === "approximate" ? "约 " : metric.quality === "lower_bound" ? "≥ " : "";
   return prefix + num(metric.value);
 }
@@ -228,9 +229,9 @@ function metricEvidence(metric) {
   const parts = [];
   if (metric?.raw !== null && metric?.raw !== undefined) parts.push(`原始显示：${metric.raw}`);
   parts.push(`来源：${metric?.source || "未采集"}`);
-  parts.push(`有效值时间：${formatTime(metric?.collected_at) || "未知"}`);
+  parts.push(`有效值时间：${hasMetricValue(metric) ? formatTime(metric.collected_at) || "未知" : "未知"}`);
   if (["missing", "failed"].includes(metric?.last_attempt_status)) {
-    parts.push(`最近尝试 ${formatTime(metric.last_attempt_at) || "时间未知"}：${metric.last_attempt_status === "failed" ? "更新失败" : "来源缺失"}；已有有效值及时间保留`);
+    parts.push(`最近尝试 ${formatTime(metric.last_attempt_at) || "时间未知"}：${metric.last_attempt_status === "failed" ? "更新失败" : "来源缺失"}；${hasMetricValue(metric) ? "已有有效值及时间保留" : "仍无有效值"}`);
   }
   return parts.join(" · ");
 }
@@ -243,7 +244,7 @@ function appendMetrics(container, metrics, detailed = false) {
     entry.title = metricEvidence(metric);
     if (detailed) entry.append(node("small", metricEvidence(metric)));
     else {
-      const stamp = formatTime(metric?.collected_at);
+      const stamp = hasMetricValue(metric) ? formatTime(metric.collected_at) : "";
       entry.append(node("small", stamp ? `采于 ${stamp}` : "尚无有效采集时间"));
       if (["missing", "failed"].includes(metric?.last_attempt_status)) entry.append(node("small", "最近更新未取得有效值", "metric-stale"));
     }
@@ -363,7 +364,7 @@ async function openItem(item) {
     for(const snapshot of data.metric_snapshots) {
       const entry=node("article",null,"snapshot-entry");
       entry.append(node("p",`${formatTime(snapshot.collected_at)||"时间未知"} · ${snapshot.source||"来源未知"} · ${snapshot.status==="ok"?"已观察":snapshot.status==="failed"?"观察失败":snapshot.status==="partial"?"部分指标缺失":snapshot.status||"状态未知"}`,"meta"));
-      appendMetrics(entry,Object.fromEntries(Object.entries(snapshot.metrics||{}).map(([key,metric])=>[key,{...metric,source:metric.source||snapshot.source,collected_at:metric.collected_at??snapshot.collected_at}])));
+      appendMetrics(entry,Object.fromEntries(Object.entries(snapshot.metrics||{}).map(([key,metric])=>[key,{...metric,source:metric.source||snapshot.source,collected_at:hasMetricValue(metric)?metric.collected_at??snapshot.collected_at:null}])));
       if(snapshot.reason) entry.append(node("p",snapshot.reason,"hint"));
       history.append(entry);
     }

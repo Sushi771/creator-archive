@@ -144,7 +144,9 @@ class DetailTransportTests(unittest.TestCase):
                 adapter._detail_page.locator.return_value.inner_text.return_value = ""
                 partial = detail()
                 partial["note"]["interactInfo"] = {}
-                adapter._detail_page.evaluate.side_effect = [partial, detail(), detail()]
+                hydrated = detail()
+                hydrated["note"]["interactInfo"]["commentCount"] = "2"
+                adapter._detail_page.evaluate.side_effect = [partial, hydrated, hydrated]
                 supplied = detail_url(ITEM) + "?xsec_token=synthetic"
                 result = adapter.detail(AUTHOR, ITEM, supplied)
                 self.assertEqual(result["metrics"]["likes"]["value"], 0)
@@ -155,6 +157,53 @@ class DetailTransportTests(unittest.TestCase):
                 self.assertEqual(adapter._detail_page.goto.call_args.args[0], supplied)
                 self.assertEqual(adapter._detail_page.goto.call_count, 2)
                 adapter._detail_page.locator.return_value.evaluate_all.assert_not_called()
+            finally:
+                adapter.close()
+
+    def test_partially_hydrated_counts_wait_for_remaining_fields(self):
+        # Trigger: SSR has one count; the other two arrive on the next read.
+        # Expected: all three observed values. Previously it returned at SSR.
+        from unittest.mock import MagicMock
+        with TemporaryDirectory() as tmp:
+            adapter = XhsBrowserTransport(Path(tmp) / "profile")
+            try:
+                adapter._ensure = lambda: None
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 200
+                adapter._detail_page.locator.return_value.inner_text.return_value = ""
+                partial = detail()
+                partial["note"]["interactInfo"] = {
+                    "likedCount": "7", "collectedCount": "", "commentCount": ""}
+                hydrated = detail()
+                hydrated["note"]["interactInfo"] = {
+                    "likedCount": "", "collectedCount": "3", "commentCount": "2"}
+                adapter._detail_page.evaluate.side_effect = [partial, hydrated]
+                result = adapter.detail(AUTHOR, ITEM, detail_url(ITEM) + "?xsec_token=synthetic")
+                self.assertEqual({key: value["value"] for key, value in result["metrics"].items()},
+                                 {"likes": 7, "collects": 3, "comments": 2})
+                self.assertEqual(adapter._detail_page.evaluate.call_count, 2)
+                self.assertEqual(adapter._detail_page.goto.call_count, 1)
+            finally:
+                adapter.close()
+
+    def test_partial_counts_stay_unknown_after_bounded_wait(self):
+        from unittest.mock import MagicMock
+        with TemporaryDirectory() as tmp:
+            adapter = XhsBrowserTransport(Path(tmp) / "profile", timeout=.01)
+            try:
+                adapter._ensure = lambda: None
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 200
+                adapter._detail_page.locator.return_value.inner_text.return_value = ""
+                partial = detail()
+                partial["note"]["interactInfo"] = {
+                    "likedCount": "7", "collectedCount": "", "commentCount": ""}
+                adapter._detail_page.evaluate.return_value = partial
+                result = adapter.detail(AUTHOR, ITEM, detail_url(ITEM) + "?xsec_token=synthetic")
+                self.assertEqual(result["metrics"]["likes"]["value"], 7)
+                self.assertIsNone(result["metrics"]["collects"]["value"])
+                self.assertIsNone(result["metrics"]["comments"]["value"])
+                self.assertEqual(adapter._detail_page.goto.call_count, 1)
             finally:
                 adapter.close()
 

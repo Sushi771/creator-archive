@@ -29,6 +29,20 @@ assert.equal(run('metricValue({value:null,quality:"unknown"})'),'未知');
 assert.equal(run('metricValue({value:12000,quality:"approximate"})'),'约 12,000');
 assert.equal(run('metricValue({value:100,quality:"lower_bound"})'),'≥ 100');
 assert.match(run('metricEvidence({value:10,source:"detail",collected_at:100,last_attempt_at:200,last_attempt_status:"failed"})'),/更新失败.*已有有效值及时间保留/);
+// Trigger: an observation contains no valid metric, but has an observation time.
+// Expected: the time remains an observation time, never an effective value time.
+assert.match(run('metricEvidence({value:null,quality:"unknown",source:"detail",collected_at:100,last_attempt_at:100,last_attempt_status:"missing"})'),/有效值时间：未知/);
+assert.doesNotMatch(run('metricEvidence({value:null,quality:"unknown",last_attempt_status:"missing"})'),/已有有效值及时间保留/);
+run('api=async()=>({item:{platform:"xiaohongshu",author_id:"author",item_id:"sample",metrics:{likes:{value:null,quality:"unknown"}},metric_snapshots:[{collected_at:100,source:"detail",status:"partial",metrics:{likes:{value:null,quality:"unknown"}}}]}})');
+await run('openItem({platform:"xiaohongshu",author_id:"author",item_id:"sample"})');
+const walk=(entry)=>[entry,...(entry?.children||[]).flatMap(walk)];
+const snapshot=walk(elements['detail-content']).find(entry=>entry?.className==='snapshot-entry');
+const snapshotLikes=walk(snapshot).find(entry=>entry?.className==='metric-value'&&entry.children?.[0]?.textContent==='点赞');
+assert.equal(snapshotLikes?.children?.[1]?.textContent,'未知');
+assert.match(snapshotLikes?.title||'',/有效值时间：未知/);
+const detailLikes=walk(elements['detail-content']).find(entry=>entry?.className==='metric-grid')?.children?.[0];
+assert.equal(detailLikes?.children?.[1]?.textContent,'未知');
+assert.match(detailLikes?.title||'',/有效值时间：未知/);
 run('globalThis.calls=[];api=async path=>{calls.push(path);return {total:42,items:[{platform:"xiaohongshu",author_id:"author",item_id:"cross-page-result",metrics:{likes:{value:200,quality:"exact"}}}]};}');
 elements['filter-author'].value='xiaohongshu|author';
 elements['filter-type'].value='video';elements['filter-sort'].value='likes';elements['filter-order'].value='asc';
@@ -41,6 +55,8 @@ assert.equal(params.get('offset'),'0');assert.equal(params.get('author_id'),'aut
 for(const [key,value] of Object.entries({content_type:'video',sort:'likes',order:'asc',min_likes:'0',min_collects:'10',min_comments:'2',date_from:'2026-01-01',date_to:'2026-09-27',missing_metric:'comments',has_assets:'true'})) assert.equal(params.get(key),value);
 assert.match(elements['item-count'].textContent,/42/);
 assert.equal(elements['item-list'].children.length,1,'Server results rendered without per-page client filtering');
+const libraryMetrics=walk(elements['item-list']).filter(entry=>entry?.className==='metric-value');
+assert.deepEqual(libraryMetrics.map(entry=>entry.children?.[1]?.textContent),['200','未知','未知'],'Absent library metrics remain unknown');
 await run('ui.offset=20;loadItems()');
 params=new URL(run('calls.at(-1)'), 'http://local').searchParams;
 assert.equal(params.get('offset'),'20');assert.equal(params.get('min_likes'),'0');assert.equal(params.get('sort'),'likes');

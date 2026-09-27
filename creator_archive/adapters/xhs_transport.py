@@ -283,17 +283,24 @@ class XhsBrowserTransport:
                         resolved_author = author_id or observed_author
                         if urlsplit(url).path.startswith("/user/profile/") and urlsplit(url).path != f"/user/profile/{resolved_author}/{item_id}":
                             raise TransportFailure("unavailable", "作品页面与链接中的作者不符；未收录。")
-                        projected = project_detail(state, author_id=resolved_author, item_id=item_id)
+                        current = project_detail(state, author_id=resolved_author, item_id=item_id)
+                        if projected is not None:
+                            # Hydration can temporarily omit a field that was
+                            # already observed on this same navigation.
+                            for key, previous in projected["metrics"].items():
+                                if current["metrics"][key]["value"] is None and previous["value"] is not None:
+                                    current["metrics"][key] = previous
+                        projected = current
                         # A successful explicit navigation can be reused for a
                         # canonical metrics-only refresh in this same session.
                         if parse_qs(urlsplit(url_to_open).query).get("xsec_token"):
                             self._detail_links[(resolved_author, item_id)] = url_to_open
                             self._verified_detail_links[(resolved_author, item_id)] = url_to_open
-                        if any(m["value"] is not None for m in projected["metrics"].values()):
+                        if all(m["value"] is not None for m in projected["metrics"].values()):
                             return projected
-                        # Some notes publish body/media in SSR before hydrated
-                        # interaction counters. Re-read only this same page for
-                        # a bounded interval; missing values never become zero.
+                        # Counters can hydrate at different times, including
+                        # after one has already appeared. Re-read this page
+                        # briefly; missing values never become zero.
                         if hydration_deadline is None:
                             hydration_deadline = min(deadline, time.monotonic() + 2.0)
                     text = self._detail_page.locator("body").inner_text(timeout=3000)
