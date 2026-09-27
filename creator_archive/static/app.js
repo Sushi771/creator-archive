@@ -6,7 +6,7 @@ const coverageName = {complete_for_accessible_scope:"已观察到可获取列表
 const modeName = {full:"全部历史",latest:"检查更新",archive:"本地归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
 const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
-const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:""};
+const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:"",confirmAuthor:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
 function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
@@ -43,7 +43,42 @@ async function perform(button, action) {
 }
 function authorBy(platform,id) {return ui.workspace?.subscriptions.find(x=>x.platform===platform&&x.author_id===id);}
 function displayAuthor(platform,id) {return authorBy(platform,id)?.display_name||id||"全部作者";}
-function renderSubscriptions(subscriptions) {$("nav-count").textContent=num(subscriptions.length);const list=$("subscription-list");list.replaceChildren();if(!subscriptions.length){empty(list,"从第一位作者开始","粘贴链接添加订阅，或在「数据与接入」导入已有真实验证资料。");return;}for(const sub of subscriptions){const row=node("article",null,"subscription-row"),info=node("div",null,"author-info"),text=node("div");info.append(node("div",(sub.display_name||sub.author_id||"?").slice(0,1),"avatar"));text.append(node("h3",sub.display_name||sub.author_id),node("div",`${nameOf(sub.platform)} · ${sub.author_id}`,"meta"));const tags=node("div",null,"badges");tags.append(badge(sub.enabled?"订阅中":"已暂停",sub.enabled?"":"neutral"),badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文`,"neutral"));text.append(tags);if(sub.message)text.append(node("p",sub.message,"hint"));info.append(text);const actions=node("div",null,"author-actions");actions.append(actionButton("查看作品",async()=>{ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}),actionButton("全部历史",()=>startJob("full",sub)),actionButton("检查更新",()=>startJob("latest",sub)),actionButton("保存内容",()=>startJob("content",sub)),actionButton("刷新指标",()=>startJob("metrics",sub)),actionButton("归档",()=>startJob("archive",sub)),actionButton(sub.enabled?"暂停":"启用",async()=>{await api("/api/subscriptions/toggle",{platform:sub.platform,author_id:sub.author_id,enabled:!sub.enabled});notify(`${sub.display_name||sub.author_id}：已${sub.enabled?"暂停":"启用"}订阅。已有资料保留。`);await refresh(true);}));if(!sub.identity_verified&&sub.platform==="xiaohongshu")actions.append(actionButton("核验作者",async()=>{const result=await api("/api/subscriptions/verify",{platform:sub.platform,author_id:sub.author_id});notify(result.message||"作者核验已返回，请查看身份状态。");await refresh(true);}));if(sub.archive_url){const link=safeLink(sub.archive_url,"打开归档");if(link)actions.append(link);}row.append(info,actions);list.append(row);}}
+function renderSubscriptions(subscriptions) {
+  $("nav-count").textContent=num(subscriptions.length);
+  const list=$("subscription-list");list.replaceChildren();
+  if(!subscriptions.length){empty(list,"从第一位作者开始","粘贴链接添加订阅，或在「数据与接入」导入已有真实验证资料。");return;}
+  for(const sub of subscriptions){
+    const row=node("article",null,"subscription-row"),info=node("div",null,"author-info"),text=node("div");
+    info.append(node("div",(sub.display_name||sub.author_id||"?").slice(0,1),"avatar"));
+    text.append(node("h3",sub.display_name||sub.author_id),node("div",`${nameOf(sub.platform)} · ${sub.author_id}`,"meta"));
+    const tags=node("div",null,"badges");
+    tags.append(badge(sub.subscription_confirmation_required?"待确认订阅":sub.enabled?"订阅中":"已暂停",sub.subscription_confirmation_required?"warning":sub.enabled?"":"neutral"),
+                badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),
+                badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文`,"neutral"));
+    text.append(tags);
+    if(sub.subscription_confirmation_required)text.append(node("p","作品作者已核验；确认前不进入全部订阅批次，也不会自动扫描历史。","hint"));
+    else if(sub.message)text.append(node("p",sub.message,"hint"));
+    info.append(text);
+    const actions=node("div",null,"author-actions");
+    actions.append(actionButton("查看作品",async()=>{ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
+    if(sub.subscription_confirmation_required){
+      actions.append(actionButton("确认订阅",()=>openSubscriptionConfirmation(sub)));
+    } else {
+      actions.append(actionButton("全部历史",()=>startJob("full",sub)),actionButton("检查更新",()=>startJob("latest",sub)),
+        actionButton("保存内容",()=>startJob("content",sub)),actionButton("刷新指标",()=>startJob("metrics",sub)),
+        actionButton("归档",()=>startJob("archive",sub)),actionButton(sub.enabled?"暂停":"启用",async()=>{
+          await api("/api/subscriptions/toggle",{platform:sub.platform,author_id:sub.author_id,enabled:!sub.enabled});
+          notify(`${sub.display_name||sub.author_id}：已${sub.enabled?"暂停":"启用"}订阅。已有资料保留。`);await refresh(true);
+        }));
+    }
+    if(!sub.identity_verified&&sub.platform==="xiaohongshu")actions.append(actionButton("核验作者",async()=>{
+      const result=await api("/api/subscriptions/verify",{platform:sub.platform,author_id:sub.author_id});
+      notify(result.message||"作者核验已返回，请查看身份状态。");await refresh(true);
+    }));
+    if(sub.archive_url){const link=safeLink(sub.archive_url,"打开归档");if(link)actions.append(link);}
+    row.append(info,actions);list.append(row);
+  }
+}
 function renderJobs(runs) {const list=$("job-list");list.replaceChildren();if(!runs.length){empty(list,"还没有任务","添加作者后获取历史，或将已有作品按作者归档。任务进度会保存在本机。");return;}for(const run of [...runs].sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))){const card=node("article",null,"job-card"),top=node("div",null,"job-top"),title=node("div");title.append(node("h3",`${run.display_name||displayAuthor(run.platform,run.author_id)} · ${modeName[run.mode]||run.mode||"采集任务"}`),node("div",`${nameOf(run.platform)} · 任务 #${run.id}`,"meta"));const tone=["failed","blocked","needs_login","partial","rate_limited","interrupted"].includes(run.state)?"warning":"";top.append(title,badge(run.reason==="validation_import"?"历史观察已导入":stateName[run.state]||run.state||"待处理",tone));const progress=["content","metrics"].includes(run.mode)?`本次已成功 ${num(run.item_count)} / ${num(run.target_count)} 个作品 · 已尝试未完成 ${num(run.failed_count)} 个 · 待处理 ${num(run.pending_count)} 个；成功资源和有效指标已保留`:run.mode==="archive"?`本次已导出 ${num(run.item_count)} 个作品记录${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""}`:`本次已保存 ${num(run.pages)} 页 · ${num(run.item_count)} 个 ID${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""} · ${coverageName[run.coverage]||"历史覆盖未知"}`;card.append(top,node("p",progress,"job-progress"));if(run.message||run.reason||run.next_step){const issue=node("div",null,"job-issue");issue.append(node("p",run.message||reasonName[run.reason]||`原因：${run.reason||"尚未确定"}`));if(run.next_step)issue.append(node("p",`下一步：${run.next_step}`));card.append(issue);}const bottom=node("div",null,"job-bottom");bottom.append(node("span",formatTime(run.updated_at)?`更新于 ${formatTime(run.updated_at)}`:"进度已持久保存"));const actions=node("div",null,"actions");if(run.can_resume)actions.append(actionButton("从检查点继续",async()=>{await api(`/api/jobs/${encodeURIComponent(run.id)}/resume`,{});notify("已请求继续任务，成功页和已有资料会复用。请查看任务状态。");await refresh(true);}));if(["content","metrics"].includes(run.mode))actions.append(actionButton("查看未完成 / 补充链接",()=>openRecovery(run)));const archiveUrl=run.archive_url||run.export?.archive_url;if(archiveUrl){const link=safeLink(archiveUrl,"打开归档");if(link)actions.append(link);}for(const author of run.export?.authors||[]){const label=displayAuthor(author.platform,author.author_id);for(const [url,title] of [[author.manifest_url,`${label} · 清单`],[author.corpus_url,`${label} · 正文语料`]]){const link=safeLink(url,title);if(link)actions.append(link);}}bottom.append(actions);card.append(bottom);list.append(card);}}
 function renderPlatforms(platforms) {const list=$("platform-list");list.replaceChildren();for(const p of platforms){const card=node("article",null,"platform-card"),heading=node("h3",nameOf(p.platform));heading.append(badge(p.status==="experimental"?"实验接入":p.available?"接入可用":"接入未完成",p.status==="experimental"||!p.available?"warning":""));card.append(heading,node("p",p.message||"尚无可验证的接入状态。"));if(p.platform==="xiaohongshu"){const actions=node("div",null,"actions");actions.append(actionButton("打开专用登录浏览器",async()=>{const result=await api("/api/platforms/xiaohongshu/login",{});notify(result.message||"已请求打开专用浏览器，请在浏览器中自行登录，再从检查点继续任务。");await refresh();}));card.append(actions);}list.append(card);}if(!platforms.length)empty(list,"暂无平台状态","请刷新本机服务。");}
 function renderFilters(subscriptions) {const selected=ui.filter;$("filter-author").replaceChildren(new Option("全部作者",""));for(const sub of subscriptions)$("filter-author").append(new Option(`${sub.display_name||sub.author_id} · ${nameOf(sub.platform)}`,`${sub.platform}|${sub.author_id}`));$("filter-author").value=selected;if($("filter-author").value!==selected){ui.filter="";ui.offset=0;}}
@@ -116,6 +151,29 @@ async function refresh(forceItems = false, background = false) {
   finally { if (ui.refreshPromise === request) ui.refreshPromise = null; }
 }
 async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();const result=await api("/api/jobs",body);notify(result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
+function openSubscriptionConfirmation(sub) {
+  if(!sub.subscription_confirmation_required)return;
+  ui.confirmAuthor={platform:sub.platform,author_id:sub.author_id};
+  $("confirm-subscription-author").textContent=`${sub.display_name||sub.author_id} · ${sub.author_id}`;
+  $("confirm-subscription-error").textContent="";
+  $("confirm-subscription-dialog").showModal();
+}
+async function confirmSubscription() {
+  const target=ui.confirmAuthor;
+  if(!target)return;
+  let result;
+  try {
+    result=await api("/api/subscriptions/confirm",target);
+  } catch(error) {
+    $("confirm-subscription-error").textContent=`订阅确认未完成；已核验作品与旧任务保留。${error.message}`;
+    throw error;
+  }
+  $("confirm-subscription-dialog").close();
+  notify(result.message);
+  try { await refresh(true); }
+  catch(error) { notify(`订阅已确认，但页面刷新失败；请刷新工作区核对状态。${error.message}`,true); }
+  $("subscriptions").scrollIntoView();
+}
 async function resolveAndSaveItem() {
   const input=$("resolve-item-link"),status=$("resolve-item-result");
   if(!input.reportValidity())return;
@@ -127,7 +185,7 @@ async function resolveAndSaveItem() {
   const sourceUrl=item.resolved_from_short_link?undefined:text.match(/https?:\/\/[^\s<>"'，。；）]+/g)?.[0];
   try {
     const job=await api("/api/jobs",{mode:"content",platform:item.platform,author_id:item.author_id,item_id:item.item_id,source_url:sourceUrl});
-    status.textContent=`目标作品已核验收录；单篇保存任务 #${job.job_id} 已创建。请到“历史与任务”查看正文与媒体结果。`;
+    status.textContent=`目标作品已核验收录；单篇保存任务 #${job.job_id} 已创建。请到“历史与任务”查看正文与媒体结果。${item.subscription_confirmation_required?"如需订阅这位作者，请在随后弹窗或作者卡片明确确认；确认本身不会扫描历史。":""}`;
     notify(status.textContent);
   } catch(error) {
     const message=`作品已核验收录，但保存任务未创建：${error.message}请在“作品资料库”找到这篇作品，待当前任务结束后点击“保存正文与缺失媒体”。`;
@@ -136,6 +194,10 @@ async function resolveAndSaveItem() {
   }
   input.value="";
   await refresh(true);
+  if(item.subscription_confirmation_required){
+    const sub=ui.workspace?.subscriptions.find(s=>s.platform===item.platform&&s.author_id===item.author_id);
+    if(sub?.subscription_confirmation_required)openSubscriptionConfirmation(sub);
+  }
   $("jobs").scrollIntoView();
 }
 const metricNames = {likes:"点赞",collects:"收藏",comments:"评论"};
@@ -309,6 +371,9 @@ async function openItem(item) {
 
 $("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined});$("link-result").textContent=result.message||"订阅已保存。作者核验与采集能力请查看订阅和平台状态。";notify($("link-result").textContent);await refresh(true);});});
 $("resolve-item-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,resolveAndSaveItem);});
+$("confirm-subscription").onclick=()=>perform($("confirm-subscription"),confirmSubscription);
+$("cancel-subscription").onclick=()=>$("confirm-subscription-dialog").close();
+$("confirm-subscription-dialog").addEventListener("close",()=>{ui.confirmAuthor=null;});
 $("classify").onclick=()=>perform($("classify"),async()=>{if(!$("link").reportValidity())return;const r=await api("/api/links/classify",{text:$("link").value});$("link-result").textContent=`${nameOf(r.platform)} · ${kindName[r.kind]||r.kind}。${r.message||""}${r.candidate_author_id?` 候选作者 ID：${r.candidate_author_id}`:""}`;});
 for(const b of document.querySelectorAll("[data-job]"))b.onclick=()=>perform(b,()=>startJob(b.dataset.job));
 $("refresh").onclick=()=>perform($("refresh"),async()=>{await refresh(true);notify("已刷新本机持久状态。");});

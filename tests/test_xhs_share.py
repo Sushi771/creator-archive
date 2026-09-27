@@ -128,6 +128,86 @@ class RegistrationTests(unittest.TestCase):
             self.assertNotIn("SYNTHETIC_SECRET", dump)
             self.assertNotIn("xhslink", dump)
 
+    def test_verified_item_author_needs_explicit_durable_confirmation(self):
+        with patch("creator_archive.service.expand_share_link", return_value=TARGET):
+            response = self.resolve()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["subscription_confirmation_required"])
+        before = self.service.workspace()["subscriptions"][0]
+        self.assertTrue(before["identity_verified"])
+        self.assertTrue(before["subscription_confirmation_required"])
+        self.assertFalse(before["enabled"])
+        self.assertEqual(self.client.post("/api/subscriptions/toggle", json={
+            "platform":"xiaohongshu","author_id":AUTHOR,"enabled":True}, headers=self.headers).status_code, 422)
+        self.assertEqual(self.client.post("/api/jobs", json={
+            "mode":"full","platform":"xiaohongshu","author_id":AUTHOR}, headers=self.headers).status_code, 422)
+        self.assertEqual(self.client.post("/api/jobs", json={"mode":"archive"}, headers=self.headers).status_code, 422)
+        with self.service.workflow.connect() as db:
+            original_item = tuple(db.execute("SELECT author_id,title,source_url FROM items").fetchone())
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM pages").fetchone()[0], 0)
+        self.source.resolve_item.reset_mock()
+        confirm = self.client.post("/api/subscriptions/confirm", json={
+            "platform":"xiaohongshu","author_id":AUTHOR}, headers=self.headers)
+        self.assertEqual(confirm.status_code, 200)
+        self.assertTrue(confirm.json()["subscription_confirmed"])
+        self.assertTrue(confirm.json()["enabled"])
+        self.source.resolve_item.assert_not_called()
+        self.assertEqual(self.client.post("/api/subscriptions/toggle", json={
+            "platform":"xiaohongshu","author_id":AUTHOR,"enabled":False}, headers=self.headers).status_code, 200)
+        self.assertFalse(self.service.workspace()["subscriptions"][0]["subscription_confirmation_required"])
+        self.assertFalse(self.service.workspace()["subscriptions"][0]["enabled"])
+        restarted = type(self.service)(self.service.root, adapter_factory=lambda _: self.source)
+        self.addCleanup(restarted.close)
+        self.assertFalse(restarted.workspace()["subscriptions"][0]["subscription_confirmation_required"],
+                         "Confirmation must survive a process restart and later pause")
+        repeat = self.client.post("/api/subscriptions/confirm", json={
+            "platform":"xiaohongshu","author_id":AUTHOR}, headers=self.headers)
+        self.assertEqual(repeat.status_code, 200)
+        self.assertFalse(repeat.json()["enabled"], "Repeated confirmation must not undo a later pause")
+        with self.service.workflow.connect() as db:
+            self.assertEqual(tuple(db.execute("SELECT author_id,title,source_url FROM items").fetchone()), original_item)
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM pages").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM subscription_confirmations").fetchone()[0], 1)
+        with patch.object(self.service, "_spawn"):
+            job = self.client.post("/api/jobs", json={"mode":"full"}, headers=self.headers)
+        self.assertEqual(job.status_code, 200)
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT author_id FROM jobs WHERE id=?", (job.json()["job_id"],)).fetchone()[0], AUTHOR)
+
+    def test_confirmation_refuses_unknown_or_unverified_author(self):
+        self.assertEqual(self.client.post("/api/subscriptions/confirm", json={
+            "platform":"xiaohongshu","author_id":AUTHOR}, headers=self.headers).status_code, 422)
+        self.assertEqual(self.client.post("/api/subscriptions/confirm", json={
+            "platform":"wechat","author_id":AUTHOR}, headers=self.headers).status_code, 422)
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM subscription_confirmations").fetchone()[0], 0)
+
+    def test_bulk_scope_excludes_pending_author_without_hiding_existing_subscription(self):
+        with patch("creator_archive.service.expand_share_link", return_value=TARGET):
+            self.assertEqual(self.resolve().status_code, 200)
+        old_author = "c" * 24
+        self.service.workflow.subscribe("xiaohongshu", old_author, "Existing", verified=True, evidence="synthetic")
+        with patch.object(self.service, "_spawn"):
+            response = self.client.post("/api/jobs", json={"mode":"archive"}, headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        with self.service.workflow.connect() as db:
+            self.assertEqual([r[0] for r in db.execute("SELECT author_id FROM jobs")], [old_author])
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE author_id=?", (AUTHOR,)).fetchone()[0], 1)
+
+    def test_legacy_enabled_exact_note_author_stays_confirmed_after_pause(self):
+        with patch("creator_archive.service.expand_share_link", return_value=TARGET):
+            self.assertEqual(self.resolve().status_code, 200)
+        with self.service.workflow.connect() as db:
+            db.execute("UPDATE subscriptions SET enabled=1 WHERE author_id=?", (AUTHOR,))
+        self.assertFalse(self.service.workspace()["subscriptions"][0]["subscription_confirmation_required"])
+        self.assertEqual(self.client.post("/api/subscriptions/toggle", json={
+            "platform":"xiaohongshu","author_id":AUTHOR,"enabled":False}, headers=self.headers).status_code, 200)
+        self.assertFalse(self.service.workspace()["subscriptions"][0]["subscription_confirmation_required"])
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM subscription_confirmations").fetchone()[0], 1)
+
     def test_failed_expansion_or_wrong_note_or_login_creates_nothing(self):
         with patch("creator_archive.service.expand_share_link", side_effect=ValueError("跳转失败")):
             self.assertEqual(self.resolve().status_code, 422)

@@ -78,6 +78,9 @@ class WorkspaceService:
                     platform TEXT NOT NULL, author_id TEXT NOT NULL, display_name TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL,
                     PRIMARY KEY(platform,author_id));
+                CREATE TABLE IF NOT EXISTS subscription_confirmations (
+                    platform TEXT NOT NULL, author_id TEXT NOT NULL, confirmed_at REAL NOT NULL,
+                    PRIMARY KEY(platform,author_id));
                 CREATE TABLE IF NOT EXISTS jobs (
                     id INTEGER PRIMARY KEY, platform TEXT NOT NULL, author_id TEXT NOT NULL,
                     mode TEXT NOT NULL, state TEXT NOT NULL, run_id INTEGER,
@@ -209,16 +212,54 @@ class WorkspaceService:
                 raise ValueError("作品与已有作者归属冲突；原资料未改动")
             # Keep existing names, pause state and content. A new author starts
             # paused; one observed note proves no historical coverage.
-            db.execute("INSERT OR IGNORE INTO subscriptions VALUES('xiaohongshu',?,?,?,0,?)",
+            db.execute("INSERT OR IGNORE INTO subscriptions(platform,author_id,display_name,identity_evidence,enabled,created_at) VALUES('xiaohongshu',?,?,?,0,?)",
                        (author, f"作品核验作者 · {author[-6:]}", "observed_browser_exact_note", time.time()))
             db.execute("INSERT OR IGNORE INTO items(platform,author_id,item_id,published_at,source_url,title,content_type) VALUES('xiaohongshu',?,?,?,?,?,?)",
                        (author,item_id,observed.get("published_at") or "",canonical,observed.get("title") or "",observed.get("content_type") or "unknown"))
+            subscription = db.execute("SELECT * FROM subscriptions WHERE platform='xiaohongshu' AND author_id=?", (author,)).fetchone()
+            confirmation_required = self._confirmation_required(subscription, db)
         return {"platform":"xiaohongshu","author_id":author,"item_id":item_id,"identity_verified":True,
+                "author_display_name":subscription["display_name"],"subscription_confirmation_required":confirmation_required,
+                "subscription_enabled":bool(subscription["enabled"]),
                 "resolved_from_short_link":classified["kind"] == "short_link",
-                "message":"已从目标作品核验归属并收录该作品；新作者默认暂停，历史与内容完整性尚未验证。"}
+                "message":"已从目标作品核验归属并收录该作品；新作者待确认订阅，历史与内容完整性尚未验证。"}
+
+    @staticmethod
+    def _confirmation_required(subscription, db) -> bool:
+        if subscription["identity_evidence"] != "observed_browser_exact_note" or subscription["enabled"]:
+            return False
+        return db.execute("SELECT 1 FROM subscription_confirmations WHERE platform=? AND author_id=?",
+                          (subscription["platform"], subscription["author_id"])).fetchone() is None
+
+    def confirm_subscription(self, platform: str, author_id: str) -> dict:
+        if platform != "xiaohongshu":
+            raise ValueError("此入口仅确认已核验作品的小红书作者订阅")
+        _id(author_id)
+        with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            subscription = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
+            if not subscription or subscription["identity_evidence"] != "observed_browser_exact_note":
+                raise ValueError("没有待确认的作品作者；请先在作品入口核验目标作品与作者")
+            if not db.execute("SELECT 1 FROM items WHERE platform=? AND author_id=? LIMIT 1", (platform, author_id)).fetchone():
+                raise ValueError("未找到该作者的已核验作品，原订阅状态未改动")
+            if self._confirmation_required(subscription, db):
+                db.execute("INSERT INTO subscription_confirmations VALUES(?,?,?)", (platform, author_id, time.time()))
+                db.execute("UPDATE subscriptions SET enabled=1 WHERE platform=? AND author_id=?", (platform, author_id))
+                enabled = True
+            else:
+                enabled = bool(subscription["enabled"])
+        return {"platform":platform,"author_id":author_id,"subscription_confirmed":True,"enabled":enabled,
+                "message":"已确认订阅该作者；原作品和任务保持不变。历史尚未自动扫描，可在作者操作中单独启动。"}
 
     def toggle(self, platform: str, author_id: str, enabled: bool) -> dict:
         with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            subscription = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
+            if subscription and self._confirmation_required(subscription, db) and enabled:
+                raise ValueError("这位作品作者尚未确认订阅；请在作者卡片点击“确认订阅”，旧资料已保留")
+            if subscription and subscription["identity_evidence"] == "observed_browser_exact_note" and subscription["enabled"]:
+                # Legacy v0.4.7 users may already have enabled this author.
+                db.execute("INSERT OR IGNORE INTO subscription_confirmations VALUES(?,?,?)", (platform, author_id, time.time()))
             count = 0
             for table in ("subscriptions", "subscription_intents"):
                 count += db.execute(f"UPDATE {table} SET enabled=? WHERE platform=? AND author_id=?", (int(enabled), platform, author_id)).rowcount
@@ -258,9 +299,14 @@ class WorkspaceService:
 
     def workspace(self) -> dict:
         with self.workflow.connect() as db:
-            subscriptions = [dict(r, identity_verified=True, evidence_level="observed_platform_identity") for r in db.execute("SELECT * FROM subscriptions ORDER BY created_at")]
+            subscriptions = [dict(r, identity_verified=True, evidence_level="observed_platform_identity",
+                                  subscription_confirmation_required=self._confirmation_required(r, db))
+                             for r in db.execute("SELECT * FROM subscriptions ORDER BY created_at")]
             known = {(s["platform"], s["author_id"]) for s in subscriptions}
-            subscriptions.extend(dict(r, identity_verified=False, evidence_level="unverified_link") for r in db.execute("SELECT * FROM subscription_intents ORDER BY created_at") if (r["platform"], r["author_id"]) not in known)
+            subscriptions.extend(dict(r, identity_verified=False, evidence_level="unverified_link",
+                                      subscription_confirmation_required=False)
+                                 for r in db.execute("SELECT * FROM subscription_intents ORDER BY created_at")
+                                 if (r["platform"], r["author_id"]) not in known)
             jobs = [self._public_job(dict(r), db) for r in db.execute("SELECT * FROM jobs ORDER BY id DESC")]
             for sub in subscriptions:
                 args = (sub["platform"], sub["author_id"])
@@ -370,9 +416,13 @@ class WorkspaceService:
             raise ValueError("指定作品批次须提供同一作者的1至200个ID，且不能同时提供单篇参数；全部作者范围不受此限制")
         selected = list(dict.fromkeys(item_ids)) if item_ids is not None else None
         source_url = self._validate_source(source_url,platform,item_id,author_id)
-        scope = [s for s in self.workspace()["subscriptions"] if not author_id or (s["platform"], s["author_id"]) == (platform, author_id)]
+        scope = [s for s in self.workspace()["subscriptions"]
+                 if (not author_id and not s["subscription_confirmation_required"])
+                 or (author_id and (s["platform"], s["author_id"]) == (platform, author_id))]
         if not scope:
-            raise ValueError("没有可处理的订阅，请先添加作者或导入已有验证资料")
+            raise ValueError("没有可处理的订阅；待确认的作品作者请先确认订阅，已有作品仍可单篇保存")
+        if mode in {"full", "latest"} and any(s["subscription_confirmation_required"] for s in scope):
+            raise ValueError("该作品作者尚未确认订阅；请先在作者卡片确认，原历史和作品保持不变")
         ids = []
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")

@@ -119,6 +119,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def toggle(body: ToggleInput):
         return service.toggle(body.platform, body.author_id, body.enabled)
 
+    @app.post("/api/subscriptions/confirm")
+    def confirm_subscription(body: AuthorInput):
+        return service.confirm_subscription(body.platform, body.author_id)
+
     @app.post("/api/subscriptions/verify")
     def verify(body: AuthorInput):
         return service.verify(body.platform, body.author_id)
