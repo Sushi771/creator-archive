@@ -199,10 +199,15 @@ assert.match(flattenText(elements['subscription-list']),/完整归档实验（�
 const batchAdvanced=html.match(/<details class="archive-experiments">[\s\S]*?<\/details>/)?.[0];
 assert.ok(batchAdvanced);
 assert.match(batchAdvanced,/data-job="full"/);
+assert.match(batchAdvanced,/data-job="all_archive"/);
 assert.match(batchAdvanced,/data-job="content"/);
 assert.doesNotMatch(batchAdvanced,/data-job="demo_archive"/);
 assert.match(html.replace(batchAdvanced,''),/data-job="demo_archive"[^>]*>测试各作者前10篇/);
 assert.doesNotMatch(html.replace(batchAdvanced,''),/data-job="(?:full|content|metrics|latest)"/,'Broad bulk actions are not primary controls');
+await run('startJob("all_archive")');
+assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
+run('renderArchiveBatches([{id:7,state:"partial",total:2,complete:0,unfinished:1,blocked:1,members:[{platform:"wechat",author_id:"wx",job_id:null,reason:"wechat_blocked",pages:0,item_count:0,target_count:0},{platform:"xiaohongshu",author_id:"author",job_id:8,state:"partial",reason:"item_unavailable",pages:3,item_count:2,target_count:3,can_resume:true}]}])');
+assert.match(flattenText(elements['archive-batch-list']),/固定作者 2 位.*公众号未接入 1.*任务 #8.*正文媒体 2 \/ 3 篇.*继续批次未完成作者/);
 run('pageCalls=[]');
 await run('startJob("demo_archive",{platform:"xiaohongshu",author_id:"author"})');
 await run('startJob("demo_archive")');

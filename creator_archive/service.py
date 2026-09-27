@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import errno
 import json
+from contextlib import closing
 from datetime import date, timedelta
 import os
 import re
@@ -113,9 +114,32 @@ class WorkspaceService:
                     platform TEXT PRIMARY KEY, retry_at REAL NOT NULL);
             """)
         self.pipeline_migration_backup = page_pipeline.initialize(self.workflow)
+        self.batch_migration_backup = self._initialize_archive_batches()
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
             db.execute("UPDATE runs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
+
+    def _initialize_archive_batches(self):
+        """Add a fixed all-author membership without changing legacy jobs or runs."""
+        with closing(sqlite3.connect(self.workflow.db_path)) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='archive_batch_members'").fetchone():
+                return None
+            backup = None
+            if db.execute("SELECT 1 FROM jobs UNION ALL SELECT 1 FROM runs UNION ALL SELECT 1 FROM items UNION ALL SELECT 1 FROM subscriptions LIMIT 1").fetchone():
+                directory = self.workflow.db_path.parent / "backups"
+                directory.mkdir(exist_ok=True)
+                backup = directory / f"archive-before-all-batch-{time.time_ns()}.sqlite3"
+                with closing(sqlite3.connect(backup)) as target:
+                    db.backup(target)
+                    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise ValueError("数据库备份校验失败，未执行全订阅批次升级")
+            db.execute("""CREATE TABLE archive_batch_members (
+                batch_id INTEGER NOT NULL REFERENCES batches(id),
+                platform TEXT NOT NULL, author_id TEXT NOT NULL,
+                job_id INTEGER UNIQUE REFERENCES jobs(id), reason TEXT,
+                PRIMARY KEY(batch_id,platform,author_id))""")
+            db.commit()
+            return str(backup) if backup else None
 
     def _cooldown_until(self, platform, db):
         return db.execute("SELECT coalesce(max(retry_at),0) FROM (SELECT retry_at FROM platform_cooldowns WHERE platform=? UNION ALL SELECT retry_at FROM runs WHERE platform=?)", (platform, platform)).fetchone()[0]
@@ -301,6 +325,9 @@ class WorkspaceService:
         exported = json.loads(row["export_json"]) if row["export_json"] else None
         item_count = (sum(author["items"] for author in exported["authors"]) if row["mode"] == "archive" and exported else len(run_ids))
         result = {k: row[k] for k in ("id", "platform", "author_id", "mode", "state", "reason", "run_id", "created_at", "updated_at")}
+        group = db.execute("SELECT batch_id FROM archive_batch_members WHERE job_id=?", (row["id"],)).fetchone()
+        if group:
+            result["archive_batch_id"] = group[0]
         cooldown = self._cooldown_until(row["platform"], db) if row["mode"] != "archive" else 0
         result.update(pages=run["pages"] if run else 0, item_count=item_count, library_item_count=count,
                       coverage=run["coverage"] if run else "unknown", retry_at=cooldown,
@@ -351,6 +378,7 @@ class WorkspaceService:
                                  for r in db.execute("SELECT * FROM subscription_intents ORDER BY created_at")
                                  if (r["platform"], r["author_id"]) not in known)
             jobs = [self._public_job(dict(r), db) for r in db.execute("SELECT * FROM jobs ORDER BY id DESC")]
+            archive_batches = self._archive_batches(db, jobs)
             for sub in subscriptions:
                 args = (sub["platform"], sub["author_id"])
                 sub["enabled"] = bool(sub["enabled"])
@@ -369,10 +397,46 @@ class WorkspaceService:
                     if (j["platform"], j["author_id"]) == args:
                         j["display_name"] = sub["display_name"]
             stats = {"subscriptions": len(subscriptions), "items": db.execute("SELECT count(*) FROM items").fetchone()[0], "details": db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], "running": sum(j["state"] in {"queued", "running"} for j in jobs)}
-        return {"subscriptions": subscriptions, "runs": jobs, "stats": stats,
+        return {"subscriptions": subscriptions, "runs": jobs, "archive_batches": archive_batches, "stats": stats,
                 "platforms": [{"platform": "wechat", "available": False, "status": "blocked", "message": MESSAGES["wechat_blocked"][0]},
                               {"platform": "xiaohongshu", "available": True, "status": "experimental", "message": "列表、内容保存和互动指标为实验接入；旧作品可能需补充有效完整链接。样本通过不代表全库正文媒体已保存，长期登录与双平台G1仍未通过。"}],
                 "data_dir": str(self.root), "archive_dir": str(self.root / "archive"), "g1_passed": False}
+
+    def _archive_batches(self, db, jobs):
+        by_id = {job["id"]: job for job in jobs}
+        result = []
+        for batch in db.execute("SELECT id,created_at FROM batches WHERE mode='all_archive' ORDER BY id DESC"):
+            members = []
+            for row in db.execute("SELECT * FROM archive_batch_members WHERE batch_id=? ORDER BY platform,author_id", (batch["id"],)):
+                job = by_id.get(row["job_id"])
+                members.append({"platform": row["platform"], "author_id": row["author_id"],
+                                "job_id": row["job_id"], "state": job["state"] if job else "blocked",
+                                "reason": job["reason"] if job else row["reason"],
+                                "pages": job["pages"] if job else 0,
+                                "list_finished": job.get("list_finished", False) if job else False,
+                                "target_count": job["target_count"] if job else 0,
+                                "item_count": job["item_count"] if job else 0,
+                                "failed_count": job["failed_count"] if job else 0,
+                                "pending_count": job["pending_count"] if job else 0,
+                                "message": job["message"] if job else MESSAGES["wechat_blocked"][0],
+                                "next_step": job["next_step"] if job else MESSAGES["wechat_blocked"][1],
+                                "can_resume": job["can_resume"] if job else False})
+            running = any(m["state"] in {"queued", "running"} for m in members)
+            complete = sum(m["state"] == "succeeded" for m in members)
+            blocked = sum(m["job_id"] is None for m in members)
+            result.append({"id": batch["id"], "created_at": batch["created_at"],
+                           "state": "running" if running else "succeeded" if complete == len(members) else "partial",
+                           "total": len(members), "complete": complete, "blocked": blocked,
+                           "unfinished": len(members) - complete - blocked,
+                           "pending": sum(m["state"] in {"queued", "running", "interrupted"} for m in members),
+                           "partial": sum(m["state"] == "partial" for m in members),
+                           "failed": sum(m["job_id"] is not None and m["state"] in {"failed", "blocked", "needs_login", "rate_limited"} for m in members),
+                           "items_complete": sum(m["item_count"] for m in members),
+                           "items_target": sum(m["target_count"] for m in members),
+                           "items_failed": sum(m["failed_count"] for m in members),
+                           "items_pending": sum(m["pending_count"] for m in members),
+                           "members": members})
+        return result
 
     def items(self, platform=None, author_id=None, offset=0, limit=50, has_assets=False,
               *, sort="published_at", order="desc", min_likes=None, min_collects=None, min_comments=None,
@@ -451,6 +515,10 @@ class WorkspaceService:
         return source_url
 
     def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None, item_ids=None) -> dict:
+        if mode == "all_archive":
+            if any(value is not None for value in (platform, author_id, item_id, source_url, item_ids)):
+                raise ValueError("全订阅归档只接受固定的当前订阅范围，不接受单作者或作品参数")
+            return self.start_archive_batch()
         if mode not in {"full", "latest", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
         if mode in {"page_archive", "author_archive"} and (platform != "xiaohongshu" or not author_id):
@@ -502,6 +570,63 @@ class WorkspaceService:
                 self._job_sources[job_id] = source_url
             self._spawn(job_id)
         return {"job_id": ids[0], "job_ids": ids, "state": "queued", "includes_paused": True}
+
+    def start_archive_batch(self):
+        """Atomically snapshot confirmed subscriptions and enqueue XHS author pipelines."""
+        with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            latest = db.execute("SELECT id FROM batches WHERE mode='all_archive' ORDER BY id DESC LIMIT 1").fetchone()
+            if latest:
+                unfinished = db.execute("""SELECT 1 FROM archive_batch_members m JOIN jobs j ON j.id=m.job_id
+                    WHERE m.batch_id=? AND j.state!='succeeded' LIMIT 1""", (latest[0],)).fetchone()
+                if unfinished:
+                    return {"batch_id": latest[0], "reused": True,
+                            "message": f"已复用全订阅归档批次 #{latest[0]} 的固定作者范围；从历史与任务恢复未完成作者，成功资源保持。"}
+            scope = [dict(row) for row in db.execute("SELECT * FROM subscriptions ORDER BY platform,author_id")
+                     if not self._confirmation_required(row, db)]
+            if not scope:
+                raise ValueError("没有已核验并确认的订阅作者；待确认作者不会进入批次")
+            for sub in scope:
+                if sub["platform"] == "xiaohongshu" and db.execute("""SELECT 1 FROM jobs WHERE platform=? AND author_id=?
+                    AND state IN ('queued','running') LIMIT 1""", (sub["platform"],sub["author_id"])).fetchone():
+                    raise ValueError(f"作者 {sub['display_name']} 已有任务排队或运行，请等待完成后创建全订阅批次")
+            batch_id = db.execute("INSERT INTO batches(mode,created_at) VALUES('all_archive',?)", (time.time(),)).lastrowid
+            ids = []
+            for sub in scope:
+                job_id = None
+                reason = "wechat_blocked" if sub["platform"] == "wechat" else None
+                if sub["platform"] == "xiaohongshu":
+                    job_id = db.execute("""INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at)
+                        VALUES(?,?,'author_archive','queued',?,?)""", (sub["platform"],sub["author_id"],time.time(),time.time())).lastrowid
+                    db.execute("INSERT INTO page_pipelines(parent_job_id,page_limit) VALUES(?,2)", (job_id,))
+                    ids.append(job_id)
+                db.execute("INSERT INTO archive_batch_members VALUES(?,?,?,?,?)",
+                           (batch_id,sub["platform"],sub["author_id"],job_id,reason))
+        for job_id in ids:
+            self._spawn(job_id)
+        return {"batch_id": batch_id, "job_ids": ids, "reused": False, "includes_paused": True,
+                "message": f"已建立全订阅归档批次 #{batch_id}；小红书逐作者实验执行，公众号暂不可采集并在批次中标明。"}
+
+    def resume_archive_batch(self, batch_id):
+        with self.workflow.connect() as db:
+            members = [tuple(row) for row in db.execute("SELECT job_id FROM archive_batch_members WHERE batch_id=? ORDER BY platform,author_id", (batch_id,))]
+        if not members:
+            raise KeyError("batch_not_found")
+        resumed, waiting = [], []
+        for (job_id,) in members:
+            if job_id is None:
+                continue
+            with self.workflow.connect() as db:
+                state = db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()[0]
+            if state in {"queued", "running", "succeeded"}:
+                continue
+            try:
+                self.resume(job_id)
+                resumed.append(job_id)
+            except (ValueError, PlatformCooldown) as error:
+                waiting.append({"job_id": job_id, "message": str(error)})
+        return {"batch_id": batch_id, "resumed_job_ids": resumed, "waiting": waiting,
+                "message": f"批次 #{batch_id} 已恢复 {len(resumed)} 位作者；其余状态与固定范围保持。"}
 
     def _batch_sources(self, db, job, source_urls):
         if not source_urls:

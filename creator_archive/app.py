@@ -147,6 +147,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def resume(job_id: int, body: ResumeInput | None = None):
         return service.resume(job_id,body.source_url if body else None,body.source_urls if body else None)
 
+    @app.post("/api/archive-batches/{batch_id}/resume")
+    def resume_archive_batch(batch_id: int):
+        return service.resume_archive_batch(batch_id)
+
     @app.get("/api/jobs/{job_id}/failures")
     def job_failures(job_id: int, offset: int = Query(default=0,ge=0), limit: int = Query(default=50,ge=1,le=200)):
         return service.job_failures(job_id,offset,limit)

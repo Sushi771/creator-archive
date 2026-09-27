@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 const platformName = {wechat:"公众号",xiaohongshu:"小红书"};
 const stateName = {queued:"排队中",running:"执行中",succeeded:"任务完成",complete:"已完成",partial:"部分完成",needs_login:"需要登录",rate_limited:"等待冷却",failed:"未完成",blocked:"接入受限",interrupted:"已中断",pending:"待验证",unavailable:"暂不可用"};
 const coverageName = {complete_for_accessible_scope:"已观察到可获取列表末页",scanning:"历史扫描进行中",blocked:"历史扫描受阻",complete:"历史列表已至末页",complete_observed:"历史列表已至末页",partial:"历史列表不完整",unknown:"历史覆盖未知",not_started:"尚未扫描"};
-const modeName = {full:"全部历史",latest:"检查更新",archive:"本地归档",page_archive:"两页采集并归档（实验）",author_archive:"单作者全历史归档（实验）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
+const modeName = {full:"全部历史",latest:"检查更新",archive:"本地归档",all_archive:"全订阅逐作者归档（实验）",page_archive:"两页采集并归档（实验）",author_archive:"单作者全历史归档（实验）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
 const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
 const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:"",confirmAuthor:null};
@@ -89,6 +89,21 @@ function renderSubscriptions(subscriptions) {
   }
 }
 function isPagePipeline(run) {return ["page_archive","author_archive","demo_archive"].includes(run.mode);}
+function renderArchiveBatches(batches) {
+  const list=$("archive-batch-list");list.replaceChildren();
+  for(const batch of batches){
+    const card=node("article",null,"job-card"),top=node("div",null,"job-top");
+    top.append(node("h3",`全订阅逐作者归档（实验） · 批次 #${batch.id}`),badge(batch.state==="running"?"进行中":batch.state==="succeeded"?"已完成":"部分完成",batch.state==="partial"?"warning":""));
+    card.append(top,node("p",`固定作者 ${num(batch.total)} 位 · 完成 ${num(batch.complete)} · 进行/待恢复 ${num(batch.pending)} · 部分 ${num(batch.partial)} · 失败/受限 ${num(batch.failed)} · 公众号未接入 ${num(batch.blocked)}。正文媒体成功 ${num(batch.items_complete)} / 已纳入 ${num(batch.items_target)} 篇，已尝试未完成 ${num(batch.items_failed)}，待处理 ${num(batch.items_pending)}。完成仅指对应作者已观察到的可获取范围；公众号及双平台G1仍未通过。`,"job-progress"));
+    for(const member of batch.members){
+      const label=displayAuthor(member.platform,member.author_id);
+      card.append(node("p",`${nameOf(member.platform)} · ${label} · ${member.job_id?`任务 #${member.job_id}`:"无采集任务"} · ${member.job_id?(stateName[member.state]||member.state):"接入未完成"} · 列表 ${num(member.pages)} 页 · 正文媒体 ${num(member.item_count)} / ${num(member.target_count)} 篇 · ${member.list_finished?"可信末页已观察":"末页未核验"}${member.reason?` · ${reasonName[member.reason]||member.reason}`:""}`,"meta"));
+      if(member.state!=="succeeded")card.append(node("p",`${member.message||"进度已保留"} ${member.next_step||"请查看对应作者任务。"}`,"hint"));
+    }
+    if(batch.members.some(m=>m.can_resume))card.append(actionButton("继续批次未完成作者",async()=>{const result=await api(`/api/archive-batches/${encodeURIComponent(batch.id)}/resume`,{});notify(`${result.message}${result.waiting?.length?` ${result.waiting.length} 位作者需查看各任务提示。`:""}`);await refresh(true);}));
+    list.append(card);
+  }
+}
 function pipelineProgress(run) {
   if(run.mode==="demo_archive")return `本轮固定上限 ${num(run.item_limit||10)} 篇 · 已纳入 ${num(run.target_count)} 篇 · 正文媒体成功 ${num(run.item_count)} / ${num(run.target_count)} 篇 · 已尝试未完成 ${num(run.failed_count)} · 待处理 ${num(run.pending_count)}；成功数包含已有资源复用，不代表本轮新下载；${run.list_finished?"本次列表已到可信末页，内容结果另看成功数":"本轮测试不代表历史完整"}`;
   const list=run.mode==="author_archive"
@@ -124,13 +139,14 @@ async function refresh(forceItems = false, background = false) {
       }
       w.subscriptions = w.subscriptions || [];
       w.runs = w.runs || [];
+      w.archive_batches = w.archive_batches || [];
       ui.workspace = w;
       $("stat-subscriptions").textContent = num(w.stats?.subscriptions ?? w.subscriptions.length);
       $("stat-items").textContent = num(w.stats?.items);
       $("stat-details").textContent = num(w.stats?.details);
       $("stat-attention").textContent = num(w.runs.filter(r => ["failed", "blocked", "needs_login", "rate_limited", "partial", "interrupted"].includes(r.state)).length);
       const subscriptionsSignature = dataSignature(w.subscriptions);
-      const runsSignature = dataSignature(w.runs);
+      const runsSignature = dataSignature([w.runs,w.archive_batches]);
       const platformsSignature = dataSignature(w.platforms || []);
       if (subscriptionsSignature !== ui.subscriptionsSignature) {
         renderSubscriptions(w.subscriptions);
@@ -138,6 +154,7 @@ async function refresh(forceItems = false, background = false) {
         ui.subscriptionsSignature = subscriptionsSignature;
       }
       if (runsSignature !== ui.runsSignature) {
+        renderArchiveBatches(w.archive_batches);
         renderJobs(w.runs);
         ui.runsSignature = runsSignature;
       }

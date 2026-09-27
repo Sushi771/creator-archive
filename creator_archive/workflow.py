@@ -347,7 +347,10 @@ class ArchiveWorkflow:
     def status(self, batch_id: int | None = None) -> dict:
         with self.connect() as db:
             if batch_id is None:
-                row = db.execute("SELECT max(id) FROM batches").fetchone()
+                # All-author orchestration batches have fixed members but no
+                # workflow runs of their own; keep the legacy default on the
+                # latest batch that actually owns a run.
+                row = db.execute("SELECT max(batch_id) FROM runs").fetchone()
                 batch_id = row[0]
             if batch_id is None:
                 return {"batch_id": None, "runs": [], "evidence_level": "adapter_supplied"}
