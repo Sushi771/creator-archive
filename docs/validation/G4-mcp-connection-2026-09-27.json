@@ -1,0 +1,103 @@
+{
+  "date": "2026-09-27",
+  "level": "actual_official_local_tunnel_client_with_synthetic_archive",
+  "baseline_commit": "4b312163f0ecd088979bfdb43a2f42c24db33d6a",
+  "sdk": "mcp==2.1.1",
+  "tunnel_client": {
+    "version": "0.0.15",
+    "commit": "a390c168ff1b2d14e73a95991c186c6aba3ff5a0",
+    "license": "Apache-2.0",
+    "release": "https://github.com/openai/tunnel-client/releases/tag/v0.0.15",
+    "windows_amd64_zip_sha256": "3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1",
+    "mode": "dev proxy --backend go --listen 127.0.0.1:0",
+    "hosted_control_plane": false,
+    "credentials_used": false
+  },
+  "verification": {
+    "stdio": true,
+    "local_tunnel": true,
+    "tools": 7,
+    "read_only_annotations": true,
+    "unique_items": 6,
+    "scan_pages_with_duplicates": 5,
+    "item_and_corpus_pages_each": 3,
+    "page_size": 2,
+    "body_and_sources_match": true,
+    "image_content_and_raw_resource_match": true,
+    "corrupt_image_rejected": true,
+    "unsafe_base_urls_rejected": 8,
+    "negative_tool_cases_each_transport": 7,
+    "only_allowlisted_gets_observed": true,
+    "files_sha256_mtime_unchanged": true,
+    "business_table_counts_unchanged": [
+      "jobs",
+      "runs",
+      "pages",
+      "items",
+      "assets"
+    ],
+    "running_jobs_after_read": 0,
+    "synthetic_lab_normal_stop_removes_temporary_root": true
+  },
+  "reproduced_issues": [
+    {
+      "trigger": "Windows backslash path in --mcp-command",
+      "actual": "backslashes stripped; executable not found",
+      "resolution": "forward slash executable path plus shlex argument quoting",
+      "retested": "local tunnel integration passed"
+    },
+    {
+      "trigger": "search_items cursor=-1",
+      "actual": "SDK hides ValueError behind generic tool failure",
+      "resolution": "ToolError with actionable parameter/preserved-data message; missing platform and creator handled likewise",
+      "regression": "red before fix; full suite validation recorded in CHANGELOG"
+    }
+  ],
+  "doctor": {
+    "environment": "isolated allowlist without credentials; not a user-account audit",
+    "exit_code": 2,
+    "result": "fail",
+    "failed_checks": [
+      "control_plane_api_key"
+    ]
+  },
+  "browser": {
+    "attempts": 2,
+    "outcomes": [
+      "createBrowserTab ChatGPT Plugins: initialization timeout after 30 seconds",
+      "getState after reset: initialization timeout after 20 seconds"
+    ],
+    "account_permissions": "unknown"
+  },
+  "boundaries": {
+    "chatgpt_new_conversation": false,
+    "hosted_tunnel_authentication": false,
+    "real_archive_access": false,
+    "platform_access": false,
+    "real_service_changed": false,
+    "public_listener_created": false,
+    "g4_passed": false
+  },
+  "remaining_actions": [
+    "Confirm Platform Tunnels Read/Use and Read/Manage for creation, provision runtime key locally",
+    "Associate tunnel with target ChatGPT workspace and enable developer mode",
+    "Connect only disposable synthetic lab; verify seven tools in a fresh ChatGPT conversation",
+    "Record actual body/image tool results and data preservation; do not conflate with real-platform G1/G3"
+  ],
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/secure-mcp-tunnels",
+    "https://developers.openai.com/plugins/deploy/connect-chatgpt",
+    "https://github.com/openai/tunnel-client/blob/v0.0.15/docs/development.md"
+  ],
+  "test_summary": {
+    "python_unittest": {
+      "run": 189,
+      "skipped": 0,
+      "result": "passed",
+      "official_tunnel_test_enabled": true
+    },
+    "node_frontend": "passed",
+    "pip_check": "no broken requirements",
+    "git_diff_check": "passed"
+  }
+}

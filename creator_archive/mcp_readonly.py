@@ -50,14 +50,14 @@ def create_server(base_url: str = "http://127.0.0.1:8765") -> MCPServer:
 
     def check_page(cursor: str | None, limit: int) -> int:
         if not 1 <= limit <= 100 or cursor is not None and (not cursor.isdecimal() or len(cursor) > 12):
-            raise ValueError("分页 limit 须为1至100，cursor须为非负数字")
+            raise ToolError("归档分页读取失败：limit须为1至100，cursor须为非负数字；请修正参数后重试，原资料未修改")
         return int(cursor or "0")
 
     def creator(platform: str, author_id: str) -> dict:
         for row in get("/api/workspace")["subscriptions"]:
             if (row["platform"], row["author_id"]) == (platform, author_id):
                 return row
-        raise ValueError("本地作者不存在；现有资料未修改")
+        raise ToolError("本地作者不存在；请先调用list_creators核对平台与作者ID，现有资料未修改")
 
     @server.tool(annotations=readonly)
     def list_creators(cursor: str | None = None, limit: int = 50) -> dict:
@@ -83,7 +83,7 @@ def create_server(base_url: str = "http://127.0.0.1:8765") -> MCPServer:
         """Page local items by stable platform/item ID, with source URLs and total count."""
         offset = check_page(cursor, limit)
         if author_id and not platform:
-            raise ValueError("按作者筛选须同时指定平台")
+            raise ToolError("按作者筛选须同时指定平台；请补充platform后重试，现有资料未修改")
         result = get("/api/items", params={"platform": platform, "author_id": author_id,
                                             "offset": offset, "limit": limit})
         coverage = creator(platform, author_id)["coverage"] if platform and author_id else "mixed_or_unknown"
