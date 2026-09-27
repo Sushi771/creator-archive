@@ -6,6 +6,8 @@
 
 Windows 双击 [start.cmd](start.cmd)，首次自动建立 Python 环境并安装固定依赖，启动后打开 [本机工作台](http://127.0.0.1:8765/)。需要本机 Python 3.11+；本轮使用 Python 3.14.0。双击 [stop.cmd](stop.cmd) 停止，文件与检查点保留。详细选项和接口见 [运行说明](docs/07_验证骨架运行与接口.md)。
 
+网页链接需要本机服务正在运行；打不开时先运行最新工作树的 `start.cmd`。本机桌面已提供 **Creator Archive - Start / Stop / Files** 快捷入口。新安装可在成功启动后运行 `powershell -NoProfile -ExecutionPolicy Bypass -File ./install-shortcuts.ps1` 建立同样入口。启动器记住实际资料目录，避免从Codex与桌面启动时误开空库。
+
 1. 点击“导入本机验证资料”，将既有真实作者、作品列表、页链及校验通过的附件复制至独立产品库，保留原件。
 2. 在“作品资料库”选择作者、翻页，或勾选“仅有附件”查看图片和播放视频。
 3. 点击“按作者归档全部”，涵盖全部订阅（含暂停项），生成各作者的离线 HTML、Markdown、清单和 JSONL。缺失正文不会伪造。

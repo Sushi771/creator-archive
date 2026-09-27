@@ -2,11 +2,19 @@ param(
     [int]$Port = 8765,
     [switch]$NoBrowser,
     [switch]$Foreground,
-    [string]$DataDir = (Join-Path $env:LOCALAPPDATA 'CreatorArchive/workspace')
+    [string]$DataDir,
+    [string]$RuntimeDir
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-$runtimeDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/runtime'
+$launcherConfig = Join-Path $PSScriptRoot '.venv/creator-archive-launcher.json'
+if (Test-Path -LiteralPath $launcherConfig) {
+    $config = Get-Content -LiteralPath $launcherConfig -Raw | ConvertFrom-Json
+    if (-not $DataDir) { $DataDir = $config.data_dir }
+    if (-not $RuntimeDir) { $RuntimeDir = $config.runtime_dir }
+}
+if (-not $DataDir) { $DataDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/workspace' }
+if (-not $RuntimeDir) { $RuntimeDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/runtime' }
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
 $stateFile = Join-Path $runtimeDir "server-$Port.json"
 $pythonExe = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
@@ -18,6 +26,12 @@ try {
         $existing = Get-Process -Id $saved.pid -ErrorAction SilentlyContinue
         if ($existing -and $existing.Path -eq $saved.executable -and $existing.StartTime.ToUniversalTime().Ticks.ToString() -eq $saved.start_ticks) {
             if ($saved.workspace -ne $PSScriptRoot) { throw "This port belongs to another Creator Archive checkout: $($saved.workspace)" }
+            try {
+                $health = Invoke-RestMethod -Uri ($url + 'api/status') -TimeoutSec 4
+                if ($health.mode -ne 'local_mvp') { throw 'Unexpected service' }
+                $workspace = Invoke-RestMethod -Uri ($url + 'api/workspace') -TimeoutSec 4
+                if ($workspace.data_dir -ne $saved.data_dir) { throw 'Unexpected data directory' }
+            } catch { throw "The recorded server is not responding correctly. Progress is retained. Run stop.cmd, then start.cmd; inspect $runtimeDir if this persists." }
             Write-Host "Creator Archive is already running: $url"
             if (-not $NoBrowser) { Start-Process $url }
             return
@@ -60,6 +74,12 @@ try {
         } catch { Start-Sleep -Milliseconds 250 }
     }
     if (-not $ready) { throw "Server is not ready. See $runtimeDir/server-$Port.stderr.log; stop.cmd safely stops this launch." }
+    $workspace = Invoke-RestMethod -Uri ($url + 'api/workspace') -TimeoutSec 4
+    $DataDir = $workspace.data_dir
+    $canonicalRuntime = & $pythonExe -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' $runtimeDir
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the runtime directory.' }
+    @{ data_dir = $DataDir; runtime_dir = $canonicalRuntime.Trim() } | ConvertTo-Json | Set-Content -LiteralPath $launcherConfig -Encoding utf8
+    @{ pid = $server.Id; executable = $pythonExe; start_ticks = $server.StartTime.ToUniversalTime().Ticks.ToString(); workspace = $PSScriptRoot; url = $url; data_dir = $DataDir } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8
     Write-Host "Creator Archive is ready: $url"
     Write-Host "Data: $DataDir"
     Write-Host 'Stop with stop.cmd. Your archive and checkpoints are retained.'
