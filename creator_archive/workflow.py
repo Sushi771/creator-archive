@@ -456,6 +456,7 @@ class ArchiveWorkflow:
                         local = self.root / "archive" / asset["relative_path"]
                         asset["state"] = ("complete" if local.is_file() and local.stat().st_size == asset["bytes"]
                                           and _file_sha256(local) == asset["sha256"] else "missing")
+                        asset["relative_path"] = Path(asset["relative_path"]).as_posix()
                         if asset["state"] != "complete":
                             missing_assets += 1
                             continue
@@ -476,7 +477,7 @@ class ArchiveWorkflow:
                                 f"<title>{escape(item['item_id'])}</title><body><article><pre>{escape(body)}</pre>" +
                                 "".join(media_html) + "</article></body></html>").encode("utf-8")
                         for name, content in (("article.md", md), ("index.html", html)):
-                            files[name] = str(_managed_write(item_dir / name, content).relative_to(base))
+                            files[name] = _managed_write(item_dir / name, content).relative_to(base).as_posix()
                         corpus.append({"schema_version": 2, "platform": platform, "author_id": author_id,
                                        "item_id": item["item_id"], "source_url": item["source_url"],
                                        "published_at": item["published_at"], "text": body,

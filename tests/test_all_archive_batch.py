@@ -1,9 +1,12 @@
 """Fixed all-subscription archive batches using synthetic pages and temporary files."""
 from pathlib import Path
+from html.parser import HTMLParser
 import json
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import urljoin, urlsplit, unquote
 
 from fastapi.testclient import TestClient
 
@@ -15,6 +18,19 @@ from tests.test_demo_pipeline import DemoSource
 
 def ids(start, count):
     return [f"{number:024x}" for number in range(start, start + count)]
+
+
+class LocalLinks(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"a", "img", "video"}:
+            attributes = dict(attrs)
+            link = attributes.get("href") or attributes.get("src")
+            if link:
+                self.links.append(link)
 
 
 class AllArchiveBatchTests(unittest.TestCase):
@@ -409,6 +425,111 @@ class AllArchiveBatchTests(unittest.TestCase):
             self.assertEqual(resumed.status_code, 200)
             self.assertEqual(resumed.json()["resumed_job_ids"], [])
             self.assertEqual(client.post("/api/jobs", json={"mode": "all_archive", "author_id": self.first}, headers=headers).status_code, 422)
+
+    def test_partial_batch_exports_read_back_over_http_and_offline_after_resume(self):
+        root = self.root / "readback"
+        first, second = "a" * 24, "b" * 24
+        first_ids, second_ids = ids(1, 2), ids(101, 1)
+        source = DemoSource()
+        source.author_pages = {first: [first_ids], second: [second_ids]}
+        source.failures[first_ids[0]] = "item_unavailable"
+        app = create_app(root)
+        app.state.service.adapter_factory = lambda _: source
+        for author in (first, second):
+            app.state.service.workflow.subscribe("xiaohongshu", author, author,
+                                                 verified=True, evidence="synthetic fixture")
+        headers = {"x-creator-archive": "local-validation"}
+
+        def read_exports(client, expected_complete):
+            workspace = client.get("/api/workspace").json()
+            batch = workspace["archive_batches"][0]
+            members = {member["author_id"]: member for member in batch["members"]}
+            jobs = {job["id"]: job for job in workspace["runs"]}
+            self.assertEqual((batch["complete"], batch["unfinished"]),
+                             (expected_complete, 2 - expected_complete))
+            for author, observed_ids in ((first, first_ids), (second, second_ids)):
+                member = members[author]
+                job = jobs[member["job_id"]]
+                exported = job["export"]["authors"][0]
+                scan = client.get(member["scan_url"]).json()
+                saved_scan = client.get(member["scan_manifest_url"]).json()
+                self.assertEqual(scan, saved_scan)
+                self.assertEqual(scan["counts"]["observed_unique"], len(observed_ids))
+                self.assertEqual(scan["counts"]["complete"],
+                                 len(observed_ids) - (author == first and expected_complete == 1))
+                manifest = client.get(exported["manifest_url"]).json()
+                corpus_response = client.get(exported["corpus_url"])
+                self.assertEqual(corpus_response.status_code, 200)
+                corpus = [json.loads(line) for line in corpus_response.text.splitlines()]
+                self.assertEqual({row["item_id"] for row in manifest["items"]}, set(observed_ids))
+                complete = {row["item_id"] for row in manifest["items"] if row["detail_state"] == "complete"}
+                self.assertEqual({row["item_id"] for row in corpus}, complete)
+                self.assertEqual(scan["counts"]["complete"], len(complete))
+                self.assertTrue(all("\\" not in ref for row in corpus for ref in row["media_refs"]))
+                for row in manifest["items"]:
+                    self.assertEqual(bool(row["files"]), row["item_id"] in complete)
+                    self.assertTrue(all("\\" not in filename for filename in row["files"].values()))
+                    for asset in row["assets"]:
+                        self.assertEqual(asset["state"], "complete")
+                        self.assertNotIn("\\", asset["relative_path"])
+                # Follow every local index/article link through the actual HTTP route,
+                # then compare the response with the file a disconnected reader opens.
+                pending = [exported["index_url"]]
+                pending.extend(urljoin(exported["index_url"], Path(filename).as_posix())
+                               for row in manifest["items"] for filename in row["files"].values())
+                visited = set()
+                while pending:
+                    url = pending.pop()
+                    if url in visited:
+                        continue
+                    visited.add(url)
+                    response = client.get(url)
+                    self.assertEqual(response.status_code, 200, url)
+                    local = root / "archive" / unquote(urlsplit(url).path.removeprefix("/archive/"))
+                    self.assertEqual(response.content, local.read_bytes(), url)
+                    if local.suffix == ".html":
+                        links = LocalLinks()
+                        links.feed(response.text)
+                        pending.extend(urljoin(url, link) for link in links.links)
+                    elif local.suffix == ".md":
+                        pending.extend(urljoin(url, link) for link in re.findall(r"!?(?:\[[^]]*\])\(([^)]+)\)", response.text)
+                                       if not link.startswith("https://"))
+                for key in ("manifest_url", "corpus_url", "scan_manifest_url"):
+                    url = exported[key]
+                    self.assertIn(url, visited)
+                for row in manifest["items"]:
+                    for filename in row["files"].values():
+                        self.assertIn(urljoin(exported["index_url"], Path(filename).as_posix()), visited)
+                    for asset in row["assets"]:
+                        self.assertIn("/archive/" + asset["relative_path"], visited)
+            return batch, members, jobs
+
+        with TestClient(app) as client:
+            batch_id = client.post("/api/jobs", json={"mode": "all_archive"}, headers=headers).json()["batch_id"]
+            app.state.service.wait()
+            batch, members, jobs = read_exports(client, 1)
+            self.assertEqual((members[first]["state"], members[second]["state"]), ("partial", "succeeded"))
+            self.assertEqual(members[first]["reason"], "author_archive_partial")
+            second_export = jobs[members[second]["job_id"]]["export"]["authors"][0]
+            preserved = {Path(second_export[key]): (Path(second_export[key]).read_bytes(),
+                                                    Path(second_export[key]).stat().st_mtime_ns)
+                         for key in ("index", "manifest", "corpus", "scan_manifest")}
+            manual = root / "archive" / "xiaohongshu" / first / "manual-note.md"
+            manual.write_text("human note", encoding="utf-8")
+        fresh = DemoSource()
+        fresh.author_pages = source.author_pages
+        restarted = create_app(root)
+        restarted.state.service.adapter_factory = lambda _: fresh
+        with TestClient(restarted) as client:
+            response = client.post(f"/api/archive-batches/{batch_id}/resume", json={}, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["resumed_job_ids"], [members[first]["job_id"]])
+            restarted.state.service.wait()
+            batch, members, _ = read_exports(client, 2)
+            self.assertEqual([value for event, value in fresh.events if event == "detail"], [first_ids[0]])
+            self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns)
+                              for path in preserved}, preserved)
+            self.assertEqual(manual.read_text(encoding="utf-8"), "human note")
 
 
 if __name__ == "__main__":
