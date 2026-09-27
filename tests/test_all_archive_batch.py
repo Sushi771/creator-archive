@@ -531,6 +531,105 @@ class AllArchiveBatchTests(unittest.TestCase):
                               for path in preserved}, preserved)
             self.assertEqual(manual.read_text(encoding="utf-8"), "human note")
 
+    def test_missing_and_corrupt_assets_have_no_live_export_links_then_resume(self):
+        root = self.root / "damaged-assets"
+        first, second = "a" * 24, "b" * 24
+        first_ids, second_ids = ids(1, 2), ids(101, 1)
+
+        class FailingMediaSource(DemoSource):
+            def download_media(self, candidate, target):
+                if target.name in first_ids:
+                    raise AdapterFailure("media_failed")
+                return super().download_media(candidate, target)
+
+        original = DemoSource()
+        original.author_pages = {first: [first_ids], second: [second_ids]}
+        app = create_app(root)
+        app.state.service.adapter_factory = lambda _: original
+        for author in (first, second):
+            app.state.service.workflow.subscribe("xiaohongshu", author, author,
+                                                 verified=True, evidence="synthetic fixture")
+        headers = {"x-creator-archive": "local-validation"}
+        with TestClient(app) as client:
+            first_batch = client.post("/api/jobs", json={"mode": "all_archive"}, headers=headers).json()["batch_id"]
+            app.state.service.wait()
+            self.assertEqual(client.get("/api/workspace").json()["archive_batches"][0]["state"], "succeeded")
+            with app.state.service.workflow.connect() as db:
+                paths = {row["item_id"]: root / "archive" / row["relative_path"] for row in
+                         db.execute("SELECT item_id,relative_path FROM assets")}
+            paths[first_ids[0]].unlink()
+            paths[first_ids[1]].write_bytes(b"corrupt image")
+            preserved = {paths[second_ids[0]]: (paths[second_ids[0]].read_bytes(),
+                                               paths[second_ids[0]].stat().st_mtime_ns)}
+            manual = root / "archive" / "xiaohongshu" / first / "manual-note.md"
+            manual.write_text("human note", encoding="utf-8")
+            preserved[manual] = (manual.read_bytes(), manual.stat().st_mtime_ns)
+            failing = FailingMediaSource()
+            failing.author_pages = original.author_pages
+            app.state.service.adapter_factory = lambda _: failing
+            app.state.service._transport = failing
+            batch_id = client.post("/api/jobs", json={"mode": "all_archive"}, headers=headers).json()["batch_id"]
+            self.assertNotEqual(batch_id, first_batch)
+            app.state.service.wait()
+            workspace = client.get("/api/workspace").json()
+            batch = next(row for row in workspace["archive_batches"] if row["id"] == batch_id)
+            members = {row["author_id"]: row for row in batch["members"]}
+            jobs = {row["id"]: row for row in workspace["runs"]}
+            self.assertEqual((batch["state"], batch["complete"], batch["unfinished"]), ("partial", 1, 1))
+            self.assertEqual((members[first]["state"], members[second]["state"]), ("partial", "succeeded"))
+            exported = jobs[members[first]["job_id"]]["export"]["authors"][0]
+            manifest = client.get(exported["manifest_url"]).json()
+            self.assertEqual(manifest["missing_registered_assets"], 2)
+            for row in manifest["items"]:
+                self.assertEqual(row["assets"][0]["state"], "missing")
+                self.assertEqual(row["media_state"], "partial")
+                self.assertEqual(row["detail_state"], "complete")
+                self.assertEqual(json.loads(client.get(exported["corpus_url"]).text.splitlines()[
+                    first_ids.index(row["item_id"])])["media_refs"], [])
+                for filename in row["files"].values():
+                    url = urljoin(exported["index_url"], filename)
+                    response = client.get(url)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.content, (root / "archive" / url.removeprefix("/archive/")).read_bytes())
+                    self.assertNotIn(b"assets/", response.content)
+            index = client.get(exported["index_url"])
+            self.assertEqual(index.status_code, 200)
+            self.assertNotIn(b"assets/", index.content)
+            self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in preserved}, preserved)
+
+        repaired = DemoSource()
+        repaired.author_pages = original.author_pages
+        restarted = create_app(root)
+        restarted.state.service.adapter_factory = lambda _: repaired
+        with TestClient(restarted) as client:
+            self.assertEqual(client.post(f"/api/archive-batches/{batch_id}/resume", json={}, headers=headers).json()[
+                "resumed_job_ids"], [members[first]["job_id"]])
+            restarted.state.service.wait()
+            workspace = client.get("/api/workspace").json()
+            batch = next(row for row in workspace["archive_batches"] if row["id"] == batch_id)
+            self.assertEqual((batch["state"], batch["complete"], batch["unfinished"]), ("succeeded", 2, 0))
+            self.assertEqual([value for event, value in repaired.events if event == "detail"], first_ids)
+            job = next(row for row in workspace["runs"] if row["id"] == members[first]["job_id"])
+            exported = job["export"]["authors"][0]
+            manifest = client.get(exported["manifest_url"]).json()
+            self.assertEqual(manifest["missing_registered_assets"], 0)
+            corpus = {row["item_id"]: row for row in
+                      (json.loads(line) for line in client.get(exported["corpus_url"]).text.splitlines())}
+            index = client.get(exported["index_url"])
+            self.assertEqual(index.status_code, 200)
+            self.assertIn(b"assets/", index.content)
+            for row in manifest["items"]:
+                asset = row["assets"][0]
+                self.assertEqual(asset["state"], "complete")
+                self.assertEqual(corpus[row["item_id"]]["media_refs"], [asset["relative_path"]])
+                url = "/archive/" + asset["relative_path"]
+                response = client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.content, (root / "archive" / asset["relative_path"]).read_bytes())
+                for filename in row["files"].values():
+                    self.assertIn(b"assets/", client.get(urljoin(exported["index_url"], filename)).content)
+            self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in preserved}, preserved)
+
 
 if __name__ == "__main__":
     unittest.main()
