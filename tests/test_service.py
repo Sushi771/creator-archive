@@ -217,6 +217,43 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(selected["items"][0]["asset_count"], 1)
         self.assertTrue(self.service.item("xiaohongshu", item["item_id"])["assets"][0]["url"].startswith("/archive/"))
 
+    def test_item_detail_only_links_verified_registered_assets(self):
+        self.seed()
+        self.service.start("full")
+        self.service.wait()
+        item = self.service.items()["items"][0]
+        source = self.root / "sample.png"
+        original = b"\x89PNG\r\n\x1a\nsynthetic-detail"
+        source.write_bytes(original)
+        asset_path = self.service.workflow.attach_media("xiaohongshu", item["item_id"], "sample", source,
+                                                        position=0, kind="image", mime="image/png")
+        kept_path = self.service.workflow.attach_media("xiaohongshu", item["item_id"], "kept", source,
+                                                       position=1, kind="image", mime="image/png")
+        kept = (kept_path.read_bytes(), kept_path.stat().st_mtime_ns)
+        manual = self.service.root / "archive" / "notes.txt"
+        manual.write_text("manual note", encoding="utf-8")
+        preserved = (manual.read_bytes(), manual.stat().st_mtime_ns)
+        with TestClient(create_app(self.service.root)) as client:
+            url = f"/api/items/xiaohongshu/{item['item_id']}"
+            valid = client.get(url).json()["assets"][0]
+            self.assertEqual(valid["state"], "complete")
+            self.assertEqual(client.get(valid["url"]).content, original)
+            asset_path.unlink()
+            missing = client.get(url).json()["assets"][0]
+            self.assertEqual(missing["state"], "missing")
+            self.assertFalse(missing.get("url"))
+            self.assertFalse(missing.get("archive_url"))
+            asset_path.write_bytes(original[:-1] + b"X")
+            corrupt = client.get(url).json()["assets"][0]
+            self.assertEqual(corrupt["state"], "missing")
+            self.assertFalse(corrupt.get("url"))
+            asset_path.write_bytes(original)
+            recovered = client.get(url).json()["assets"][0]
+            self.assertEqual(recovered["state"], "complete")
+            self.assertEqual(client.get(recovered["url"]).content, original)
+        self.assertEqual((manual.read_bytes(), manual.stat().st_mtime_ns), preserved)
+        self.assertEqual((kept_path.read_bytes(), kept_path.stat().st_mtime_ns), kept)
+
     def test_author_index_contains_all_items_and_preserves_edited_index(self):
         self.seed()
         with self.service.workflow.connect() as db:

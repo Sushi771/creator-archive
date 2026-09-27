@@ -324,7 +324,7 @@ async function loadItems(canApply = () => true) {
 }
 
 function appendLocalMedia(container, asset) {
-  if (!asset.url && !asset.archive_url) return;
+  if (asset.state !== "complete" || (!asset.url && !asset.archive_url)) return;
   let url;
   try {
     url = new URL(asset.url || asset.archive_url, location.origin);
@@ -398,8 +398,8 @@ async function openItem(item) {
   if(data.assets?.length){
     content.append(node("h3","已登记附件"));
     for(const asset of data.assets){
-      const entry=node("p",`${asset.kind==="video"?"视频":"图片"} · ${asset.asset_id||"附件"} · ${asset.state==="complete"?"本地文件已验证":"尚未完成保存"}`,"meta");
-      const link=safeLink(asset.url||asset.archive_url,"打开附件");
+      const entry=node("p",`${asset.kind==="video"?"视频":"图片"} · ${asset.asset_id||"附件"} · ${asset.state==="complete"?"本地文件已验证":"本地文件缺失或校验失败；登记记录已保留，请保存正文与缺失媒体后刷新详情"}`,"meta");
+      const link=asset.state==="complete"?safeLink(asset.url||asset.archive_url,"打开附件"):null;
       if(link)entry.append(document.createTextNode(" · "),link);
       content.append(entry);appendLocalMedia(content,asset);
     }

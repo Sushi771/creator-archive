@@ -531,8 +531,8 @@ class WorkspaceService:
             result["snapshot_total"] = len(result["metric_snapshots"])
             result["assets"] = [dict(r) for r in db.execute("SELECT asset_id,kind,mime,relative_path,bytes FROM assets WHERE platform=? AND item_id=? ORDER BY position", (platform, item_id))]
         for asset in result["assets"]:
-            asset["url"] = "/archive/" + quote(Path(asset["relative_path"]).as_posix(), safe="/")
             asset["state"] = "complete" if self.workflow.asset_valid(platform,item_id,asset["asset_id"]) else "missing"
+            asset["url"] = "/archive/" + quote(Path(asset["relative_path"]).as_posix(), safe="/") if asset["state"] == "complete" else None
         result["media_coverage"] = "unknown_expected_count"
         return result
 
