@@ -5,6 +5,7 @@ adds a thin queue and never treats imported observations as a live transport.
 """
 from __future__ import annotations
 
+import errno
 import json
 from datetime import date, timedelta
 import os
@@ -42,7 +43,7 @@ MESSAGES = {
     "timeout": ("作者列表等待超时，原因尚未确认；已保存成功页面。", "查看独立浏览器的登录或验证提示，处理后恢复。"),
     "unavailable": ("平台页面暂不可用，具体原因未知；已保存进度和旧指标。", "查看独立浏览器提示；作品任务可在详情粘贴该作品的完整原文链接后重试。重启后需重新粘贴，成功媒体和检查点保留。"),
     "invalid_cursor": ("当前页面未能衔接保存的游标；没有跳过未知页面。", "重新登录后恢复；若持续发生，请保留当前资料排查页链变化。"),
-    "content_partial": ("部分作品正文或媒体尚未保存，成功资源与指标已保留。", "查看作品详情的缺失状态，处理浏览器提示后点击恢复；成功媒体不会重复下载。"),
+    "content_partial": ("部分作品正文或媒体尚未保存，成功资源与指标已保留。", "查看任务未完成清单中的具体原因，处理后恢复原任务；成功媒体不会重复下载。"),
     "metrics_partial": ("部分作品指标未能更新；已有有效数值与原采集时间保留。", "查看独立浏览器提示后恢复；未知字段可能未由平台提供。"),
     "content_complete": ("本批作品正文和当前可获取媒体已保存。", "可查看离线附件或按作者导出；不代表所有历史作品均已获取。"),
     "metrics_complete": ("本批指标观察已保存，缺失字段仍标未知；历史快照保留。", "可按全库指标排序筛选，或查看作品的观察历史。"),
@@ -50,7 +51,11 @@ MESSAGES = {
     "reference_missing": ("本轮未取得部分历史作品的有效访问引用；旧资料和成功项保留。", "在任务的补充链接入口粘贴同篇完整官方链接后继续；不会重扫39/6页长链。"),
     "item_unavailable": ("该作品当前不可访问，可能是链接失效、删除或权限变化；旧资料保留。", "在官方页面确认可访问后，补充完整链接重试。其他作品可继续处理。"),
     "media_failed": ("部分媒体下载或校验失败，成功媒体和正文保留。", "恢复任务会刷新详情并只下载缺失资源。"),
+    "media_write_failed": ("作品媒体未能写入本地目录；已取得的正文、指标及成功媒体保留。", "检查工作目录中的 downloads 和 archive 路径是否被同名文件占用、是否有写入权限及足够可用空间；处理后恢复原任务，成功项不会重做。"),
 }
+
+LOCAL_MEDIA_ERRNOS = {errno.EACCES, errno.EPERM, errno.ENOSPC, errno.EDQUOT,
+                      errno.EROFS, errno.EEXIST, errno.ENOTDIR, errno.EISDIR, errno.ENOENT}
 
 
 class PlatformCooldown(ValueError):
@@ -635,6 +640,7 @@ class WorkspaceService:
                         db.execute("UPDATE items SET title=coalesce(nullif(?,''),title),content_type=CASE WHEN ? IN ('image','video') THEN ? ELSE content_type END,published_at=CASE WHEN ?!='' THEN ? ELSE published_at END WHERE platform=? AND item_id=?",
                                    (detail.get("title"),detail.get("content_type"),detail.get("content_type"),detail.get("published_at") or "",detail.get("published_at") or "",job["platform"],item["item_id"]))
                     complete = True
+                    incomplete_reason = "content_partial"
                     if job["mode"] == "content":
                         if detail.get("text","").strip():
                             self.workflow.save_detail(job["platform"],item["item_id"],job["author_id"],detail["text"],detail["source_url"])
@@ -654,14 +660,18 @@ class WorkspaceService:
                                 if error.category in {"needs_login","rate_limited","unavailable","verification_required"}:
                                     raise
                                 media_failed = True
-                            except (ValueError,OSError):
+                            except OSError as error:
+                                media_failed = True
+                                if error.errno in LOCAL_MEDIA_ERRNOS:
+                                    incomplete_reason = "media_write_failed"
+                            except ValueError:
                                 media_failed = True
                         media_complete = bool(detail.get("media")) and not detail.get("missing") and not media_failed
                         complete = complete and media_complete
                         with self.workflow.connect() as db:
                             db.execute("UPDATE items SET media_state=? WHERE platform=? AND item_id=?", ("complete_for_observed_detail" if media_complete else "partial",job["platform"],item["item_id"]))
                 with self.workflow.connect() as db:
-                    db.execute("UPDATE job_items SET state=?,reason=? WHERE job_id=? AND platform=? AND item_id=?", ("succeeded" if complete else "partial",None if complete else "content_partial",job["id"],job["platform"],item["item_id"]))
+                    db.execute("UPDATE job_items SET state=?,reason=? WHERE job_id=? AND platform=? AND item_id=?", ("succeeded" if complete else "partial",None if complete else incomplete_reason,job["id"],job["platform"],item["item_id"]))
                 if complete and isinstance(sources,dict):
                     sources.pop(item["item_id"],None)
             except PlatformCooldown:

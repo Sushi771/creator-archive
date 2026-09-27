@@ -1,4 +1,5 @@
 """Synthetic batch/restart/renewal regressions; not live login evidence."""
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -6,7 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from creator_archive.service import WorkspaceService
 from creator_archive.validation import AdapterFailure
@@ -192,6 +193,65 @@ class RecoveryTests(unittest.TestCase):
         self.service.start('content');self.service.wait()
         self.assertEqual([i for i,_ in self.source.calls],IDS[:3])
         self.assertEqual(self.service.workspace()['runs'][0]['state'],'partial')
+
+    def test_local_directory_conflict_resumes_same_batch_and_reuses_successful_media(self):
+        """Real filesystem conflict/repair; detail and CDN response are synthetic."""
+        from creator_archive.adapters.xhs import MediaCandidate
+        from creator_archive.adapters.xhs_media import download_media
+        url = 'https://sns-webpic-qc.xhscdn.com/synthetic.webp'
+        payload = b'RIFF' + b'\x20\x00\x00\x00' + b'WEBPsynthetic-content'
+        media = [MediaCandidate('image', position, url) for position in range(2)]
+        original_detail = self.source.detail
+        self.source.detail = lambda *args, **kwargs: {
+            **original_detail(*args, **kwargs), 'text': 'Synthetic body',
+            'source_url': f'https://www.xiaohongshu.com/explore/{args[1]}',
+            'media': media, 'missing': []}
+        downloads = []
+        def download(candidate, target):
+            downloads.append((target.name, candidate.asset_id))
+            return download_media(candidate, target)
+        self.source.download_media = download
+        saved = self.root / 'already-saved.webp'
+        saved.write_bytes(payload)
+        archive = self.service.workflow.attach_media('xiaohongshu', IDS[0], media[0].asset_id,
+            saved, position=0, kind='image', mime='image/webp')
+        baseline = (archive.read_bytes(), archive.stat().st_mtime_ns)
+        conflict = self.root / 'downloads' / 'xiaohongshu' / IDS[0]
+        conflict.parent.mkdir(parents=True)
+        conflict.write_text('Controlled local filesystem conflict', encoding='utf-8')
+
+        def open_response(*args, **kwargs):
+            response = MagicMock()
+            response.__enter__.return_value = response
+            response.status = 200
+            response.headers = {'Content-Length': str(len(payload))}
+            response.geturl.return_value = url
+            response.read.side_effect = io.BytesIO(payload).read
+            return response
+        with patch('creator_archive.adapters.xhs_media.safe_media_url', side_effect=lambda value, **_: value), \
+             patch('creator_archive.adapters.xhs_media.build_opener') as opener:
+            opener.return_value.open.side_effect = open_response
+            job = self.service.start('content', 'xiaohongshu', AUTHOR, item_ids=IDS[:2])['job_id']
+            self.service.wait()
+            run = self.service.workspace()['runs'][0]
+            self.assertEqual((run['state'], run['item_count'], run['failed_count']), ('partial', 1, 1))
+            failure = self.service.job_failures(job)['items'][0]
+            self.assertEqual(failure['reason'], 'media_write_failed')
+            self.assertIn('downloads', failure['next_step'])
+            self.assertIn('权限', failure['next_step'])
+            self.assertNotIn('浏览器', failure['next_step'])
+            self.assertEqual(downloads, [(IDS[0], 'image-001'), (IDS[1], 'image-000'), (IDS[1], 'image-001')])
+            conflict.unlink()
+            restarted = WorkspaceService(self.root, adapter_factory=lambda _: self.source)
+            self.addCleanup(restarted.close)
+            restarted.resume(job)
+            restarted.wait()
+            run = restarted.workspace()['runs'][0]
+            self.assertEqual((run['id'], run['target_count'], run['item_count'], run['state']), (job, 2, 2, 'succeeded'))
+        self.assertEqual([item for item, _ in self.source.calls], [IDS[0], IDS[1], IDS[0]])
+        self.assertEqual(downloads[-1], (IDS[0], 'image-001'))
+        self.assertEqual(len(downloads), 4)
+        self.assertEqual((archive.read_bytes(), archive.stat().st_mtime_ns), baseline)
 
     def test_open_login_rejects_active_jobs_then_clears_ephemeral_links(self):
         self.service._spawn=lambda _:None

@@ -181,5 +181,99 @@
     "xhslink_com_live_verified": false,
     "real_partial_failure_recovery_verified": false,
     "g1_passed": false
-  }
+  },
+  "controlled_local_media_failure": {
+    "evidence_level": "real_platform_with_controlled_local_filesystem_fault",
+    "platform_mocked": false,
+    "natural_platform_failure": false,
+    "execution_version": "0.4.8",
+    "error_message_fix_version": "0.4.9",
+    "job": 30,
+    "before": {
+      "succeeded": 1,
+      "failed": 1
+    },
+    "after": {
+      "succeeded": 2,
+      "failed": 0
+    },
+    "same_job_after_new_process": true,
+    "initial_reference_pages": 2,
+    "resume_reference_pages": 1,
+    "resume_detail_visits": 1,
+    "resume_media_downloads": 3,
+    "deep_history_long_lived_reference_verified": false,
+    "natural_login_expiry_verified": false,
+    "protection": {
+      "archive_job": 31,
+      "archive_state": "succeeded",
+      "existing_files": 100,
+      "old_files_hash_mtime_unchanged": true,
+      "integrity": "ok",
+      "subscriptions_unchanged": true,
+      "subscription_confirmations_unchanged": true,
+      "pages_unchanged": true,
+      "untargeted_items_unchanged": true,
+      "old_jobs_unchanged": true,
+      "old_job_items_unchanged": true,
+      "old_assets_preserved": true,
+      "counts": {
+        "items": 1393,
+        "pages": 90,
+        "assets": 46,
+        "jobs": 30,
+        "bodies": 19
+      },
+      "success_snapshot_count_unchanged": true,
+      "success_assets_not_rewritten_during_resume": true,
+      "exported_body_rows": 16,
+      "runs_old_rows_unchanged": true,
+      "runs_new_rows": 1,
+      "batches_old_rows_unchanged": true,
+      "batches_new_rows": 1,
+      "access_parameters_absent_from_database": true
+    },
+    "local_read": {
+      "version": "0.4.9",
+      "http_index_read": true,
+      "corpus_rows": 16,
+      "target_html_pages_read": 2,
+      "local_media_reads": 6,
+      "platform_browser_closed": true,
+      "pending_confirmation": 1,
+      "job30_state": "succeeded",
+      "job31_state": "succeeded"
+    },
+    "media_decode": {
+      "decoded": 6,
+      "sizes": [
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1440
+        ],
+        [
+          1080,
+          1440
+        ],
+        [
+          1080,
+          1440
+        ]
+      ]
+    }
+  },
+  "latest_evidence_section": "controlled_local_media_failure",
+  "prior_sections_are_historical": true
 }
