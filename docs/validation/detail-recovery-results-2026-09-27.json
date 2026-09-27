@@ -42,7 +42,28 @@
     "pending": 2,
     "existing_files": 85,
     "existing_hash_mtime_unchanged": true,
-    "awaiting_user_logout": true,
-    "renewal_verified": false
+    "awaiting_user_logout": false,
+    "renewal_verified": true
+  },
+  "controlled_login_renewal": {
+    "job": 23,
+    "state": "succeeded",
+    "reason": "content_complete",
+    "targets": 3,
+    "succeeded": 3,
+    "pending": 0,
+    "failed": 0,
+    "items": 1391,
+    "pages": 90,
+    "existing_files": 85,
+    "existing_hash_mtime_unchanged": true,
+    "successful_snapshot_counts_unchanged": true,
+    "explicit_logout_then_login_live_verified": true,
+    "natural_long_term_expiry_tested": false,
+    "first_attempt": {
+      "state": "blocked",
+      "reason": "transport_unavailable",
+      "underlying_cause": "unknown"
+    }
   }
 }

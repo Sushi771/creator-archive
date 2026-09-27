@@ -30,6 +30,7 @@ MESSAGES = {
     "identity_unverified": ("已保存订阅意图，作者身份尚未经过平台核验。", "等待可用的平台核验通道；不要把链接中的候选ID当作已核验身份。"),
     "process_interrupted": ("上次进程退出，成功页面和作品已保留。", "点击恢复，从有效检查点继续；归档可安全重试。"),
     "needs_login": ("采集登录已失效或需要验证；已保存进度。", "在独立采集浏览器完成登录后点击恢复。"),
+    "verification_required": ("平台要求验证；本批成功项和待处理进度已保留。", "在独立采集浏览器完成平台提示的验证后恢复原任务。"),
     "rate_limited": ("平台要求冷却；已保存进度。", "等待冷却时间结束后点击恢复，不切换账号或IP。"),
     "adapter_unavailable": ("当前平台没有可用采集适配器；已有资料保留。", "待平台接入后恢复；也可先归档已有资料。"),
     "page_budget_reached": ("本轮达到安全页数预算，尚未观察到末页；检查点已保存。", "点击恢复继续下一批页面。"),
@@ -499,8 +500,10 @@ class WorkspaceService:
                     self._record_cooldown(job["platform"], retry_after=error.retry_after)
                 if error.category in {"needs_login", "verification_required"}:
                     self._job_sources.clear()
-                category = error.category if error.category in {"needs_login", "rate_limited"} else "transport_unavailable"
-                self._finish(job_id, category if category != "transport_unavailable" else "blocked", category)
+                # Preparation can fail before any item is attempted. Preserve
+                # the typed cause instead of claiming the transport is absent.
+                category = error.category
+                self._finish(job_id, category if category in {"needs_login", "rate_limited"} else "blocked", category)
             except Exception:
                 self._finish(job_id, "failed", "unexpected_error")
 

@@ -91,6 +91,28 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.service._job_sources,{})
         self.assertNotIn(b"SECRET_TEST_MARKER", self.service.workflow.db_path.read_bytes())
 
+    def test_preparation_failures_keep_typed_reason_and_successful_checkpoint(self):
+        self.source.failures[IDS[1]] = "needs_login"
+        job = self.run_job()
+        self.source.failures.clear()
+        for category in ("unavailable", "timeout", "invalid_cursor", "verification_required", "needs_login"):
+            with self.subTest(category=category):
+                self.source.prepare_details = MagicMock(side_effect=AdapterFailure(category))
+                self.service.resume(job)
+                self.service.wait()
+                run = self.service.workspace()["runs"][0]
+                self.assertEqual(run["reason"], category)
+                self.assertEqual(run["state"], "needs_login" if category == "needs_login" else "blocked")
+                self.assertEqual((run["item_count"],run["failed_count"],run["pending_count"]),(1,1,1))
+                self.assertNotIn("尚未配置",run["message"])
+                self.assertTrue(run["next_step"])
+                self.assertEqual([i for i,_ in self.source.calls],IDS[:2])
+        self.source.prepare_details = MagicMock()
+        self.service.resume(job)
+        self.service.wait()
+        self.assertEqual([i for i,_ in self.source.calls],[*IDS[:2],*IDS[1:3]])
+        self.assertEqual(self.service.workspace()["runs"][0]["state"],"succeeded")
+
     def test_all_failure_pages_remain_accessible_beyond_twenty(self):
         with self.service.workflow.connect() as db:
             db.executemany("INSERT INTO items(platform,author_id,item_id,published_at) VALUES('xiaohongshu',?,?,'')", [(AUTHOR,i) for i in IDS[3:]])
