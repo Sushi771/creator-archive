@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -40,6 +41,66 @@ class AllArchiveBatchTests(unittest.TestCase):
 
     def batch(self, service=None):
         return (service or self.service).workspace()["archive_batches"][0]
+
+    def test_export_file_failure_isolates_author_and_resumes_without_redownloading(self):
+        for failed_name in ("article.md", "manifest.json"):
+            with self.subTest(failed_name=failed_name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, second = "a" * 24, "b" * 24
+                source = DemoSource()
+                source.author_pages = {first: [ids(1, 2)], second: [ids(101, 1)]}
+                service = WorkspaceService(root, adapter_factory=lambda _: source)
+                for author in (first, second):
+                    service.workflow.subscribe("xiaohongshu", author, author, verified=True, evidence="synthetic fixture")
+                service._spawn = lambda _: None
+                batch_id = service.start("all_archive")["batch_id"]
+                members = {m["author_id"]: m for m in service.workspace()["archive_batches"][0]["members"]}
+                from creator_archive import workflow
+                original_write = workflow._managed_write
+
+                def fail_first(path, content):
+                    if first in str(path) and path.name == failed_name:
+                        raise OSError("synthetic export write failure")
+                    return original_write(path, content)
+
+                with patch.object(workflow, "_managed_write", side_effect=fail_first):
+                    service._execute(members[first]["job_id"])
+                    service._execute(members[second]["job_id"])
+                batch = service.workspace()["archive_batches"][0]
+                current = {m["author_id"]: m for m in batch["members"]}
+                jobs = {j["id"]: j for j in service.workspace()["runs"]}
+                self.assertEqual((batch["state"], batch["complete"], batch["unfinished"]), ("partial", 1, 1))
+                self.assertEqual((jobs[members[first]["job_id"]]["stage"], current[first]["reason"]), ("archive", "export_failed"))
+                self.assertEqual((current[first]["pages"], current[first]["target_count"], current[first]["item_count"]), (1, 2, 2))
+                self.assertTrue(current[first]["list_finished"])
+                self.assertEqual(current[second]["state"], "succeeded")
+                self.assertTrue(jobs[members[second]["job_id"]]["export"]["authors"][0]["manifest"])
+                self.assertIn("导出", current[first]["message"])
+                self.assertIn("恢复", current[first]["next_step"])
+                with service.workflow.connect() as db:
+                    fixed = [tuple(r) for r in db.execute("""SELECT p.page_number,p.child_job_id,j.item_id FROM pipeline_pages p
+                        JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number,j.item_id""", (members[first]["job_id"],))]
+                    run_id = db.execute("SELECT run_id FROM jobs WHERE id=?", (members[first]["job_id"],)).fetchone()[0]
+                    checkpoint = tuple(db.execute("SELECT pages,terminal_evidence FROM runs WHERE id=?", (run_id,)).fetchone())
+                manual = root / "archive" / "xiaohongshu" / first / "manual-note.md"
+                manual.write_text("human note", encoding="utf-8")
+                saved = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in (root / "archive").rglob("*") if p.is_file()}
+                service.close()
+                fresh = DemoSource()
+                fresh.author_pages = source.author_pages
+                restarted = WorkspaceService(root, adapter_factory=lambda _: fresh)
+                self.assertEqual(restarted.start("all_archive")["batch_id"], batch_id)
+                self.assertEqual(restarted.resume_archive_batch(batch_id)["resumed_job_ids"], [members[first]["job_id"]])
+                restarted.wait()
+                final = {m["author_id"]: m for m in restarted.workspace()["archive_batches"][0]["members"]}
+                self.assertEqual((final[first]["state"], final[second]["state"]), ("succeeded", "succeeded"))
+                self.assertEqual([value for event, value in fresh.events if event == "detail"], [])
+                with restarted.workflow.connect() as db:
+                    self.assertEqual(tuple(db.execute("SELECT pages,terminal_evidence FROM runs WHERE id=?", (run_id,)).fetchone()), checkpoint)
+                    self.assertEqual([tuple(r) for r in db.execute("""SELECT p.page_number,p.child_job_id,j.item_id FROM pipeline_pages p
+                        JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number,j.item_id""", (members[first]["job_id"],))], fixed)
+                self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in saved}, saved)
+                restarted.close()
 
     def test_fixed_scope_failure_isolation_restart_and_resource_preservation(self):
         self.source.failures[self.second_ids[0]] = "item_unavailable"

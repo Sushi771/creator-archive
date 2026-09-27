@@ -170,7 +170,13 @@ def execute(service, job):
                 list_reason = "demo_item_limit_reached" if demo and len(chosen) >= DEMO_ITEM_LIMIT else "page_budget_reached"
                 db.execute("UPDATE runs SET state='partial',coverage='partial',reason=?,updated_at=? WHERE id=?", (list_reason,time.time(),run_id))
             pending = any(item["state"] != "succeeded" for item in progress(db,parent_id))
-        exported = workflow.export_all(batch_id=run["batch_id"])
+        try:
+            exported = workflow.export_all(batch_id=run["batch_id"])
+        except Exception:
+            # Page/content checkpoints and successful managed files stay intact.
+            # The original parent can retry this stage after the local issue is fixed.
+            service._finish(parent_id,"failed","export_failed")
+            return
         for author in exported["authors"]:
             for key in ("manifest","corpus","index","scan_manifest"):
                 if key not in author:
