@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from creator_archive.app import create_app
 from creator_archive.service import WorkspaceService
+from creator_archive.validation import AdapterFailure, Item, Page
 from tests.test_demo_pipeline import DemoSource
 
 
@@ -86,6 +87,83 @@ class AllArchiveBatchTests(unittest.TestCase):
             self.assertEqual([tuple(row) for row in db.execute("""SELECT p.parent_job_id,j.item_id FROM pipeline_pages p
                 JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id IN (?,?) ORDER BY p.parent_job_id,j.item_id""",
                 (members[self.first]["job_id"], members[self.second]["job_id"]))], targets)
+
+    def test_list_failures_isolate_authors_and_resume_exact_checkpoints(self):
+        cases = (("needs_login_home", "needs_login", None),
+                 ("needs_login_deep", "needs_login", "page-2"),
+                 ("empty_nonterminal_page", "empty_nonterminal_page", "page-2"),
+                 ("repeated_cursor", "repeated_cursor", "page-2"),
+                 ("rate_limited", "rate_limited", "page-2"))
+        for case, category, fault_cursor in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, second = "a" * 24, "b" * 24
+                first_ids, second_ids = ids(1, 2), ids(101, 1)
+
+                class FailingPageSource(DemoSource):
+                    def page(self, author, cursor):
+                        if author == first and cursor == fault_cursor:
+                            if category in {"needs_login", "rate_limited"}:
+                                raise AdapterFailure(category, 60 if category == "rate_limited" else 0)
+                            if category == "empty_nonterminal_page":
+                                return Page((), "page-3", True, None)
+                            return Page((Item(first_ids[1], author, ""),), "page-2", True, None)
+                        return super().page(author, cursor)
+
+                failing = FailingPageSource()
+                failing.author_pages = {first: [[first_ids[0]], [first_ids[1]]], second: [second_ids]}
+                service = WorkspaceService(root, adapter_factory=lambda _: failing)
+                for author in (first, second):
+                    service.workflow.subscribe("xiaohongshu", author, author, verified=True, evidence="synthetic fixture")
+                service._spawn = lambda _: None
+                batch_id = service.start("all_archive")["batch_id"]
+                members = {member["author_id"]: member for member in service.workspace()["archive_batches"][0]["members"]}
+                service._execute(members[first]["job_id"])
+                service._execute(members[second]["job_id"])
+                batch = service.workspace()["archive_batches"][0]
+                members = {member["author_id"]: member for member in batch["members"]}
+                saved_pages = 0 if fault_cursor is None else 1
+                self.assertEqual((members[first]["pages"], members[first]["item_count"], members[first]["list_finished"]),
+                                 (saved_pages, saved_pages, False))
+                self.assertEqual(members[first]["reason"], category)
+                self.assertIn("恢复", members[first]["next_step"])
+                self.assertEqual(members[second]["state"], "rate_limited" if category == "rate_limited" else "succeeded")
+                self.assertEqual(batch["state"], "partial")
+                with service.workflow.connect() as db:
+                    parent = members[first]["job_id"]
+                    run_id = db.execute("SELECT run_id FROM jobs WHERE id=?", (parent,)).fetchone()[0]
+                    self.assertEqual(tuple(db.execute("SELECT pages,cursor,terminal_evidence FROM runs WHERE id=?", (run_id,)).fetchone()),
+                                     (saved_pages, fault_cursor, None))
+                    original_scope = [tuple(row) for row in db.execute("""SELECT p.page_number,j.item_id FROM pipeline_pages p
+                        JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=?""", (parent,))]
+                    asset_paths = [root / "archive" / row[0] for row in db.execute("SELECT relative_path FROM assets WHERE item_id=?", (first_ids[0],))]
+                    if category == "rate_limited":
+                        db.execute("UPDATE platform_cooldowns SET retry_at=0")
+                archive = root / "archive" / "xiaohongshu" / first
+                archive.mkdir(parents=True, exist_ok=True)
+                manual = archive / "manual-note.md"
+                manual.write_text("human note", encoding="utf-8")
+                preserved = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in [*asset_paths, manual]}
+                self.assertEqual(len(asset_paths), saved_pages)
+                service.close()
+
+                fresh = DemoSource()
+                fresh.author_pages = failing.author_pages
+                restarted = WorkspaceService(root, adapter_factory=lambda _: fresh)
+                self.assertEqual(restarted.start("all_archive")["batch_id"], batch_id)
+                resumed = restarted.resume_archive_batch(batch_id)
+                self.assertEqual(set(resumed["resumed_job_ids"]), {member["job_id"] for member in members.values() if member["state"] != "succeeded"})
+                restarted.wait()
+                final = restarted.workspace()["archive_batches"][0]
+                self.assertEqual(final["complete"], 2)
+                self.assertEqual(final["unfinished"], 0)
+                self.assertEqual([value for event, value in fresh.events if event == "detail"],
+                                 first_ids[saved_pages:] + (second_ids if category == "rate_limited" else []))
+                with restarted.workflow.connect() as db:
+                    self.assertEqual([tuple(row) for row in db.execute("""SELECT p.page_number,j.item_id FROM pipeline_pages p
+                        JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number""", (parent,))][:len(original_scope)], original_scope)
+                self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in preserved}, preserved)
+                restarted.close()
 
     def test_reopen_interrupted_batch_keeps_original_author_set(self):
         with self.service.workflow.connect() as db:
