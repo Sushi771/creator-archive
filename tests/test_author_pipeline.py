@@ -19,7 +19,7 @@ from creator_archive.validation import AdapterFailure, Item, Page
 AUTHOR = "b" * 24
 IDS = [f"{n:024x}" for n in range(1, 7)]
 PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=")
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=")
 
 
 class AuthorSource:

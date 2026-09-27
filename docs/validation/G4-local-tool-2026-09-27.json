@@ -1,0 +1,53 @@
+{
+  "date": "2026-09-27",
+  "level": "actual Playwright browser tool against a running loopback service and synthetic temporary workspace",
+  "not_verified": [
+    "ChatGPT or MCP connection",
+    "real platform access",
+    "real user archive",
+    "model image input"
+  ],
+  "fixture": {
+    "authors": 1,
+    "list_pages": 5,
+    "unique_items": 6,
+    "registered_images": 6,
+    "cross_page_duplicate": true,
+    "explicit_terminal": true
+  },
+  "browser_reads": {
+    "item_list_offsets": [0, 2, 4],
+    "item_list_counts": [2, 2, 2],
+    "item_list_total_each_page": 6,
+    "unique_item_ids": 6,
+    "source_urls_present": 6,
+    "detail_text_matches_corpus": true,
+    "detail_source_matches_corpus": true,
+    "scan_pages": 5,
+    "scan_observed_unique": 6,
+    "scan_complete": 6,
+    "manifest_items": 6,
+    "corpus_rows": 6,
+    "missing_registered_assets": 0,
+    "image_http_status": 200,
+    "image_mime": "image/png",
+    "image_bytes": 68,
+    "browser_decoded_image_px": [1, 1]
+  },
+  "fixture_issue": "Existing synthetic PNG had an invalid IDAT CRC. Browser decoding first failed; test fixture CRC was corrected and the temporary workspace rebuilt before the successful read.",
+  "read_only_check": {
+    "file_count_before_after": [30, 30],
+    "files_sha256_and_mtime_summary_before_after": [
+      "b8748e377051c44103befff01c14559bcf4f01d74493e983beb662c68a66a31",
+      "b8748e377051c44103befff01c14559bcf4f01d74493e983beb662c68a66a31"
+    ],
+    "table_rows_before_after": {
+      "jobs": [6, 6],
+      "runs": [1, 1],
+      "pages": [5, 5],
+      "items": [6, 6],
+      "assets": [6, 6]
+    },
+    "running_jobs_before_after": [0, 0]
+  }
+}
