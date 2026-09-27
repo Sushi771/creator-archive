@@ -165,6 +165,85 @@ class AllArchiveBatchTests(unittest.TestCase):
                 self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in preserved}, preserved)
                 restarted.close()
 
+    def test_content_failures_isolate_authors_and_resume_fixed_items(self):
+        cases = ("item_unavailable", "media_failed", "needs_login", "rate_limited")
+        for category in cases:
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, second = "a" * 24, "b" * 24
+                first_ids, second_ids = ids(1, 2), ids(101, 1)
+
+                class FailingContentSource(DemoSource):
+                    def detail(self, author, item, source_url=""):
+                        if author == first and item == first_ids[0] and category in {"needs_login", "rate_limited"}:
+                            self.events.append(("detail", item))
+                            raise AdapterFailure(category, 60 if category == "rate_limited" else 0)
+                        return super().detail(author, item, source_url=source_url)
+
+                    def download_media(self, candidate, target):
+                        if category == "media_failed" and target.name == first_ids[0]:
+                            raise AdapterFailure("media_failed")
+                        return super().download_media(candidate, target)
+
+                failing = FailingContentSource()
+                failing.author_pages = {first: [first_ids], second: [second_ids]}
+                if category == "item_unavailable":
+                    failing.failures[first_ids[0]] = category
+                service = WorkspaceService(root, adapter_factory=lambda _: failing)
+                for author in (first, second):
+                    service.workflow.subscribe("xiaohongshu", author, author, verified=True, evidence="synthetic fixture")
+                service._spawn = lambda _: None
+                batch_id = service.start("all_archive")["batch_id"]
+                initial = {m["author_id"]: m for m in service.workspace()["archive_batches"][0]["members"]}
+                service._execute(initial[first]["job_id"])
+                service._execute(initial[second]["job_id"])
+                batch = service.workspace()["archive_batches"][0]
+                members = {m["author_id"]: m for m in batch["members"]}
+                first_member = members[first]
+                self.assertEqual((first_member["pages"], first_member["target_count"], first_member["item_count"]),
+                                 (1, 2, 1 if category in {"item_unavailable", "media_failed"} else 0))
+                self.assertEqual(first_member["failed_count"], 1)
+                self.assertEqual(first_member["list_finished"], True)
+                self.assertEqual(first_member["reason"], category if category in {"needs_login", "rate_limited"} else "author_archive_partial")
+                self.assertEqual(members[second]["state"], "rate_limited" if category == "rate_limited" else "succeeded")
+                failure = service.job_failures(first_member["job_id"])["items"][0]
+                self.assertEqual((failure["item_id"], failure["reason"]), (first_ids[0], category))
+                self.assertTrue(failure["next_step"])
+                with service.workflow.connect() as db:
+                    fixed = [tuple(row) for row in db.execute("""SELECT p.page_number,p.child_job_id,j.item_id FROM pipeline_pages p
+                        JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number,j.item_id""",
+                        (first_member["job_id"],))]
+                    run_id = db.execute("SELECT run_id FROM jobs WHERE id=?", (first_member["job_id"],)).fetchone()[0]
+                    checkpoint = tuple(db.execute("SELECT pages,terminal_evidence FROM runs WHERE id=?", (run_id,)).fetchone())
+                    if category == "rate_limited":
+                        db.execute("UPDATE platform_cooldowns SET retry_at=0")
+                archive = root / "archive" / "xiaohongshu" / first
+                archive.mkdir(parents=True, exist_ok=True)
+                manual = archive / "manual-note.md"
+                manual.write_text("human note", encoding="utf-8")
+                saved = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in archive.rglob("*") if p.is_file()}
+                service.close()
+
+                fresh = DemoSource()
+                fresh.author_pages = failing.author_pages
+                restarted = WorkspaceService(root, adapter_factory=lambda _: fresh)
+                self.assertEqual(restarted.start("all_archive")["batch_id"], batch_id)
+                restarted.resume_archive_batch(batch_id)
+                restarted.wait()
+                final = {m["author_id"]: m for m in restarted.workspace()["archive_batches"][0]["members"]}
+                self.assertEqual((final[first]["state"], final[second]["state"]), ("succeeded", "succeeded"))
+                expected = first_ids if category in {"needs_login", "rate_limited"} else first_ids[:1]
+                if category == "rate_limited":
+                    expected += second_ids
+                self.assertEqual([value for event, value in fresh.events if event == "detail"], expected)
+                with restarted.workflow.connect() as db:
+                    self.assertEqual([tuple(row) for row in db.execute("""SELECT p.page_number,p.child_job_id,j.item_id FROM pipeline_pages p
+                        JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number,j.item_id""",
+                        (first_member["job_id"],))], fixed)
+                    self.assertEqual(tuple(db.execute("SELECT pages,terminal_evidence FROM runs WHERE id=?", (run_id,)).fetchone()), checkpoint)
+                self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in saved}, saved)
+                restarted.close()
+
     def test_reopen_interrupted_batch_keeps_original_author_set(self):
         with self.service.workflow.connect() as db:
             old_batch = db.execute("INSERT INTO batches(mode,created_at) VALUES('full',1)").lastrowid

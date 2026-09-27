@@ -896,6 +896,8 @@ class WorkspaceService:
                                 if error.category in {"needs_login","rate_limited","unavailable","verification_required"}:
                                     raise
                                 media_failed = True
+                                if error.category == "media_failed":
+                                    incomplete_reason = "media_failed"
                             except OSError as error:
                                 media_failed = True
                                 if error.errno in LOCAL_MEDIA_ERRNOS:
