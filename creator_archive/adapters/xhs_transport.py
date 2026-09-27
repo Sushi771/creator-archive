@@ -471,34 +471,50 @@ class XhsBrowserTransport:
                 # A new initial scan must obtain fresh evidence. In particular,
                 # never relabel a previous scan's cached terminal page as live.
                 self._author = None
+            replay_seed = False
             if self._author != author:
                 self._author = author
                 self._responses.clear()
                 self._page.goto(f"https://www.xiaohongshu.com/user/profile/{author}",
                                 wait_until="domcontentloaded", timeout=30000)
+                # A restart may find an old batch item only in the homepage's
+                # SSR cards. Read that seed once before scrolling, including
+                # when goto already delivered the requested API response.
+                replay_seed = bool(cursor)
             deadline = time.monotonic() + self.timeout
             while time.monotonic() < deadline:
                 if self._failure:
                     raise self._failure
                 self._check_wall()
-                if (author, cursor) in self._responses:
+                if not replay_seed and (author, cursor) in self._responses:
                     return self._responses[(author, cursor)]
                 state = self._page.evaluate(INITIAL_STATE)
                 if isinstance(state, dict) and state.get("logged_in") is False:
                     raise TransportFailure("needs_login", "独立浏览器尚未登录；作者页可能展示隐藏作品ID的预览，请登录后恢复，已有进度保留。")
                 if isinstance(state, dict) and state.get("author") == author:
                     # SSR may seed a nonterminal first page, never prove completion.
-                    if not cursor and state.get("has_more") is True and state.get("notes"):
+                    if (not cursor or replay_seed) and state.get("has_more") is True and state.get("notes"):
                         seed = {"success": True, "data": {k: state[k] for k in ("notes", "cursor", "has_more")}}
                         seed = normalized_response(200, {"success": True, "code": 0, "data": seed["data"]})
                         XhsPageAdapter(lambda _a, _c: seed).page(author, None)
                         # SSR cards can exist before virtualized anchors mount.
                         # Retain their observed top-level xsecToken only after
                         # the same identity/cursor checks as an API response.
-                        self._cache_references(author, state["notes"])
-                        return seed
-                    if state.get("has_more") is False:
+                        notes = state["notes"]
+                        if replay_seed:
+                            # Keep fresher API/verified links observed in this
+                            # session. SSR fills gaps, never replaces the saved
+                            # request page or becomes new history evidence.
+                            notes = [note for note in notes
+                                     if (author, note["note_id"]) not in self._detail_links]
+                        self._cache_references(author, notes)
+                        if not cursor:
+                            return seed
+                    if state.get("has_more") is False and (author, cursor) not in self._responses:
                         raise TransportFailure("invalid_cursor", "浏览器已停在末页但未观察到所需游标响应；检查点保留，请核对作者后恢复。")
+                replay_seed = False
+                if (author, cursor) in self._responses:
+                    return self._responses[(author, cursor)]
                 # Normal scrolling can rejoin a saved cursor after browser restart.
                 # No fixed page cap or DOM emptiness is interpreted as completion.
                 self._page.mouse.wheel(0, 1800)

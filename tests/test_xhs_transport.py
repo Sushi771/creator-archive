@@ -115,10 +115,112 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(result.items[0].item_id, NOTE)
         self.assertEqual(transport._page.scrolls, 2)
 
+    def test_restart_caches_ssr_reference_without_replacing_checkpoint_page(self):
+        from tests.test_xhs_content import detail
+        state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+        marker = "synthetic-replay-ssr-reference"
+        state["notes"][0]["xsec_token"] = marker
+        later = payload()
+        later["data"]["notes"][0]["note_id"] = "d" * 24
+        transport = self.make(initial=state, responses=[Response(CURSOR, later)])
+        transport._detail_page = MagicMock()
+        transport._detail_page.goto.return_value.status = 200
+        snapshot = detail()
+        snapshot["note"]["noteId"] = NOTE
+        transport._detail_page.evaluate.return_value = snapshot
+
+        page = transport.page(AUTHOR, CURSOR)
+        self.assertEqual([item.item_id for item in page.items], ["d" * 24])
+        self.assertFalse(page.has_more)
+        self.assertEqual(set(transport._responses), {(AUTHOR, CURSOR)})
+        self.assertEqual(transport._page.links, [])
+        # The old fixed batch may contain an item now visible only in SSR.
+        self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE]), ())
+        result = transport.detail(AUTHOR, NOTE)
+        self.assertIn(marker, transport._detail_page.goto.call_args.args[0])
+        self.assertNotIn(marker, str(page))
+        self.assertNotIn(marker, str(transport._responses))
+        self.assertNotIn(marker, result["source_url"])
+        self.assertEqual(len(transport._page.navigations), 1)
+        self.assertEqual(transport._page.scrolls, 1)
+        transport.close()
+        self.assertEqual(transport._detail_links, {})
+        self.assertEqual(transport._verified_detail_links, {})
+
     def test_foreign_author_response_ignored(self):
         transport = self.make(responses=[Response(CURSOR, author="d" * 24), Response(CURSOR)])
         self.assertFalse(transport.page(AUTHOR, CURSOR).has_more)
         self.assertEqual(transport._page.scrolls, 2)
+
+    def test_replay_seed_cannot_supply_terminal_or_missing_checkpoint_evidence(self):
+        for has_more, expected in ((True, "timeout"), (False, "invalid_cursor")):
+            with self.subTest(has_more=has_more):
+                state = dict(payload(has_more, CURSOR)["data"], author=AUTHOR)
+                state["notes"][0]["xsec_token"] = "synthetic-seed-only"
+                transport = self.make(initial=state)
+                with self.assertRaises(AdapterFailure) as error:
+                    transport.page(AUTHOR, CURSOR)
+                self.assertEqual(error.exception.category, expected)
+                self.assertEqual(transport._responses, {})
+                if not has_more:
+                    self.assertEqual(transport._detail_links, {})
+
+    def test_replay_validates_whole_seed_before_retaining_references(self):
+        for invalid in ("foreign_item", "invalid_id", "missing_cursor", "logged_out"):
+            with self.subTest(invalid=invalid):
+                state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+                state["notes"][0]["xsec_token"] = "synthetic-valid-first"
+                second = {"note_id": "d" * 24, "user": {"user_id": AUTHOR},
+                          "xsec_token": "synthetic-invalid-second"}
+                state["notes"].append(second)
+                if invalid == "foreign_item":
+                    second["user"]["user_id"] = "e" * 24
+                elif invalid == "invalid_id":
+                    second["note_id"] = "invalid"
+                elif invalid == "missing_cursor":
+                    state["cursor"] = ""
+                else:
+                    state["logged_in"] = False
+                transport = self.make(initial=state, responses=[Response(CURSOR)])
+                with self.assertRaises(AdapterFailure):
+                    transport.page(AUTHOR, CURSOR)
+                self.assertEqual(transport._detail_links, {})
+                self.assertEqual(transport._responses, {})
+                self.assertEqual(transport._page.scrolls, 0)
+
+    def test_replay_ignores_foreign_seed_and_invalid_reference_values(self):
+        for invalid in ("foreign_seed", None, "", False, "x" * 2049, "ref\ncontrol"):
+            with self.subTest(invalid_type=type(invalid).__name__):
+                state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+                state["notes"][0]["xsec_token"] = invalid
+                if invalid == "foreign_seed":
+                    state["author"] = "e" * 24
+                transport = self.make(initial=state, responses=[Response(CURSOR)])
+                self.assertFalse(transport.page(AUTHOR, CURSOR).has_more)
+                self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE]), (NOTE,))
+                self.assertEqual(transport._detail_links, {})
+
+    def test_replay_reads_seed_when_navigation_delivers_api_and_keeps_newer_reference(self):
+        state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+        state["notes"][0]["xsec_token"] = "synthetic-older-seed"
+        extra = "d" * 24
+        state["notes"].append({"note_id": extra, "user": {"user_id": AUTHOR},
+                               "xsec_token": "synthetic-seed-extra"})
+        current = payload()
+        current["data"]["notes"][0]["xsec_token"] = "synthetic-newer-api"
+        transport = self.make(initial=state)
+        goto = transport._page.goto
+        def navigate(*args, **kwargs):
+            goto(*args, **kwargs)
+            transport._observe(Response(CURSOR, current))
+        transport._page.goto = navigate
+        page = transport.page(AUTHOR, CURSOR)
+        self.assertEqual([item.item_id for item in page.items], [NOTE])
+        self.assertIn("synthetic-newer-api", transport._detail_links[(AUTHOR, NOTE)])
+        self.assertIn("synthetic-seed-extra", transport._detail_links[(AUTHOR, extra)])
+        self.assertEqual(transport._page.scrolls, 0)
+        self.assertEqual(set(transport._responses), {(AUTHOR, CURSOR)})
+        self.assertNotIn("synthetic-", str(transport._responses))
 
     def test_new_initial_scan_does_not_reuse_cached_prior_scan(self):
         transport = self.make(text="扫码登录")
