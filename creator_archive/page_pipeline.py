@@ -172,7 +172,9 @@ def execute(service, job):
             pending = any(item["state"] != "succeeded" for item in progress(db,parent_id))
         exported = workflow.export_all(batch_id=run["batch_id"])
         for author in exported["authors"]:
-            for key in ("manifest","corpus","index"):
+            for key in ("manifest","corpus","index","scan_manifest"):
+                if key not in author:
+                    continue
                 author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(service.root / "archive").as_posix(),safe="/")
         list_pending = not run["terminal_evidence"] and (until_terminal or (demo and len(chosen) < DEMO_ITEM_LIMIT))
         _stage(service,parent_id,"list" if list_pending else "content" if pending else "done")

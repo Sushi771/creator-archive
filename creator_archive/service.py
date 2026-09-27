@@ -351,6 +351,8 @@ class WorkspaceService:
                           target_count=len(progress),item_count=success,failed_count=len(failures),
                           pending_count=len(progress)-success-len(failures),failed_items=failures[:20],
                           children=[dict(r) for r in db.execute("SELECT p.page_number,j.id,j.state,j.reason FROM pipeline_pages p JOIN jobs j ON j.id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number", (row["id"],))])
+            if row["mode"] == "author_archive":
+                result["scan_url"] = f"/api/jobs/{row['id']}/scan"
         message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
         if row["mode"] in {"content", "metrics"} and row["reason"] in {"unavailable", "timeout"}:
             message = "作品详情或媒体暂未能获取，具体原因尚未确认；已有正文、成功媒体及指标原值与时间保留。"
@@ -421,6 +423,14 @@ class WorkspaceService:
                                 "message": job["message"] if job else MESSAGES["wechat_blocked"][0],
                                 "next_step": job["next_step"] if job else MESSAGES["wechat_blocked"][1],
                                 "can_resume": job["can_resume"] if job else False})
+                if job:
+                    members[-1]["scan_url"] = f"/api/jobs/{job['id']}/scan"
+                if job and job.get("export"):
+                    exported_author = next((author for author in job["export"]["authors"]
+                                            if (author["platform"], author["author_id"]) ==
+                                            (row["platform"], row["author_id"])), None)
+                    if exported_author:
+                        members[-1]["scan_manifest_url"] = exported_author.get("scan_manifest_url")
             running = any(m["state"] in {"queued", "running"} for m in members)
             complete = sum(m["state"] == "succeeded" for m in members)
             blocked = sum(m["job_id"] is None for m in members)
@@ -437,6 +447,30 @@ class WorkspaceService:
                            "items_pending": sum(m["pending_count"] for m in members),
                            "members": members})
         return result
+
+    def job_scan(self, job_id: int) -> dict:
+        with self.workflow.connect() as db:
+            job = db.execute("SELECT run_id,mode,platform,author_id FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if job is None:
+                raise KeyError("job_not_found")
+            if job["mode"] != "author_archive":
+                raise ValueError("仅单作者全历史归档任务有本轮扫描清单")
+            if not job["run_id"]:
+                library_only = [row[0] for row in db.execute(
+                    "SELECT item_id FROM items WHERE platform=? AND author_id=? ORDER BY published_at,item_id",
+                    (job["platform"], job["author_id"]))]
+                return {"schema_version": 2, "kind": "author_scan", "platform": job["platform"],
+                        "author_id": job["author_id"], "parent_job_id": job_id,
+                        "pages_scanned": 0, "list_finished": False,
+                        "unseen_items": "unknown_not_enumerable", "status": "scan_not_started",
+                        "counts": {"observed_unique": 0, "targeted_unique": 0, "complete": 0,
+                                   "partial": 0, "pending": 0, "not_targeted": 0,
+                                   "library_only": len(library_only)},
+                        "observed_items": [], "library_only_item_ids": library_only}
+            run = dict(db.execute("SELECT * FROM runs WHERE id=?", (job["run_id"],)).fetchone())
+            items = [dict(row) for row in db.execute("SELECT * FROM items WHERE platform=? AND author_id=? ORDER BY published_at,item_id",
+                                                  (job["platform"], job["author_id"]))]
+            return self.workflow._author_scan_manifest(db, run, items)
 
     def items(self, platform=None, author_id=None, offset=0, limit=50, has_assets=False,
               *, sort="published_at", order="desc", min_likes=None, min_collects=None, min_comments=None,

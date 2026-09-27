@@ -489,6 +489,12 @@ class ArchiveWorkflow:
                                            "metrics": metrics, "metric_snapshots": snapshots, "media_state": item["media_state"],
                                            "files": files, "assets": assets})
                 run = run_map.get((platform, author_id))
+                scan_path = None
+                if run and run["mode"] == "author_archive":
+                    scan = self._author_scan_manifest(db, run, items)
+                    if scan is not None:
+                        scan_path = _managed_write(base / f"scan-run-{run['id']}.json",
+                                                   json.dumps(scan, ensure_ascii=False, indent=2).encode("utf-8"))
                 manifest = {"schema_version": 2, "platform": platform, "author_id": author_id,
                             "display_name": author["display_name"],
                             "coverage": run["coverage"] if run else "unknown",
@@ -523,6 +529,11 @@ class ArchiveWorkflow:
                 coverage_text = ("已观察到当前可获取范围的明确末页" if
                                  manifest["coverage"] == "complete_for_accessible_scope" and manifest["terminal_evidence"]
                                  else "历史覆盖尚未确认，不能据此认为已到末页")
+                scan_link = (f' · <a href="{escape(quote(scan_path.name), quote=True)}">本轮扫描清单</a>'
+                             if scan_path is not None else "")
+                scan_notice = (f'<p>本轮观察 {scan["counts"]["observed_unique"]} 个唯一作品；'
+                               f'库中但本轮未观察 {scan["counts"]["library_only"]} 个。未见作品无法枚举；'
+                               '本轮完成数含复用资源，不等于新下载数。</p>' if scan_path is not None else "")
                 index_html = (
                     '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
                     '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -532,8 +543,9 @@ class ArchiveWorkflow:
                     f'<p>已保存 {len(items)} 条作品记录；正文已保存 {len(corpus)} 条，缺失 {len(items) - len(corpus)} 条。</p>'
                     f'<p>历史覆盖：{coverage_text}。此状态仅针对列表，不代表正文或媒体完整。</p>'
                     f'<p>媒体预期总数未知；已登记但缺失或校验失败的附件：{missing_assets} 个。</p>'
+                    + scan_notice +
                     f'<nav><a href="{escape(quote(manifest_path.name), quote=True)}">归档清单</a> · '
-                    f'<a href="{escape(quote(corpus_path.name), quote=True)}">正文语料 JSONL</a></nav>'
+                    f'<a href="{escape(quote(corpus_path.name), quote=True)}">正文语料 JSONL</a>{scan_link}</nav>'
                     '<h2>全部已保存作品</h2><ol>' + "".join(index_rows) + '</ol></main></body></html>'
                 )
                 index_path = _managed_write(base / "index.html", index_html.encode("utf-8"))
@@ -541,4 +553,50 @@ class ArchiveWorkflow:
                                "details": len(corpus), "manifest": str(manifest_path), "corpus": str(corpus_path), "index": str(index_path),
                                "coverage": manifest["coverage"], "missing_registered_assets": missing_assets,
                                "media_coverage": "unknown_expected_count"})
+                if scan_path is not None:
+                    result[-1]["scan_manifest"] = str(scan_path)
         return {"authors": result, "archive_root": str(self.root / "archive")}
+
+    def _author_scan_manifest(self, db, run: dict, library_items: list[dict]) -> dict | None:
+        """Describe one durable author scan without changing the all-library schema-2 export."""
+        parent = db.execute("SELECT id FROM jobs WHERE run_id=? AND mode='author_archive'", (run["id"],)).fetchone()
+        if parent is None:
+            return None
+        observed = {}
+        for page in db.execute("SELECT page_number,item_ids FROM pages WHERE run_id=? ORDER BY page_number", (run["id"],)):
+            for item_id in json.loads(page["item_ids"]):
+                observed.setdefault(item_id, []).append(page["page_number"])
+        target_rows = db.execute("""SELECT j.item_id,j.state,j.reason FROM pipeline_pages p
+            JOIN job_items j ON j.job_id=p.child_job_id WHERE p.parent_job_id=?""", (parent["id"],))
+        targets = {}
+        for row in target_rows:
+            targets.setdefault(row["item_id"], []).append(dict(row))
+        library = {item["item_id"]: item for item in library_items}
+        observed_items = []
+        for item_id, pages in observed.items():
+            states = targets.get(item_id, [])
+            if any(row["state"] == "succeeded" for row in states):
+                state, reason = "complete", None
+            elif any(row["state"] == "partial" for row in states):
+                state = "partial"
+                reason = next((row["reason"] for row in states if row["state"] == "partial" and row["reason"]), None)
+            else:
+                state, reason = "pending" if states else "not_targeted", None
+            item = library.get(item_id)
+            observed_items.append({"item_id": item_id, "pages": pages, "download_state": state,
+                                   "reason": reason, "detail_state": item["detail_state"] if item else "missing",
+                                   "media_state": item["media_state"] if item else "unknown"})
+        library_only = [item["item_id"] for item in library_items if item["item_id"] not in observed]
+        return {"schema_version": 2, "kind": "author_scan", "platform": run["platform"],
+                "author_id": run["author_id"], "run_id": run["id"], "parent_job_id": parent["id"],
+                "pages_scanned": run["pages"], "coverage": run["coverage"],
+                "list_finished": bool(run["terminal_evidence"]),
+                "unseen_items": "unknown_not_enumerable",
+                "download_note": "complete is the content task state and includes reused resources; inspect the full-library manifest for offline asset validation; it does not count new downloads",
+                "counts": {"observed_unique": len(observed_items), "targeted_unique": len(targets),
+                           "complete": sum(item["download_state"] == "complete" for item in observed_items),
+                           "partial": sum(item["download_state"] == "partial" for item in observed_items),
+                           "pending": sum(item["download_state"] == "pending" for item in observed_items),
+                           "not_targeted": sum(item["download_state"] == "not_targeted" for item in observed_items),
+                           "library_only": len(library_only)},
+                "observed_items": observed_items, "library_only_item_ids": library_only}

@@ -1,5 +1,6 @@
 """Fixed all-subscription archive batches using synthetic pages and temporary files."""
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
@@ -93,6 +94,10 @@ class AllArchiveBatchTests(unittest.TestCase):
                        (old_batch,"xiaohongshu",self.first))
         self.service._spawn = lambda _: None
         first = self.service.start("all_archive")
+        queued = next(m for m in self.batch()["members"] if m["author_id"] == self.first)
+        pending_scan = self.service.job_scan(queued["job_id"])
+        self.assertEqual(pending_scan["status"], "scan_not_started")
+        self.assertEqual(pending_scan["counts"]["observed_unique"], 0)
         self.assertEqual(self.service.workflow.status()["batch_id"], old_batch,
                          "A member-only orchestration batch must not hide the latest workflow run")
         third = "e" * 24
@@ -103,6 +108,53 @@ class AllArchiveBatchTests(unittest.TestCase):
         self.assertEqual(restarted.start("all_archive")["batch_id"], first["batch_id"])
         self.assertEqual({m["author_id"] for m in self.batch(restarted)["members"]}, {self.first, self.second, self.wechat})
         self.assertTrue(all(m["state"] == "interrupted" for m in self.batch(restarted)["members"] if m["job_id"]))
+
+    def test_run_scan_manifest_separates_observed_failures_and_library_only_after_restart(self):
+        old_id = ids(900, 1)[0]
+        with self.service.workflow.connect() as db:
+            db.execute("INSERT INTO items(platform,item_id,author_id,published_at) VALUES(?,?,?,'')",
+                       ("xiaohongshu", old_id, self.first))
+        observed = self.first_ids[:3]
+        self.source.author_pages[self.first] = [observed[:2], [observed[0], observed[2]]]
+        self.source.failures[observed[2]] = "item_unavailable"
+        parent = self.service.start("author_archive", "xiaohongshu", self.first)["job_id"]
+        self.service.wait()
+        job = next(row for row in self.service.workspace()["runs"] if row["id"] == parent)
+        exported = job["export"]["authors"][0]
+        scan_path = Path(exported["scan_manifest"])
+        scan = json.loads(scan_path.read_text(encoding="utf-8"))
+        self.assertEqual(scan["counts"], {"observed_unique": 3, "targeted_unique": 3,
+                                          "complete": 2, "partial": 1, "pending": 0,
+                                          "not_targeted": 0, "library_only": 1})
+        self.assertEqual(scan["library_only_item_ids"], [old_id])
+        self.assertEqual([(item["item_id"], item["download_state"]) for item in scan["observed_items"]],
+                         [(observed[0], "complete"), (observed[1], "complete"), (observed[2], "partial")])
+        self.assertEqual(scan["observed_items"][0]["pages"], [1, 2])
+        self.assertEqual(scan["observed_items"][2]["reason"], "item_unavailable")
+        self.assertEqual(scan["unseen_items"], "unknown_not_enumerable")
+        current = self.service.job_scan(parent)
+        self.assertEqual(current["counts"], scan["counts"])
+        self.assertEqual(len(json.loads(Path(exported["manifest"]).read_text(encoding="utf-8"))["items"]), 4)
+        self.assertIn("本轮扫描清单", Path(exported["index"]).read_text(encoding="utf-8"))
+        saved = (scan_path.read_bytes(), scan_path.stat().st_mtime_ns)
+        manual = scan_path.parent / "manual-note.md"
+        manual.write_text("kept", encoding="utf-8")
+
+        self.service.close()
+        fresh = DemoSource()
+        fresh.author_pages = self.source.author_pages
+        restarted = WorkspaceService(self.root, adapter_factory=lambda _: fresh)
+        self.addCleanup(restarted.close)
+        restarted.resume(parent)
+        restarted.wait()
+        result = next(row for row in restarted.workspace()["runs"] if row["id"] == parent)
+        new_scan = json.loads(Path(result["export"]["authors"][0]["scan_manifest"]).read_text(encoding="utf-8"))
+        self.assertEqual((new_scan["run_id"], new_scan["parent_job_id"]), (scan["run_id"], parent))
+        self.assertEqual(new_scan["counts"]["complete"], 3)
+        self.assertEqual(new_scan["counts"]["library_only"], 1)
+        self.assertEqual([value for event, value in fresh.events if event == "detail"], [observed[2]])
+        self.assertEqual((scan_path.read_bytes(), scan_path.stat().st_mtime_ns), saved)
+        self.assertEqual(manual.read_text(encoding="utf-8"), "kept")
 
     def test_upgrade_creates_verified_backup_before_new_table(self):
         self.service.close()
@@ -128,6 +180,13 @@ class AllArchiveBatchTests(unittest.TestCase):
             app.state.service.wait()
             batch = client.get("/api/workspace").json()["archive_batches"][0]
             self.assertEqual((batch["id"], batch["complete"], batch["total"]), (batch_id, 1, 1))
+            member = batch["members"][0]
+            scan = client.get(member["scan_url"])
+            self.assertEqual(scan.status_code, 200)
+            self.assertEqual(scan.json()["counts"]["observed_unique"], 2)
+            exported_scan = client.get(member["scan_manifest_url"])
+            self.assertEqual(exported_scan.status_code, 200)
+            self.assertEqual(exported_scan.json()["run_id"], scan.json()["run_id"])
             resumed = client.post(f"/api/archive-batches/{batch_id}/resume", json={}, headers=headers)
             self.assertEqual(resumed.status_code, 200)
             self.assertEqual(resumed.json()["resumed_job_ids"], [])

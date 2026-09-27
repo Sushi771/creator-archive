@@ -180,10 +180,11 @@ assert.match(elements['recovery-resume'].textContent,/继续原单作者任务/)
 await run('$("recovery-resume").onclick()');
 assert.equal(run('pageCalls.at(-1).path'),'/api/jobs/35/resume');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{});
-run('renderJobs([{id:35,mode:"author_archive",state:"interrupted",pages:4,page_limit:null,list_finished:false,target_count:90,item_count:80,failed_count:1,pending_count:9,coverage:"partial",can_resume:true}])');
+run('renderJobs([{id:35,mode:"author_archive",state:"interrupted",pages:4,page_limit:null,list_finished:false,target_count:90,item_count:80,failed_count:1,pending_count:9,coverage:"partial",can_resume:true,scan_url:"/api/jobs/35/scan"}])');
 let fullProgress=elements['job-list'].children[0].children[1].textContent;
 assert.match(fullProgress,/列表已保存 4 页.*尚未核验末页.*正文媒体 80 \/ 90 篇.*已尝试未完成 1.*待处理 9/);
 assert.doesNotMatch(fullProgress,/4 \/ (0|2)/,'Unknown full-author page count is never rendered as a denominator');
+assert.match(flattenText(elements['job-list']),/查看当前扫描范围/,'An interrupted author run exposes its durable observed scope before export');
 run('renderJobs([{id:35,mode:"author_archive",state:"partial",pages:5,page_limit:null,list_finished:true,target_count:100,item_count:99,failed_count:1,pending_count:0,coverage:"complete_for_accessible_scope",can_resume:true},{id:36,mode:"content",state:"partial",parent_job_id:35}])');
 fullProgress=elements['job-list'].children[0].children[1].textContent;
 assert.match(fullProgress,/已核验可信末页.*正文媒体 99 \/ 100 篇.*已尝试未完成 1/,'Trusted list completion retains the separate incomplete content count');
@@ -206,8 +207,9 @@ assert.match(html.replace(batchAdvanced,''),/data-job="demo_archive"[^>]*>测试
 assert.doesNotMatch(html.replace(batchAdvanced,''),/data-job="(?:full|content|metrics|latest)"/,'Broad bulk actions are not primary controls');
 await run('startJob("all_archive")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
-run('renderArchiveBatches([{id:7,state:"partial",total:2,complete:0,unfinished:1,blocked:1,members:[{platform:"wechat",author_id:"wx",job_id:null,reason:"wechat_blocked",pages:0,item_count:0,target_count:0},{platform:"xiaohongshu",author_id:"author",job_id:8,state:"partial",reason:"item_unavailable",pages:3,item_count:2,target_count:3,can_resume:true}]}])');
+run('renderArchiveBatches([{id:7,state:"partial",total:2,complete:0,unfinished:1,blocked:1,members:[{platform:"wechat",author_id:"wx",job_id:null,reason:"wechat_blocked",pages:0,item_count:0,target_count:0},{platform:"xiaohongshu",author_id:"author",job_id:8,state:"partial",reason:"item_unavailable",pages:3,item_count:2,target_count:3,can_resume:true,scan_url:"/api/jobs/8/scan",scan_manifest_url:"/archive/xiaohongshu/author/scan-run-1.json"}]}])');
 assert.match(flattenText(elements['archive-batch-list']),/固定作者 2 位.*公众号未接入 1.*任务 #8.*正文媒体 2 \/ 3 篇.*继续批次未完成作者/);
+assert.match(flattenText(elements['archive-batch-list']),/查看当前扫描范围.*查看本轮扫描清单/);
 run('pageCalls=[]');
 await run('startJob("demo_archive",{platform:"xiaohongshu",author_id:"author"})');
 await run('startJob("demo_archive")');
