@@ -2,6 +2,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from creator_archive.validation import AdapterFailure
 
 from creator_archive.adapters.xhs_transport import (
     XhsBrowserTransport, TransportFailure, normalized_response, response_key,
@@ -80,6 +81,26 @@ class TransportTests(unittest.TestCase):
         data["data"]["notes"][0]["user"] = {}
         with self.assertRaises(TransportFailure):
             normalized_response(200, data)
+
+    def test_valid_observed_navigation_reference_only_in_memory_not_page_evidence(self):
+        data = payload()
+        data["data"]["notes"][0].update(xsec_token="synthetic-navigation-reference", xsec_source="pc_user")
+        transport = self.make(responses=[Response(CURSOR, data)])
+        result = transport.page(AUTHOR, CURSOR)
+        self.assertEqual(result.items[0].item_id, NOTE)
+        self.assertIn("synthetic-navigation-reference", transport._detail_links[(AUTHOR, NOTE)])
+        self.assertNotIn("synthetic-navigation-reference", str(transport._responses))
+        self.assertNotIn("synthetic-navigation-reference", str(result))
+        transport.close()
+        self.assertEqual(transport._detail_links, {})
+
+    def test_unvalidated_foreign_page_does_not_supply_detail_reference(self):
+        data = payload()
+        data["data"]["notes"][0].update(xsec_token="synthetic-navigation-reference", user={"user_id": "d" * 24})
+        transport = self.make(responses=[Response(CURSOR, data)])
+        with self.assertRaises(AdapterFailure):
+            transport.page(AUTHOR, CURSOR)
+        self.assertEqual(transport._detail_links, {})
 
     def test_restart_replays_until_exact_checkpoint_without_delivering_prior_page(self):
         transport = self.make(responses=[Response("", payload(True, CURSOR)), Response(CURSOR)])

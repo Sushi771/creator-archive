@@ -6,16 +6,18 @@ adds a thin queue and never treats imported observations as a live transport.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 import os
 from pathlib import Path
 import sqlite3
-from threading import Lock, RLock, Thread
+from threading import Event, Lock, RLock, Thread
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from .links import classify
-from .workflow import ArchiveWorkflow, _id
+from .workflow import ArchiveWorkflow, _id, _canonical_source_url
 from .validation import AdapterFailure
+from .metrics import FIELDS, read_metrics, read_snapshots
 
 
 def default_workspace() -> Path:
@@ -35,8 +37,13 @@ MESSAGES = {
     "archive_complete": ("现有资料已按作者导出；缺失正文与媒体在清单中明确标记。", "打开归档清单查看结果；列表完整不代表正文或媒体完整。"),
     "validation_import": ("已导入先前真实验证的历史列表；本次没有发起在线采集。", "可浏览和归档已有作品；正文及媒体缺失仍需后续补齐。"),
     "timeout": ("作者列表等待超时，原因尚未确认；已保存成功页面。", "查看独立浏览器的登录或验证提示，处理后恢复。"),
-    "unavailable": ("作者列表暂不可用或受到平台限制；成功进度保留。", "查看独立浏览器中的提示，解除限制后再恢复。"),
+    "unavailable": ("平台页面暂不可用，具体原因未知；已保存进度和旧指标。", "查看独立浏览器提示；作品任务可在详情粘贴该作品的完整原文链接后重试。重启后需重新粘贴，成功媒体和检查点保留。"),
     "invalid_cursor": ("当前页面未能衔接保存的游标；没有跳过未知页面。", "重新登录后恢复；若持续发生，请保留当前资料排查页链变化。"),
+    "content_partial": ("部分作品正文或媒体尚未保存，成功资源与指标已保留。", "查看作品详情的缺失状态，处理浏览器提示后点击恢复；成功媒体不会重复下载。"),
+    "metrics_partial": ("部分作品指标未能更新；已有有效数值与原采集时间保留。", "查看独立浏览器提示后恢复；未知字段可能未由平台提供。"),
+    "content_complete": ("本批作品正文和当前可获取媒体已保存。", "可查看离线附件或按作者导出；不代表所有历史作品均已获取。"),
+    "metrics_complete": ("本批指标观察已保存，缺失字段仍标未知；历史快照保留。", "可按全库指标排序筛选，或查看作品的观察历史。"),
+    "no_local_items": ("当前作者尚无本地作品，本批内容或指标范围为空。", "先获取作者历史列表，再新建内容或指标任务；当前任务不会把空范围当作完成。"),
 }
 
 
@@ -57,6 +64,8 @@ class WorkspaceService:
         self._network_lock = RLock()
         self._transport = None
         self._threads: set[Thread] = set()
+        self._stopping = Event()
+        self._job_sources = {} # Temporary navigation parameters never enter SQLite or exports.
         with self.workflow.connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS subscription_intents (
@@ -139,6 +148,7 @@ class WorkspaceService:
         return {"platform": platform, "author_id": author_id, "identity_verified": True, "message": "作者身份已通过当前浏览器页面核验；历史完整性须另行采集验证。"}
 
     def close(self):
+        self._stopping.set()
         if self._transport is not None and hasattr(self._transport, "close"):
             self._transport.close()
 
@@ -184,7 +194,14 @@ class WorkspaceService:
         result.update(pages=run["pages"] if run else 0, item_count=item_count, library_item_count=count,
                       coverage=run["coverage"] if run else "unknown", retry_at=cooldown,
                       can_resume=row["state"] not in {"succeeded", "running", "queued"} and cooldown <= time.time())
+        if row["mode"] in {"content", "metrics"}:
+            progress = db.execute("SELECT count(*),coalesce(sum(state='succeeded'),0),coalesce(sum(state='partial'),0) FROM job_items WHERE job_id=?", (row["id"],)).fetchone()
+            result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],coverage="not_applicable")
+            result["failed_items"] = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT 20", (row["id"],))]
         message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
+        if row["mode"] in {"content", "metrics"} and row["reason"] in {"unavailable", "timeout"}:
+            message = "作品详情或媒体暂未能获取，具体原因尚未确认；已有正文、成功媒体及指标原值与时间保留。"
+            next_step = "查看专用浏览器的提示；可在对应作品详情补充完整原文链接后重试，成功媒体会复用。"
         if row["state"] == "succeeded" and not row["reason"] and run and run["coverage"] == "complete_for_accessible_scope":
             message = "本次列表扫描已到当前可获取范围的明确末页；正文和媒体完整性单独核验。"
             next_step = "查看已保存作品，或按作者归档现有资料。"
@@ -219,21 +236,54 @@ class WorkspaceService:
             stats = {"subscriptions": len(subscriptions), "items": db.execute("SELECT count(*) FROM items").fetchone()[0], "details": db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], "running": sum(j["state"] in {"queued", "running"} for j in jobs)}
         return {"subscriptions": subscriptions, "runs": jobs, "stats": stats,
                 "platforms": [{"platform": "wechat", "available": False, "status": "blocked", "message": MESSAGES["wechat_blocked"][0]},
-                              {"platform": "xiaohongshu", "available": True, "status": "experimental", "message": "已完成本机样本自动列表及浏览器重启续扫验证；仍为实验接入，长期登录、全部正文和媒体尚未验收，G1未通过。"}],
+                              {"platform": "xiaohongshu", "available": True, "status": "experimental", "message": "列表、内容保存和互动指标为实验接入；旧作品可能需补充有效完整链接。样本通过不代表全库正文媒体已保存，长期登录与双平台G1仍未通过。"}],
                 "data_dir": str(self.root), "archive_dir": str(self.root / "archive"), "g1_passed": False}
 
-    def items(self, platform=None, author_id=None, offset=0, limit=50, has_assets=False) -> dict:
+    def items(self, platform=None, author_id=None, offset=0, limit=50, has_assets=False,
+              *, sort="published_at", order="desc", min_likes=None, min_collects=None, min_comments=None,
+              date_from=None, date_to=None, content_type=None, missing_metric=None) -> dict:
+        if sort not in (*FIELDS,"published_at") or order not in {"asc","desc"}:
+            raise ValueError("无效排序字段或方向")
+        if content_type not in {None,"image","video","unknown"} or missing_metric not in {None,*FIELDS}:
+            raise ValueError("无效作品类型或未知指标")
+        if offset < 0 or not 1 <= limit <= 200:
+            raise ValueError("无效分页范围")
         clauses, params = [], []
         for key, value in (("platform", platform), ("author_id", author_id)):
             if value:
-                clauses.append(f"{key}=?")
+                clauses.append(f"i.{key}=?")
                 params.append(value)
         if has_assets:
-            clauses.append("EXISTS (SELECT 1 FROM assets a WHERE a.platform=items.platform AND a.item_id=items.item_id)")
+            clauses.append("EXISTS (SELECT 1 FROM assets a WHERE a.platform=i.platform AND a.item_id=i.item_id)")
+        if content_type:
+            clauses.append("i.content_type=?")
+            params.append(content_type)
+        for key, value in (("date_from",date_from),("date_to",date_to)):
+            if value:
+                try:
+                    parsed = date.fromisoformat(value)
+                except ValueError:
+                    raise ValueError("发布日期须为 YYYY-MM-DD") from None
+                clauses.append("i.published_at>=?" if key == "date_from" else "i.published_at<?")
+                params.append(parsed.isoformat() if key == "date_from" else (parsed+timedelta(days=1)).isoformat())
+                clauses.append("i.published_at!=''")
+        for field, value in (("likes",min_likes),("collects",min_collects),("comments",min_comments)):
+            if value is not None:
+                if type(value) is not int or value < 0 or value > 9223372036854775807:
+                    raise ValueError("指标最小值须为非负整数")
+                clauses.append(f"{field}.value>=?")
+                params.append(value)
+        if missing_metric:
+            clauses.append(f"{missing_metric}.value IS NULL")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        joins = "".join(f" LEFT JOIN item_metrics {f} ON {f}.platform=i.platform AND {f}.item_id=i.item_id AND {f}.field='{f}'" for f in FIELDS)
+        sort_expr = "NULLIF(i.published_at,'')" if sort == "published_at" else f"{sort}.value"
+        sort_sql = f" ORDER BY {sort_expr} IS NULL, {sort_expr} {order}, i.item_id, i.platform"
         with self.workflow.connect() as db:
-            total = db.execute("SELECT count(*) FROM items" + where, params).fetchone()[0]
-            rows = [dict(r) for r in db.execute("SELECT platform,item_id,author_id,published_at,detail_state,source_url,(SELECT count(*) FROM assets a WHERE a.platform=items.platform AND a.item_id=items.item_id) AS asset_count FROM items" + where + " ORDER BY published_at DESC,item_id LIMIT ? OFFSET ?", params + [limit, offset])]
+            total = db.execute("SELECT count(*) FROM items i" + joins + where, params).fetchone()[0]
+            rows = [dict(r) for r in db.execute("SELECT i.platform,i.item_id,i.author_id,i.published_at,i.detail_state,i.source_url,i.content_type,i.title,i.media_state,(SELECT count(*) FROM assets a WHERE a.platform=i.platform AND a.item_id=i.item_id) AS asset_count FROM items i" + joins + where + sort_sql + " LIMIT ? OFFSET ?", params + [limit, offset])]
+            for row in rows:
+                row["metrics"] = read_metrics(db,row["platform"],row["item_id"])
         return {"items": rows, "total": total, "offset": offset, "limit": limit}
 
     def item(self, platform, item_id) -> dict:
@@ -242,21 +292,43 @@ class WorkspaceService:
             if not row:
                 raise KeyError("item_not_found")
             result = dict(row)
+            result["metrics"] = read_metrics(db, platform, item_id)
+            result["metric_snapshots"] = read_snapshots(db, platform, item_id)
+            result["snapshot_total"] = len(result["metric_snapshots"])
             result["assets"] = [dict(r) for r in db.execute("SELECT asset_id,kind,mime,relative_path,bytes FROM assets WHERE platform=? AND item_id=? ORDER BY position", (platform, item_id))]
         for asset in result["assets"]:
             asset["url"] = "/archive/" + quote(Path(asset["relative_path"]).as_posix(), safe="/")
+            asset["state"] = "complete" if self.workflow.asset_valid(platform,item_id,asset["asset_id"]) else "missing"
         result["media_coverage"] = "unknown_expected_count"
         return result
 
-    def start(self, mode, platform=None, author_id=None) -> dict:
-        if mode not in {"full", "latest", "archive"} or bool(platform) != bool(author_id):
+    def _validate_source(self, source_url, platform, item_id, author_id=None):
+        if not source_url:
+            return None
+        if not item_id or platform != "xiaohongshu" or len(source_url) > 4096:
+            raise ValueError("补充原文链接只用于小红书单作品任务")
+        try:
+            canonical = _canonical_source_url(platform,source_url)
+        except ValueError:
+            raise ValueError("请粘贴该作品的小红书完整 HTTPS 原文链接") from None
+        if urlsplit(canonical).path.rstrip("/") not in {f"/explore/{item_id}",f"/discovery/item/{item_id}",f"/user/profile/{author_id}/{item_id}"}:
+            raise ValueError("原文链接的作品ID与当前作品不匹配")
+        return source_url
+
+    def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None) -> dict:
+        if mode not in {"full", "latest", "archive", "content", "metrics"} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
+        if item_id and (not author_id or mode not in {"content","metrics"}):
+            raise ValueError("单作品任务须提供平台、作者及内容或指标模式")
+        source_url = self._validate_source(source_url,platform,item_id,author_id)
         scope = [s for s in self.workspace()["subscriptions"] if not author_id or (s["platform"], s["author_id"]) == (platform, author_id)]
         if not scope:
             raise ValueError("没有可处理的订阅，请先添加作者或导入已有验证资料")
         ids = []
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if item_id and not db.execute("SELECT 1 FROM items WHERE platform=? AND author_id=? AND item_id=?", (platform,author_id,item_id)).fetchone():
+                raise KeyError("item_not_found")
             for sub in scope:
                 if mode != "archive":
                     self._check_cooldown(sub["platform"], db)
@@ -266,16 +338,26 @@ class WorkspaceService:
             for sub in scope:
                 cur = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)", (sub["platform"], sub["author_id"], mode, time.time(), time.time()))
                 ids.append(cur.lastrowid)
+                if mode in {"content","metrics"}:
+                    db.execute("INSERT INTO job_items(job_id,platform,item_id) SELECT ?,platform,item_id FROM items WHERE platform=? AND author_id=?" + (" AND item_id=?" if item_id else ""),
+                               [cur.lastrowid,sub["platform"],sub["author_id"]] + ([item_id] if item_id else []))
         for job_id in ids:
+            if source_url:
+                self._job_sources[job_id] = source_url
             self._spawn(job_id)
         return {"job_id": ids[0], "job_ids": ids, "state": "queued", "includes_paused": True}
 
-    def resume(self, job_id) -> dict:
+    def resume(self, job_id, source_url=None) -> dict:
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             job = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not job:
                 raise KeyError("job_not_found")
+            if source_url:
+                targets = db.execute("SELECT item_id FROM job_items WHERE job_id=?", (job_id,)).fetchall()
+                if len(targets) != 1 or job["mode"] not in {"content","metrics"}:
+                    raise ValueError("补充原文链接只用于单作品内容或指标任务")
+                source_url = self._validate_source(source_url,job["platform"],targets[0][0],job["author_id"])
             if job["mode"] != "archive":
                 self._check_cooldown(job["platform"], db)
             if job["state"] in {"queued", "running", "succeeded"}:
@@ -287,6 +369,8 @@ class WorkspaceService:
                 if run and run[0] > time.time():
                     raise ValueError("平台冷却尚未结束，请等待后再恢复")
             db.execute("UPDATE jobs SET state='queued',reason=NULL,updated_at=? WHERE id=?", (time.time(), job_id))
+        if source_url:
+            self._job_sources[job_id] = source_url
         self._spawn(job_id)
         return {"job_id": job_id, "state": "queued"}
 
@@ -304,9 +388,14 @@ class WorkspaceService:
     def _finish(self, job_id, state, reason=None, export=None):
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state=?,reason=?,export_json=?,updated_at=? WHERE id=?", (state, reason, json.dumps(export) if export else None, time.time(), job_id))
+        if state == "succeeded":
+            self._job_sources.pop(job_id,None)
 
     def _execute(self, job_id):
         with self._lock:
+            if self._stopping.is_set():
+                self._finish(job_id,"interrupted","process_interrupted")
+                return
             try:
                 with self.workflow.connect() as db:
                     job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
@@ -320,6 +409,9 @@ class WorkspaceService:
                     else:
                         self._finish(job_id, "blocked", "wechat_blocked" if job["platform"] == "wechat" else "identity_unverified")
                         return
+                if job["mode"] in {"content","metrics"}:
+                    self._execute_content(job)
+                    return
                 if not job["run_id"]:
                     with self.workflow.connect() as db:
                         batch = db.execute("INSERT INTO batches(mode,created_at) VALUES(?,?)", (job["mode"], time.time())).lastrowid
@@ -354,10 +446,88 @@ class WorkspaceService:
             except PlatformCooldown:
                 self._finish(job_id, "rate_limited", "rate_limited")
             except AdapterFailure as error:
+                if error.category == "rate_limited":
+                    self._record_cooldown(job["platform"], retry_after=error.retry_after)
                 category = error.category if error.category in {"needs_login", "rate_limited"} else "transport_unavailable"
                 self._finish(job_id, category if category != "transport_unavailable" else "blocked", category)
             except Exception:
                 self._finish(job_id, "failed", "unexpected_error")
+
+    def _execute_content(self, job):
+        """Run a fixed local item snapshot, independent of history pagination."""
+        if job["platform"] != "xiaohongshu":
+            self._finish(job["id"], "blocked", "wechat_blocked")
+            return
+        with self.workflow.connect() as db:
+            targets = [dict(r) for r in db.execute("SELECT i.* FROM job_items j JOIN items i USING(platform,item_id) WHERE j.job_id=? AND j.state!='succeeded' ORDER BY i.item_id", (job["id"],))]
+            scope_count = db.execute("SELECT count(*) FROM job_items WHERE job_id=?", (job["id"],)).fetchone()[0]
+        if not scope_count:
+            self._finish(job["id"],"blocked","no_local_items")
+            return
+        for item in targets:
+            if self._stopping.is_set():
+                self._finish(job["id"],"interrupted","process_interrupted")
+                return
+            observed = False
+            try:
+                with self._network_lock:
+                    self._check_cooldown(job["platform"])
+                    transport = self.transport()
+                    detail = transport.detail(job["author_id"], item["item_id"], source_url=self._job_sources.get(job["id"],item["source_url"] or ""))
+                    if detail.get("item_id") != item["item_id"] or detail.get("author_id") != job["author_id"]:
+                        raise AdapterFailure("unavailable")
+                    self.workflow.save_metrics(job["platform"], item["item_id"], detail.get("metrics",{}),
+                        source=detail["source"], collected_at=detail["observed_at"],
+                        observation_key=f"job:{job['id']}:{item['item_id']}:{detail['source']}:{detail['observed_at']}")
+                    observed = True
+                    with self.workflow.connect() as db:
+                        db.execute("UPDATE items SET title=coalesce(nullif(?,''),title),content_type=CASE WHEN ? IN ('image','video') THEN ? ELSE content_type END,published_at=CASE WHEN ?!='' THEN ? ELSE published_at END WHERE platform=? AND item_id=?",
+                                   (detail.get("title"),detail.get("content_type"),detail.get("content_type"),detail.get("published_at") or "",detail.get("published_at") or "",job["platform"],item["item_id"]))
+                    complete = True
+                    if job["mode"] == "content":
+                        if detail.get("text","").strip():
+                            self.workflow.save_detail(job["platform"],item["item_id"],job["author_id"],detail["text"],detail["source_url"])
+                        else:
+                            complete = item["detail_state"] == "complete"
+                        media_failed = False
+                        for candidate in detail.get("media",[]):
+                            if self._stopping.is_set():
+                                self._finish(job["id"],"interrupted","process_interrupted")
+                                return
+                            if self.workflow.candidate_saved(job["platform"],item["item_id"],candidate):
+                                continue
+                            try:
+                                fetched = transport.download_media(candidate,self.root / "downloads" / job["platform"] / _id(item["item_id"]))
+                                self.workflow.attach_media(job["platform"],item["item_id"],candidate.asset_id,Path(fetched["path"]),position=candidate.position,kind=candidate.kind,mime=fetched["mime"])
+                            except AdapterFailure as error:
+                                if error.category in {"needs_login","rate_limited","unavailable","verification_required"}:
+                                    raise
+                                media_failed = True
+                            except (ValueError,OSError):
+                                media_failed = True
+                        media_complete = bool(detail.get("media")) and not detail.get("missing") and not media_failed
+                        complete = complete and media_complete
+                        with self.workflow.connect() as db:
+                            db.execute("UPDATE items SET media_state=? WHERE platform=? AND item_id=?", ("complete_for_observed_detail" if media_complete else "partial",job["platform"],item["item_id"]))
+                with self.workflow.connect() as db:
+                    db.execute("UPDATE job_items SET state=?,reason=? WHERE job_id=? AND platform=? AND item_id=?", ("succeeded" if complete else "partial",None if complete else "content_partial",job["id"],job["platform"],item["item_id"]))
+            except PlatformCooldown:
+                raise
+            except Exception as error:
+                category = error.category if isinstance(error,AdapterFailure) else "unexpected_error"
+                if not observed:
+                    self.workflow.save_metrics(job["platform"],item["item_id"],{},source="xhs_browser_detail_attempt",collected_at=time.time(),
+                        observation_key=f"job:{job['id']}:{item['item_id']}:failed:{time.time_ns()}",status="failed",reason=category)
+                with self.workflow.connect() as db:
+                    db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
+                if category in {"rate_limited","needs_login","unavailable","verification_required"}:
+                    if category == "rate_limited":
+                        self._record_cooldown(job["platform"],retry_after=error.retry_after)
+                    self._finish(job["id"],category if category in {"rate_limited","needs_login"} else "blocked",category)
+                    return
+        with self.workflow.connect() as db:
+            pending = db.execute("SELECT count(*) FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],)).fetchone()[0]
+        self._finish(job["id"], "partial" if pending else "succeeded", job["mode"] + ("_partial" if pending else "_complete"))
 
     def import_validation(self) -> dict:
         """Whitelist import from fixed local sources; never writes source databases.

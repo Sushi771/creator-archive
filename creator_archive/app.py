@@ -41,6 +41,12 @@ class JobInput(BaseModel):
     mode: str = "full"
     platform: str | None = None
     author_id: str | None = None
+    item_id: str | None = None
+    source_url: str | None = Field(default=None,max_length=4096)
+
+
+class ResumeInput(BaseModel):
+    source_url: str | None = Field(default=None,max_length=4096)
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -78,8 +84,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/status")
     def status():
         return {"version": __version__, "mode": "local_mvp", "g1_passed": False,
-                "platforms": [{"platform": p, "creator_resolution": False, "history_pagination": False,
-                               "detail": False, "media": False, "known_limits": "G1未通过；工作台可管理已导入真实观察资料"}
+                "platforms": [{"platform": p, "creator_resolution": False, "history_pagination": p == "xiaohongshu",
+                               "detail": p == "xiaohongshu", "media": p == "xiaohongshu", "metrics": p == "xiaohongshu",
+                               "experimental": True, "known_limits": "G1未通过；字段表示实验接口已实现，不代表全库已采集或双平台已验收。旧作品可能需补充有效原文链接。"}
                               for p in ("wechat", "xiaohongshu")], "runs": store.all()}
 
     @app.exception_handler(ValueError)
@@ -128,16 +135,22 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/jobs")
     def start_job(body: JobInput):
-        return service.start(body.mode, body.platform, body.author_id)
+        return service.start(body.mode, body.platform, body.author_id, body.item_id, body.source_url)
 
     @app.post("/api/jobs/{job_id}/resume")
-    def resume(job_id: int):
-        return service.resume(job_id)
+    def resume(job_id: int, body: ResumeInput | None = None):
+        return service.resume(job_id,body.source_url if body else None)
 
     @app.get("/api/items")
     def items(platform: str | None = None, author_id: str | None = None,
-              offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), has_assets: bool = False):
-        return service.items(platform, author_id, offset, limit, has_assets)
+              offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), has_assets: bool = False,
+              sort: str = "published_at", order: str = "desc", min_likes: int | None = Query(default=None,ge=0),
+              min_collects: int | None = Query(default=None,ge=0), min_comments: int | None = Query(default=None,ge=0),
+              date_from: str | None = None, date_to: str | None = None, content_type: str | None = None,
+              missing_metric: str | None = None):
+        return service.items(platform, author_id, offset, limit, has_assets,sort=sort,order=order,min_likes=min_likes,
+                             min_collects=min_collects,min_comments=min_comments,date_from=date_from,date_to=date_to,
+                             content_type=content_type,missing_metric=missing_metric)
 
     @app.get("/api/items/{platform}/{item_id}")
     def item(platform: str, item_id: str):

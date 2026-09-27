@@ -90,6 +90,10 @@ class MediaCandidate:
     size: int | None = None
     quality: str | None = None
 
+    @property
+    def asset_id(self) -> str:
+        return f"{self.kind}-{self.position:03d}"
+
 
 @dataclass(frozen=True)
 class DetailMedia:
@@ -104,7 +108,17 @@ class DetailMedia:
 def _https_url(value: object) -> str | None:
     if not isinstance(value, str):
         return None
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+        # XHS sometimes labels its own CDN links http; negotiate HTTPS only.
+        if (parsed.scheme == "http" and parsed.hostname and
+                (parsed.hostname == "xhscdn.com" or parsed.hostname.endswith(".xhscdn.com"))):
+            value = "https:" + value[5:]
+            parsed = urlsplit(value)
+        if parsed.port not in (None, 443):
+            return None
+    except ValueError:
+        return None
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         return None
     host = parsed.hostname.rstrip(".").lower()

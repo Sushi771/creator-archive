@@ -47,7 +47,10 @@ try {
         & python -m venv .venv
         if ($LASTEXITCODE -ne 0) { throw 'Python 3.11+ is required; environment creation failed.' }
     }
-    $lockHash = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'requirements.lock') -Algorithm SHA256).Hash
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $lockHash = [BitConverter]::ToString($hasher.ComputeHash([System.IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'requirements.lock')))).Replace('-', '')
+    } finally { $hasher.Dispose() }
     $dependencyStamp = Join-Path $PSScriptRoot '.venv/creator-archive-requirements.txt'
     if (-not (Test-Path -LiteralPath $dependencyStamp) -or (Get-Content -LiteralPath $dependencyStamp -Raw).Trim() -ne $lockHash) {
         Write-Host 'Installing pinned application dependencies...'

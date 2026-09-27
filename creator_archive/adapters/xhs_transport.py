@@ -12,9 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .xhs import XhsPageAdapter
+from .xhs_content import DETAIL_STATE, detail_url, project_detail
+from .xhs_media import download_media, MediaFailure
 from creator_archive.validation import AdapterFailure
 
 
@@ -108,6 +110,8 @@ class XhsBrowserTransport:
         self._failure = None
         self._cooldown_until = 0.0
         self._closed = False
+        self._detail_links: dict[tuple[str, str], str] = {}
+        self._detail_authors: set[str] = set()
 
     def _call(self, function, *args):
         if self._closed:
@@ -116,6 +120,116 @@ class XhsBrowserTransport:
 
     def page(self, author_id: str, cursor: str | None):
         return self._call(lambda: XhsPageAdapter(self._fetch).page(author_id, cursor))
+
+    def detail(self, author_id: str, item_id: str, source_url: str = "") -> dict:
+        """One fresh normal detail navigation; never repeats author history scans."""
+        if not re.fullmatch(r"[0-9a-f]{24}", author_id):
+            raise TransportFailure("unavailable", "作者标识无效；已保留资料，请核对作者主页后重试。")
+        try:
+            url = detail_url(item_id, source_url)
+            if urlsplit(url).path.startswith("/user/profile/") and urlsplit(url).path != f"/user/profile/{author_id}/{item_id}":
+                raise ValueError("detail_author_mismatch")
+            supplied_token = bool(parse_qs(urlsplit(url).query).get("xsec_token"))
+        except ValueError:
+            raise TransportFailure("unavailable", "作品链接与作品 ID 不匹配；已保留资料，请补充该作品的完整链接。") from None
+
+        def fetch_detail():
+            self._ensure()
+            if time.monotonic() < self._cooldown_until and self._failure:
+                raise self._failure
+            try:
+                # An existing profile card may carry a short-lived navigation
+                # token. Use only its actual href, never manufacture a token.
+                if not supplied_token:
+                    href = self._detail_links.get((author_id, item_id))
+                    if not href and author_id not in self._detail_authors:
+                        self._author = None
+                        self._page.goto(f"https://www.xiaohongshu.com/user/profile/{author_id}", wait_until="domcontentloaded", timeout=int(self.timeout * 1000))
+                        self._page.wait_for_timeout(1000)
+                        self._check_wall()
+                        # First-screen links only: no repeat of the validated
+                        # historical page chain just to obtain navigation tokens.
+                        links = self._page.locator('a[href]').evaluate_all("nodes => nodes.map(n => n.href)")
+                        for link in links:
+                            parsed_link = urlsplit(link)
+                            match = re.fullmatch(rf"/(?:explore|user/profile/{author_id})/([0-9a-f]{{24}})", parsed_link.path)
+                            if match and parse_qs(parsed_link.query).get("xsec_token"):
+                                try:
+                                    self._detail_links[(author_id, match[1])] = detail_url(match[1], link)
+                                except ValueError:
+                                    pass
+                        self._detail_authors.add(author_id)
+                        href = self._detail_links.get((author_id, item_id))
+                    if href:
+                        url_to_open = detail_url(item_id, "https://www.xiaohongshu.com" + href if href.startswith("/") else href)
+                    else:
+                        url_to_open = url
+                else:
+                    url_to_open = url
+                # Navigation invalidates the listing page location but never a
+                # workflow checkpoint. A later page() rejoins via its cursor.
+                self._author = None
+                self._responses.clear()
+                response = self._page.goto(url_to_open, wait_until="domcontentloaded", timeout=int(self.timeout * 1000))
+                if response is not None and response.status == 429:
+                    failure = TransportFailure("rate_limited", "作品详情收到限流；正文、指标与成功媒体已保留，请等待冷却后恢复。", 60)
+                    self._failure = failure
+                    self._cooldown_until = time.monotonic() + 60
+                    raise failure
+                if response is not None and response.status in (401, 403, 461, 471):
+                    raise TransportFailure("needs_login" if response.status == 401 else "unavailable", "作品详情需要登录或平台验证；旧指标和成功媒体已保留，请处理浏览器提示后恢复。")
+                deadline = time.monotonic() + self.timeout
+                hydration_deadline = None
+                projected = None
+                while time.monotonic() < deadline:
+                    state = self._page.evaluate(DETAIL_STATE, item_id)
+                    if isinstance(state, dict):
+                        projected = project_detail(state, author_id=author_id, item_id=item_id)
+                        # A successful explicit navigation can be reused for a
+                        # canonical metrics-only refresh in this same session.
+                        if parse_qs(urlsplit(url_to_open).query).get("xsec_token"):
+                            self._detail_links[(author_id, item_id)] = url_to_open
+                        if any(m["value"] is not None for m in projected["metrics"].values()):
+                            return projected
+                        # Some notes publish body/media in SSR before hydrated
+                        # interaction counters. Re-read only this same page for
+                        # a bounded interval; missing values never become zero.
+                        if hydration_deadline is None:
+                            hydration_deadline = min(deadline, time.monotonic() + 2.0)
+                    text = self._page.locator("body").inner_text(timeout=3000)
+                    if any(s in text for s in ("访问频次异常", "操作频繁")):
+                        failure = TransportFailure("rate_limited", "作品详情触发平台频次限制；已保留旧资料，请等待冷却后恢复。", 60)
+                        self._failure, self._cooldown_until = failure, time.monotonic() + 60
+                        raise failure
+                    if any(s in text for s in ("手机号登录", "扫码登录", "登录后查看")):
+                        raise TransportFailure("needs_login", "作品详情要求登录；旧指标与成功媒体已保留，请在独立窗口登录后恢复。")
+                    if any(s in text for s in ("安全验证", "请完成验证")):
+                        raise TransportFailure("needs_login", "作品详情要求平台安全验证；已保留旧资料，请在独立浏览器处理后恢复任务。")
+                    if any(s in text for s in ("当前笔记暂时无法浏览", "内容不存在", "该笔记已被删除", "私密笔记")):
+                        raise TransportFailure("unavailable", "作品详情暂不可访问，可能受链接或平台权限限制；已保留旧资料，请在浏览器确认并补充可访问的完整作品链接后重试。")
+                    if projected is not None and time.monotonic() >= hydration_deadline:
+                        return projected
+                    self._page.wait_for_timeout(300)
+                if projected is not None:
+                    return projected
+                raise TransportFailure("timeout", "作品详情未在等待时间内返回，原因未知；旧指标与成功媒体已保留，可补充完整作品链接后重试。")
+            except AdapterFailure:
+                raise
+            except Exception:
+                raise TransportFailure("unavailable", "作品详情读取中断，原因未知；旧指标与成功媒体已保留，请检查浏览器或补充完整作品链接后重试。") from None
+        return self._call(fetch_detail)
+
+    def download_media(self, candidate, target_dir):
+        if time.monotonic() < self._cooldown_until and self._failure:
+            raise self._failure
+        try:
+            return download_media(candidate, target_dir)
+        except MediaFailure as exc:
+            if str(exc) == "media_rate_limited":
+                failure = TransportFailure("rate_limited", "媒体下载收到限流；成功资源已保留，请等待冷却后仅重试缺失资源。", 60)
+                self._failure, self._cooldown_until = failure, time.monotonic() + 60
+                raise failure from None
+            raise TransportFailure("unavailable", "媒体下载或文件校验失败；成功资源已保留，请刷新详情后重试缺失媒体。") from None
 
     def verify_author(self, author_id: str) -> dict:
         def verify():
@@ -134,6 +248,8 @@ class XhsBrowserTransport:
             self._failure = None
             self._author = None
             self._responses.clear()
+            self._detail_links.clear()
+            self._detail_authors.clear()
             try:
                 self._page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=30000)
                 self._page.bring_to_front()
@@ -176,6 +292,20 @@ class XhsBrowserTransport:
             XhsPageAdapter(lambda _a, _c: normalized).page(key[0], key[1] or None)
             if key in self._responses and self._responses[key] != normalized:
                 raise TransportFailure("invalid_cursor", "同一游标收到不同页；已保留进度，请重新验证作者后继续。")
+            # Listing cards can be virtualized before their anchor is mounted.
+            # The observed card token is a navigation reference, not a session
+            # cookie. Keep it only in process memory, outside normalized pages,
+            # database evidence, exports and logs. Never sign or invent tokens.
+            # Field contract: pinned MCP Feed.xsecToken and MediaCrawler's
+            # creator-note xsec_token field (schema research only, no code reuse).
+            for note in payload["data"]["notes"]:
+                token = note.get("xsec_token", note.get("xsecToken"))
+                if isinstance(token, str) and 0 < len(token) <= 2048 and not any(ord(c) < 32 for c in token):
+                    query = {"xsec_token": token}
+                    source = note.get("xsec_source", note.get("xsecSource"))
+                    if isinstance(source, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", source):
+                        query["xsec_source"] = source
+                    self._detail_links[(key[0], note["note_id"])] = detail_url(note["note_id"]) + "?" + urlencode(query)
             self._responses[key] = normalized
         except AdapterFailure as exc:
             self._failure = exc
@@ -247,6 +377,8 @@ class XhsBrowserTransport:
                 self._context.close()
         finally:
             self._context = self._page = None
+            self._detail_links.clear()
+            self._detail_authors.clear()
             if self._runtime:
                 self._runtime.stop()
                 self._runtime = None

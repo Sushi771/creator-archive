@@ -20,6 +20,7 @@ from typing import Mapping
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from .validation import AdapterFailure, HistoryAdapter, Page
+from .metrics import migrate, read_metrics, read_snapshots, save_observation
 
 
 PLATFORMS = {"wechat", "xiaohongshu"}
@@ -139,6 +140,7 @@ class ArchiveWorkflow:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.db_path = self.root / "archive.sqlite3"
+        existing_database = self.db_path.is_file()
         with self.connect() as db:
             db.executescript("""
                 PRAGMA foreign_keys=ON;
@@ -173,6 +175,7 @@ class ArchiveWorkflow:
                     bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL,
                     PRIMARY KEY(platform,item_id,asset_id));
             """)
+        self.migration_backup = migrate(self.db_path, backup_required=existing_database)
 
     @contextmanager
     def connect(self):
@@ -266,7 +269,7 @@ class ArchiveWorkflow:
                     raise ValueError("identity_mismatch")
                 db.execute("""INSERT INTO items(platform,item_id,author_id,published_at)
                     VALUES(?,?,?,?) ON CONFLICT(platform,item_id)
-                    DO UPDATE SET published_at=excluded.published_at""",
+                    DO UPDATE SET published_at=CASE WHEN excluded.published_at!='' THEN excluded.published_at ELSE items.published_at END""",
                     (row["platform"], item.item_id, item.author_id, item.published_at))
             db.execute("INSERT INTO pages VALUES(?,?,?,?,?,?,?)",
                        (run_id, row["pages"] + 1, requested, page.next_cursor,
@@ -386,6 +389,34 @@ class ArchiveWorkflow:
                  size, digest, mime))
         return target
 
+    def save_metrics(self, platform, item_id, metrics, **observation):
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM items WHERE platform=? AND item_id=?", (platform,item_id)).fetchone():
+                raise KeyError("item_not_found")
+            return save_observation(db, platform, item_id, metrics, **observation)
+
+    def asset_valid(self, platform, item_id, asset_id):
+        with self.connect() as db:
+            row = db.execute("SELECT relative_path,bytes,sha256 FROM assets WHERE platform=? AND item_id=? AND asset_id=?", (platform,item_id,asset_id)).fetchone()
+        if not row:
+            return False
+        path = self.root / "archive" / row["relative_path"]
+        return path.is_file() and path.stat().st_size == row["bytes"] and _file_sha256(path) == row["sha256"]
+
+    def candidate_saved(self, platform, item_id, candidate):
+        """Reuse verified legacy files at the same item/kind/position, without aliases.
+
+        Legacy imports used different asset names. Their stored position is used
+        verbatim; no one-based/zero-based conversion or quality equivalence is
+        guessed. A video can never be satisfied by its image cover.
+        """
+        with self.connect() as db:
+            exact = db.execute("SELECT kind,position FROM assets WHERE platform=? AND item_id=? AND asset_id=?", (platform,item_id,candidate.asset_id)).fetchone()
+            legacy = [r[0] for r in db.execute("SELECT asset_id FROM assets WHERE platform=? AND item_id=? AND kind=? AND position=?", (platform,item_id,candidate.kind,candidate.position))] if not exact else []
+        if exact:
+            return exact["kind"] == candidate.kind and exact["position"] == candidate.position and self.asset_valid(platform,item_id,candidate.asset_id)
+        return any(self.asset_valid(platform,item_id,asset_id) for asset_id in legacy)
+
     def export_all(self, *, batch_id: int | None = None) -> dict:
         """Write offline artifacts for the fixed batch scope, preserving edited files."""
         with self.connect() as db:
@@ -407,6 +438,8 @@ class ArchiveWorkflow:
                 corpus = []
                 missing_assets = 0
                 for item in items:
+                    metrics = read_metrics(db, platform, item["item_id"])
+                    snapshots = read_snapshots(db, platform, item["item_id"])
                     item_dir = base / _id(item["item_id"])
                     assets = [dict(r) for r in db.execute("SELECT * FROM assets WHERE platform=? AND item_id=? ORDER BY position,asset_id",
                                                        (platform, item["item_id"]))]
@@ -437,16 +470,19 @@ class ArchiveWorkflow:
                                 "".join(media_html) + "</article></body></html>").encode("utf-8")
                         for name, content in (("article.md", md), ("index.html", html)):
                             files[name] = str(_managed_write(item_dir / name, content).relative_to(base))
-                        corpus.append({"schema_version": 1, "platform": platform, "author_id": author_id,
+                        corpus.append({"schema_version": 2, "platform": platform, "author_id": author_id,
                                        "item_id": item["item_id"], "source_url": item["source_url"],
                                        "published_at": item["published_at"], "text": body,
+                                       "metrics": metrics, "metric_snapshots": snapshots, "content_type": item["content_type"],
                                        "content_hash": sha256(body.encode("utf-8")).hexdigest(),
                                        "media_refs": [a["relative_path"] for a in assets if a["state"] == "complete"],
                                        "status": "detail_complete"})
                     manifest_items.append({"item_id": item["item_id"], "detail_state": item["detail_state"],
+                                           "title": item["title"], "content_type": item["content_type"], "published_at": item["published_at"],
+                                           "metrics": metrics, "metric_snapshots": snapshots, "media_state": item["media_state"],
                                            "files": files, "assets": assets})
                 run = run_map.get((platform, author_id))
-                manifest = {"schema_version": 1, "platform": platform, "author_id": author_id,
+                manifest = {"schema_version": 2, "platform": platform, "author_id": author_id,
                             "display_name": author["display_name"],
                             "coverage": run["coverage"] if run else "unknown",
                             "terminal_evidence": run["terminal_evidence"] if run else None,
