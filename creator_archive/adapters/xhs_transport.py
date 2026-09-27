@@ -167,9 +167,20 @@ class XhsBrowserTransport:
         """One fresh normal detail navigation; never repeats author history scans."""
         if not re.fullmatch(r"[0-9a-f]{24}", author_id):
             raise TransportFailure("unavailable", "作者标识无效；已保留资料，请核对作者主页后重试。")
+        return self._detail(author_id, item_id, source_url)
+
+    def resolve_item(self, source_url: str) -> dict:
+        """Resolve a full note link from the exact observed note only."""
+        item_id = urlsplit(source_url).path.rstrip("/").split("/")[-1]
+        url = detail_url(item_id, source_url)
+        if not parse_qs(urlsplit(url).query).get("xsec_token"):
+            raise ValueError("请提供从官方作品页面复制的完整访问链接")
+        return self._detail(None, item_id, url)
+
+    def _detail(self, author_id: str | None, item_id: str, source_url: str) -> dict:
         try:
             url = detail_url(item_id, source_url)
-            if urlsplit(url).path.startswith("/user/profile/") and urlsplit(url).path != f"/user/profile/{author_id}/{item_id}":
+            if author_id and urlsplit(url).path.startswith("/user/profile/") and urlsplit(url).path != f"/user/profile/{author_id}/{item_id}":
                 raise ValueError("detail_author_mismatch")
             supplied_token = bool(parse_qs(urlsplit(url).query).get("xsec_token"))
         except ValueError:
@@ -226,11 +237,17 @@ class XhsBrowserTransport:
                 while time.monotonic() < deadline:
                     state = self._page.evaluate(DETAIL_STATE, item_id)
                     if isinstance(state, dict):
-                        projected = project_detail(state, author_id=author_id, item_id=item_id)
+                        observed_author = state.get("note", {}).get("user", {}).get("userId")
+                        if not isinstance(observed_author, str) or not re.fullmatch(r"[0-9a-f]{24}", observed_author):
+                            raise TransportFailure("unavailable", "目标作品未返回有效作者身份；未收录，请稍后重试。")
+                        resolved_author = author_id or observed_author
+                        if urlsplit(url).path.startswith("/user/profile/") and urlsplit(url).path != f"/user/profile/{resolved_author}/{item_id}":
+                            raise TransportFailure("unavailable", "作品页面与链接中的作者不符；未收录。")
+                        projected = project_detail(state, author_id=resolved_author, item_id=item_id)
                         # A successful explicit navigation can be reused for a
                         # canonical metrics-only refresh in this same session.
                         if parse_qs(urlsplit(url_to_open).query).get("xsec_token"):
-                            self._detail_links[(author_id, item_id)] = url_to_open
+                            self._detail_links[(resolved_author, item_id)] = url_to_open
                         if any(m["value"] is not None for m in projected["metrics"].values()):
                             return projected
                         # Some notes publish body/media in SSR before hydrated

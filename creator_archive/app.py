@@ -147,6 +147,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def job_failures(job_id: int, offset: int = Query(default=0,ge=0), limit: int = Query(default=50,ge=1,le=200)):
         return service.job_failures(job_id,offset,limit)
 
+    @app.post("/api/items/resolve")
+    def resolve_item(body: SubscriptionInput):
+        return service.resolve_item(body.text)
+
     @app.get("/api/items")
     def items(platform: str | None = None, author_id: str | None = None,
               offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), has_assets: bool = False,

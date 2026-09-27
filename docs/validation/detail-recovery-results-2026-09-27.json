@@ -65,5 +65,45 @@
       "reason": "transport_unavailable",
       "underlying_cause": "unknown"
     }
+  },
+  "user_selected_alternate_sample": {
+    "new_sample_task": 24,
+    "state": "succeeded",
+    "succeeded": 1,
+    "original_task": 19,
+    "original_state": "partial",
+    "original_succeeded": 6,
+    "original_targets": 7,
+    "original_scope_unchanged": true,
+    "original_success_snapshot_counts_unchanged": true,
+    "old_files": 85,
+    "old_file_hash_mtime_unchanged": true,
+    "items": 1392,
+    "history_pages": 90,
+    "body_characters": 377,
+    "sample_assets": 3,
+    "all_sample_asset_hashes_valid": true,
+    "original_supplemental_recovery_verified": false,
+    "foreign_scope_http": 422,
+    "decoded_image_sizes": [
+      [
+        1080,
+        1440
+      ],
+      [
+        1080,
+        1440
+      ],
+      [
+        1080,
+        1440
+      ]
+    ],
+    "export_job": 25,
+    "export_succeeded": true,
+    "bodies": 16,
+    "assets": 38,
+    "export_body_rows": 1,
+    "old_files_unchanged_after_export": true
   }
 }

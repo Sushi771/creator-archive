@@ -123,6 +123,43 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual([i["item_id"] for i in a["items"]+b["items"]],IDS)
         self.assertTrue(all(i["next_step"] for i in b["items"]))
 
+    def test_resolve_registers_exact_item_without_tokens_or_overwriting_old_data(self):
+        foreign = "c" * 24
+        item = IDS[5]
+        link = f"https://www.xiaohongshu.com/discovery/item/{item}?xsec_token=REGISTRATION_SECRET"
+        self.source.resolve_item = MagicMock(return_value=dict(author_id=foreign,item_id=item,title="Observed",content_type="image"))
+        result = self.service.resolve_item("Share " + link)
+        self.assertEqual(result["author_id"],foreign)
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT enabled FROM subscriptions WHERE author_id=?",(foreign,)).fetchone()[0],0)
+            db.execute("UPDATE subscriptions SET display_name='My note' WHERE author_id=?",(foreign,))
+            db.execute("UPDATE items SET title='My title' WHERE item_id=?",(item,))
+        self.service.resolve_item(link)
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT display_name FROM subscriptions WHERE author_id=?",(foreign,)).fetchone()[0],"My note")
+            self.assertEqual(db.execute("SELECT title FROM items WHERE item_id=?",(item,)).fetchone()[0],"My title")
+            self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM pages").fetchone()[0],0)
+        self.assertNotIn(b"REGISTRATION_SECRET",self.service.workflow.db_path.read_bytes())
+        self.source.resolve_item.return_value["author_id"] = AUTHOR
+        with self.assertRaises(ValueError):
+            self.service.resolve_item(link)
+        self.source.resolve_item.return_value["item_id"] = IDS[6]
+        with self.assertRaises(ValueError):
+            self.service.resolve_item(link)
+        self.source.resolve_item.side_effect = AdapterFailure("needs_login")
+        with self.assertRaises(AdapterFailure):
+            self.service.resolve_item(link)
+
+    def test_other_item_supplement_cannot_expand_original_job(self):
+        self.source.failures[IDS[1]] = "reference_missing"
+        job = self.run_job()
+        before = self.service.workspace()["runs"][0]
+        with self.assertRaises(ValueError):
+            self.service.resume(job,source_urls=[f"https://www.xiaohongshu.com/explore/{IDS[5]}?xsec_token=OTHER"])
+        self.assertEqual(self.service.workspace()["runs"][0],before)
+        self.assertEqual(self.service._job_sources,{})
+
     def test_selected_scope_dedup_rejects_foreign_and_api_pages(self):
         from fastapi.testclient import TestClient
         from creator_archive.app import create_app
@@ -199,6 +236,29 @@ service.start('metrics');service.wait(90)
 
 
 class ReferenceTests(unittest.TestCase):
+    def test_resolve_uses_exact_note_author_and_rejects_mismatch_without_scanning(self):
+        from tests.test_xhs_content import detail, AUTHOR as observed_author, ITEM
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = XhsBrowserTransport(Path(tmp)/"profile")
+            try:
+                transport._ensure = lambda: None
+                transport._page = MagicMock()
+                transport._page.goto.return_value.status = 200
+                transport._page.evaluate.return_value = detail()
+                url = f"https://www.xiaohongshu.com/discovery/item/{ITEM}?xsec_token=RESOLVE_SECRET"
+                result = transport.resolve_item(url)
+                self.assertEqual(result["author_id"], observed_author)
+                self.assertNotIn("RESOLVE_SECRET",result["source_url"])
+                transport._page.mouse.wheel.assert_not_called()
+                self.assertEqual(transport._page.goto.call_count,1)
+                transport._page.evaluate.return_value["note"]["noteId"] = IDS[6]
+                with self.assertRaises(AdapterFailure):
+                    transport.resolve_item(url)
+                with self.assertRaises(ValueError):
+                    transport.resolve_item(f"https://www.xiaohongshu.com/explore/{ITEM}")
+            finally:
+                transport.close()
+
     def test_reference_refresh_is_bounded_and_missing_does_not_navigate(self):
         with tempfile.TemporaryDirectory() as tmp:
             transport=XhsBrowserTransport(Path(tmp)/"profile")

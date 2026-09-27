@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 import os
+import re
 from pathlib import Path
 import sqlite3
 from threading import Event, Lock, RLock, Thread
@@ -178,6 +179,39 @@ class WorkspaceService:
             else:
                 db.execute("INSERT INTO subscription_intents VALUES(?,?,?,1,?) ON CONFLICT(platform,author_id) DO UPDATE SET display_name=excluded.display_name", (platform, author_id, name, time.time()))
         return next(s for s in self.workspace()["subscriptions"] if s["platform"] == platform and s["author_id"] == author_id)
+
+    def resolve_item(self, text: str) -> dict:
+        """Experimental full-link registration; no history/content job implied."""
+        classified = classify(text)
+        if classified["platform"] != "xiaohongshu" or classified["kind"] != "item":
+            raise ValueError("此验证入口仅接受小红书完整作品链接；短链尚未接通")
+        url = re.findall(r"https?://[^\s<>\"'，。；）]+", text)[0]
+        canonical = _canonical_source_url("xiaohongshu", url)
+        item_id = urlsplit(canonical).path.rstrip("/").split("/")[-1]
+        with self._network_lock:
+            self._check_cooldown("xiaohongshu")
+            try:
+                observed = self.transport().resolve_item(url)
+            except AdapterFailure as error:
+                if error.category == "rate_limited":
+                    self._record_cooldown("xiaohongshu", retry_after=error.retry_after)
+                raise
+        author = observed.get("author_id")
+        if observed.get("item_id") != item_id or not isinstance(author,str) or not re.fullmatch(r"[0-9a-f]{24}",author):
+            raise ValueError("目标作品或作者身份不匹配；原资料未改动")
+        with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            old = db.execute("SELECT author_id FROM items WHERE platform='xiaohongshu' AND item_id=?",(item_id,)).fetchone()
+            if old and old[0] != author:
+                raise ValueError("作品与已有作者归属冲突；原资料未改动")
+            # Keep existing names, pause state and content. A new author starts
+            # paused; one observed note proves no historical coverage.
+            db.execute("INSERT OR IGNORE INTO subscriptions VALUES('xiaohongshu',?,?,?,0,?)",
+                       (author, f"作品核验作者 · {author[-6:]}", "observed_browser_exact_note", time.time()))
+            db.execute("INSERT OR IGNORE INTO items(platform,author_id,item_id,published_at,source_url,title,content_type) VALUES('xiaohongshu',?,?,?,?,?,?)",
+                       (author,item_id,observed.get("published_at") or "",canonical,observed.get("title") or "",observed.get("content_type") or "unknown"))
+        return {"platform":"xiaohongshu","author_id":author,"item_id":item_id,"identity_verified":True,
+                "message":"已从目标作品核验归属并收录该作品；新作者默认暂停，历史与内容完整性尚未验证。"}
 
     def toggle(self, platform: str, author_id: str, enabled: bool) -> dict:
         with self.workflow.connect() as db:
