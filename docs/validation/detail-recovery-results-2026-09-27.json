@@ -155,5 +155,31 @@
     "parameters_absent_from_text_exports": true,
     "user_waived_original_task19_link_lookup": true,
     "real_probe_initial_issue": "profile_note_link_rejected_by_classifier; fixed and repeated successfully"
+  },
+  "short_link_v047": {
+    "evidence_level": "live_official_redirect_and_application_ui",
+    "app_version": "0.4.7",
+    "real_short_host": "xhslink.cn",
+    "http_status": 302,
+    "matches_full_link_item_and_author": true,
+    "job_id": 29,
+    "state": "succeeded",
+    "targets": 1,
+    "succeeded": 1,
+    "failed": 0,
+    "history_pages": 90,
+    "items": 1393,
+    "bodies": 17,
+    "assets": 40,
+    "old_files": 100,
+    "old_files_hash_mtime_unchanged": true,
+    "all_old_jobs_and_scopes_unchanged": true,
+    "history_tables_unchanged": true,
+    "subscriptions_unchanged": true,
+    "items_assets_unchanged": true,
+    "sql_access_parameters_absent": true,
+    "xhslink_com_live_verified": false,
+    "real_partial_failure_recovery_verified": false,
+    "g1_passed": false
   }
 }

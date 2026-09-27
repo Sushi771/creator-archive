@@ -124,7 +124,7 @@ async function resolveAndSaveItem() {
   try {item=await api("/api/items/resolve",{text});}
   catch(error){status.textContent=`作品核验未完成，旧资料保留。${error.message}`;throw error;}
   status.textContent="目标作品与作者已核验收录；正在创建仅含这篇作品的保存任务…";
-  const sourceUrl=text.match(/https?:\/\/[^\s<>"'，。；）]+/g)?.[0];
+  const sourceUrl=item.resolved_from_short_link?undefined:text.match(/https?:\/\/[^\s<>"'，。；）]+/g)?.[0];
   try {
     const job=await api("/api/jobs",{mode:"content",platform:item.platform,author_id:item.author_id,item_id:item.item_id,source_url:sourceUrl});
     status.textContent=`目标作品已核验收录；单篇保存任务 #${job.job_id} 已创建。请到“历史与任务”查看正文与媒体结果。`;

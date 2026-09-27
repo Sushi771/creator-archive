@@ -25,7 +25,7 @@ def classify(text: str) -> dict:
             kind, candidate = "profile", profile[1].lower()
         elif note:
             kind = "item"
-    elif host == "xhslink.com":
+    elif host in ("xhslink.com", "xhslink.cn"):
         platform, kind = "xiaohongshu", "short_link"
     elif host == "mp.weixin.qq.com":
         platform = "wechat"

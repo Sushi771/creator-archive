@@ -19,6 +19,7 @@ from .links import classify
 from .workflow import ArchiveWorkflow, _id, _canonical_source_url
 from .validation import AdapterFailure
 from .metrics import FIELDS, read_metrics, read_snapshots
+from .adapters.xhs_share import expand_share_link
 
 
 def default_workspace() -> Path:
@@ -165,7 +166,7 @@ class WorkspaceService:
         result = classify(text)
         author_id = result["candidate_author_id"]
         if not author_id:
-            raise ValueError("当前无法从这个链接核验作者。请提供小红书作者主页或带 __biz 的公众号链接；短链和单篇解析尚未接通。")
+            raise ValueError("当前无法从这个链接核验作者。请提供小红书作者主页或带 __biz 的公众号链接；小红书作品及短链请使用“按分享链接保存一篇”入口。")
         _id(author_id)
         platform = result["platform"]
         name = (display_name or f"待核验作者 · {author_id[-6:]}").strip()
@@ -181,16 +182,18 @@ class WorkspaceService:
         return next(s for s in self.workspace()["subscriptions"] if s["platform"] == platform and s["author_id"] == author_id)
 
     def resolve_item(self, text: str) -> dict:
-        """Experimental full-link registration; no history/content job implied."""
+        """Experimental exact-note registration; no history/content job implied."""
         classified = classify(text)
-        if classified["platform"] != "xiaohongshu" or classified["kind"] != "item":
-            raise ValueError("此验证入口仅接受小红书完整作品链接；短链尚未接通")
+        if classified["platform"] != "xiaohongshu" or classified["kind"] not in {"item", "short_link"}:
+            raise ValueError("此验证入口仅接受小红书作品链接或官方分享短链")
         url = re.findall(r"https?://[^\s<>\"'，。；）]+", text)[0]
-        canonical = _canonical_source_url("xiaohongshu", url)
-        item_id = urlsplit(canonical).path.rstrip("/").split("/")[-1]
         with self._network_lock:
             self._check_cooldown("xiaohongshu")
             try:
+                if classified["kind"] == "short_link":
+                    url = expand_share_link(url)
+                canonical = _canonical_source_url("xiaohongshu", url)
+                item_id = urlsplit(canonical).path.rstrip("/").split("/")[-1]
                 observed = self.transport().resolve_item(url)
             except AdapterFailure as error:
                 if error.category == "rate_limited":
@@ -211,6 +214,7 @@ class WorkspaceService:
             db.execute("INSERT OR IGNORE INTO items(platform,author_id,item_id,published_at,source_url,title,content_type) VALUES('xiaohongshu',?,?,?,?,?,?)",
                        (author,item_id,observed.get("published_at") or "",canonical,observed.get("title") or "",observed.get("content_type") or "unknown"))
         return {"platform":"xiaohongshu","author_id":author,"item_id":item_id,"identity_verified":True,
+                "resolved_from_short_link":classified["kind"] == "short_link",
                 "message":"已从目标作品核验归属并收录该作品；新作者默认暂停，历史与内容完整性尚未验证。"}
 
     def toggle(self, platform: str, author_id: str, enabled: bool) -> dict:

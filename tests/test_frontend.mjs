@@ -97,3 +97,10 @@ assert.equal(run('itemCalls.length'),2);
 assert.equal(elements['resolve-item-link'].value,fullLink,'Failed enqueue keeps the input');
 assert.match(elements['resolve-item-result'].textContent,/作品资料库/);
 console.log('Full-link UI checks passed: verified single-item job, failure isolation, transient link clearing.');
+
+run('itemCalls=[];api=async(path,body)=>{itemCalls.push({path,body});return path==="/api/items/resolve"?{platform:"xiaohongshu",author_id:"a".repeat(24),item_id:"b".repeat(24),resolved_from_short_link:true}:{job_id:30};}');
+elements['resolve-item-link'].value='Share https://xhslink.cn/o/synthetic';
+await run('resolveAndSaveItem()');
+assert.deepEqual(JSON.parse(run('JSON.stringify(itemCalls[1].body)')),{mode:'content',platform:'xiaohongshu',author_id:'a'.repeat(24),item_id:'b'.repeat(24)},'Short-link job uses only verified IDs and the server memory reference');
+assert.equal(elements['resolve-item-link'].value,'');
+console.log('Short-link UI checks passed: exact single-item scope, no short URL forwarded as detail source.');
