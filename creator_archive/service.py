@@ -29,6 +29,20 @@ def default_workspace() -> Path:
 
 
 MESSAGES = {
+    "demo_archive_complete": ("该作者本轮前10篇范围的可获取正文、媒体和已观察数据已归档；不足10篇时以可信末页为准。", "打开作者归档查看结果。已有成功资源已复用，本轮完成不代表全历史完成。"),
+    "demo_archive_partial": ("该作者本轮前10篇范围内仍有未完成作品；固定目标和成功资源已保留，失败项不会被后续作品替换。", "查看未完成清单并处理具体原因，再恢复本父任务；只重试原范围内未完成作品。"),
+    "author_archive_complete": ("该作者本次列表已到可信末页，所列作品正文和当前可获取媒体已归档。", "打开作者归档；此结果仅对应本次观察到的可获取范围，不代表双平台G1通过。"),
+    "author_archive_partial": ("该作者本次列表已到可信末页，部分正文媒体仍未完成；成功资源与固定子任务已保留。", "查看未完成清单并处理具体原因，再恢复本父任务；只重试未完成作品。"),
+    "repeated_cursor": ("作者列表返回了重复游标，无法确认后续页链；成功页面和资源已保留，未判定末页。", "恢复原父任务重试当前页；若仍重复，请保留检查点排查页链变化。"),
+    "missing_cursor": ("作者列表仍有后续页面但缺少有效游标；已保存先前进度，未判定末页。", "查看专用浏览器状态后恢复原任务，系统会重试当前页。"),
+    "empty_nonterminal_page": ("作者列表返回空页但未明确结束；先前页面和资源已保留，未判定末页。", "查看专用浏览器状态后恢复原任务，系统会重试当前页。"),
+    "missing_terminal_evidence": ("作者列表缺少可信末页证据；先前页面和资源已保留，未判定完成。", "查看专用浏览器状态后恢复原任务，系统会重试当前页。"),
+    "invalid_page": ("作者列表返回的分页状态无效；先前页面和资源已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查平台响应。"),
+    "identity_mismatch": ("当前页的作品作者身份与任务不符；该页未提交，旧资料及先前进度已保留。", "在专用浏览器核对作者后恢复原任务；若持续不符，请保留资料排查。"),
+    "stale_checkpoint": ("当前页面未能匹配已保存的检查点；旧资料及先前进度已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查。"),
+    "invalid_stable_id": ("当前页包含无效作品标识；该页未提交，旧资料及先前进度已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查。"),
+    "invalid_response": ("当前页未通过数据校验，原因尚未确定；该页未提交，先前进度已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查。"),
+    "adapter_version_changed": ("采集组件版本与原任务不一致，原页面及资源已保留。", "恢复至原组件版本后重试该任务；确认兼容前不会自动推进检查点。"),
     "page_archive_complete": ("本次最多两页的正文媒体闭环已归档；两页预算不代表全历史完成。", "打开作者归档；列表覆盖与正文媒体状态分别查看。"),
     "page_archive_partial": ("本次两页实验已归档现有资料，部分正文媒体未完成；原页与固定子任务已保留。", "查看未完成条目并处理具体原因，再恢复本父任务；成功作品和资源不会重做。"),
     "transport_unavailable": ("小红书自运行采集通道尚未配置；已保留作品及分页检查点。", "配置并登录独立采集浏览器后重试；现有作品可直接归档。"),
@@ -298,12 +312,15 @@ class WorkspaceService:
         association = db.execute("SELECT parent_job_id FROM pipeline_pages WHERE child_job_id=?", (row["id"],)).fetchone()
         if association:
             result.update(parent_job_id=association[0],can_resume=False)
-        if row["mode"] == "page_archive":
+        if row["mode"] in page_pipeline.MODES:
             checkpoint = db.execute("SELECT * FROM page_pipelines WHERE parent_job_id=?", (row["id"],)).fetchone()
             progress = page_pipeline.progress(db,row["id"])
             success = sum(item["state"] == "succeeded" for item in progress)
             failures = [item for item in progress if item["state"] == "partial"]
-            result.update(page_limit=checkpoint["page_limit"],stage=checkpoint["stage"],listed_count=len(run_ids),
+            result.update(page_limit=checkpoint["page_limit"] if row["mode"] == "page_archive" else None,
+                          item_limit=page_pipeline.DEMO_ITEM_LIMIT if row["mode"] == "demo_archive" else None,
+                          until_terminal=row["mode"] == "author_archive",list_finished=bool(run and run["terminal_evidence"]),
+                          stage=checkpoint["stage"],listed_count=len(run_ids),
                           target_count=len(progress),item_count=success,failed_count=len(failures),
                           pending_count=len(progress)-success-len(failures),failed_items=failures[:20],
                           children=[dict(r) for r in db.execute("SELECT p.page_number,j.id,j.state,j.reason FROM pipeline_pages p JOIN jobs j ON j.id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number", (row["id"],))])
@@ -311,6 +328,10 @@ class WorkspaceService:
         if row["mode"] in {"content", "metrics"} and row["reason"] in {"unavailable", "timeout"}:
             message = "作品详情或媒体暂未能获取，具体原因尚未确认；已有正文、成功媒体及指标原值与时间保留。"
             next_step = "查看专用浏览器的提示；可在对应作品详情补充完整原文链接后重试，成功媒体会复用。"
+        if row["mode"] in page_pipeline.MODES and row["reason"] in {"reference_missing","item_unavailable","unavailable","timeout"}:
+            if row["reason"] in {"unavailable","timeout"} and checkpoint["stage"] == "content":
+                message = "该作者的作品详情或媒体暂未能获取，具体原因尚未确认；原列表检查点、固定子任务及成功资源已保留。"
+            next_step = "查看专用浏览器提示并确认该作者页面可访问后，恢复本父任务；系统沿用原检查点重新观察所需列表页，只重试未完成作品，成功资源会复用。若仍失败，保留原进度排查，无需新建任务。"
         if row["state"] == "succeeded" and not row["reason"] and run and run["coverage"] == "complete_for_accessible_scope":
             message = "本次列表扫描已到当前可获取范围的明确末页；正文和媒体完整性单独核验。"
             next_step = "查看已保存作品，或按作者归档现有资料。"
@@ -337,7 +358,7 @@ class WorkspaceService:
                 sub.update(item_count=counts[0], detail_count=counts[1])
                 run = db.execute("SELECT coverage FROM runs WHERE platform=? AND author_id=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", args).fetchone()
                 sub["coverage"] = run[0] if run else "unknown"
-                latest = next((j for j in jobs if (j["platform"], j["author_id"]) == args), None)
+                latest = next((j for j in jobs if (j["platform"], j["author_id"]) == args and not j.get("parent_job_id")), None)
                 sub.update(latest_state=latest["state"] if latest else "pending", reason=latest["reason"] if latest else "identity_unverified")
                 sub["message"] = latest["message"] if latest else MESSAGES["identity_unverified"][0]
                 exports = next((j["export"] for j in jobs if (j["platform"], j["author_id"]) == args and j.get("export")), None)
@@ -430,10 +451,12 @@ class WorkspaceService:
         return source_url
 
     def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None, item_ids=None) -> dict:
-        if mode not in {"full", "latest", "archive", "content", "metrics", "page_archive"} or bool(platform) != bool(author_id):
+        if mode not in {"full", "latest", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
-        if mode == "page_archive" and (platform != "xiaohongshu" or not author_id):
-            raise ValueError("按页闭环实验仅限一位已确认订阅的小红书作者，固定最多两页")
+        if mode in {"page_archive", "author_archive"} and (platform != "xiaohongshu" or not author_id):
+            raise ValueError("按页归档实验仅限一位已确认订阅的小红书作者；两页与至末页范围由所选模式决定")
+        if mode == "demo_archive" and author_id and platform != "xiaohongshu":
+            raise ValueError("前10篇Demo仅支持已核验并已确认订阅的小红书作者")
         if item_id and (not author_id or mode not in {"content","metrics"}):
             raise ValueError("单作品任务须提供平台、作者及内容或指标模式")
         if item_ids is not None and (not item_ids or len(item_ids)>200 or item_id or not author_id or mode not in {"content","metrics"} or source_url):
@@ -443,11 +466,14 @@ class WorkspaceService:
         scope = [s for s in self.workspace()["subscriptions"]
                  if (not author_id and not s["subscription_confirmation_required"])
                  or (author_id and (s["platform"], s["author_id"]) == (platform, author_id))]
+        if mode == "demo_archive" and not author_id:
+            scope = [s for s in scope if s["platform"] == "xiaohongshu" and s["identity_verified"]
+                     and not s["subscription_confirmation_required"]]
         if not scope:
             raise ValueError("没有可处理的订阅；待确认的作品作者请先确认订阅，已有作品仍可单篇保存")
-        if mode in {"full", "latest", "page_archive"} and any(s["subscription_confirmation_required"] for s in scope):
+        if mode in {"full", "latest", *page_pipeline.MODES} and any(s["subscription_confirmation_required"] for s in scope):
             raise ValueError("该作品作者尚未确认订阅；请先在作者卡片确认，原历史和作品保持不变")
-        if mode == "page_archive" and any(not s["identity_verified"] for s in scope):
+        if mode in page_pipeline.MODES and any(not s["identity_verified"] for s in scope):
             raise ValueError("按页闭环实验需要已核验的订阅作者")
         ids = []
         with self.workflow.connect() as db:
@@ -465,7 +491,7 @@ class WorkspaceService:
             for sub in scope:
                 cur = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)", (sub["platform"], sub["author_id"], mode, time.time(), time.time()))
                 ids.append(cur.lastrowid)
-                if mode == "page_archive":
+                if mode in page_pipeline.MODES:
                     db.execute("INSERT INTO page_pipelines(parent_job_id,page_limit) VALUES(?,2)", (cur.lastrowid,))
                 if mode in {"content","metrics"}:
                     clause = " AND item_id IN (" + ",".join("?" for _ in selected) + ")" if selected else " AND item_id=?" if item_id else ""
@@ -504,12 +530,12 @@ class WorkspaceService:
                 raise KeyError("job_not_found")
             total = db.execute("SELECT count(*) FROM job_items WHERE job_id=? AND state='partial'", (job_id,)).fetchone()[0]
             rows = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT ? OFFSET ?", (job_id,limit,offset))]
-            if job["mode"] == "page_archive":
+            if job["mode"] in page_pipeline.MODES:
                 failures = [item for item in page_pipeline.progress(db,job_id) if item["state"] == "partial"]
                 total, rows = len(failures), failures[offset:offset+limit]
         for row in rows:
             row["message"], row["next_step"] = MESSAGES.get(row["reason"], MESSAGES["unexpected_error"])
-            if job["mode"] == "page_archive" and row["reason"] in {"reference_missing","item_unavailable","unavailable","timeout"}:
+            if job["mode"] in page_pipeline.MODES and row["reason"] in {"reference_missing","item_unavailable","unavailable","timeout"}:
                 row["next_step"] = "在专用浏览器确认该作品可访问后恢复本父任务；系统重新观察原列表页，只重试未完成作品。若仍取不到引用，会保留部分归档与原进度。"
         return {"total": total,"items":rows,"platform":job["platform"],"author_id":job["author_id"]}
 
@@ -563,7 +589,7 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state=?,reason=?,export_json=?,updated_at=? WHERE id=?", (state, reason, json.dumps(export) if export else None, time.time(), job_id))
             job = db.execute("SELECT mode,run_id FROM jobs WHERE id=?", (job_id,)).fetchone()
-            if job and job["mode"] == "page_archive" and state not in {"queued","running","succeeded"}:
+            if job and job["mode"] in page_pipeline.MODES and state not in {"queued","running","succeeded"}:
                 # A failure may occur after the page transaction but before
                 # content starts (e.g. hashing an existing unreadable asset).
                 # Close only this parent's active children, allowing login and
@@ -601,7 +627,7 @@ class WorkspaceService:
                 if job["mode"] in {"content","metrics"}:
                     self._execute_content(job)
                     return
-                if job["mode"] == "page_archive":
+                if job["mode"] in page_pipeline.MODES:
                     page_pipeline.execute(self,job)
                     return
                 if not job["run_id"]:

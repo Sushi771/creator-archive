@@ -411,5 +411,339 @@
     "offline_regression_tests": 155,
     "real_ui_result_visible": true,
     "real_job_launched_through_ui": false
+  },
+  "author_archive_2026_09_27": {
+    "evidence_level": "real_platform_service_browser_and_local_archive",
+    "platform_mock": false,
+    "g1_passed": false,
+    "mode": "author_archive",
+    "job": 35,
+    "children": [
+      36,
+      37,
+      38,
+      39,
+      40,
+      41
+    ],
+    "list_pages": 6,
+    "terminal_evidence": "xhs user_posted: explicit has_more=false",
+    "coverage": "complete_for_accessible_scope",
+    "state": "partial",
+    "targets": 152,
+    "succeeded": 144,
+    "reference_missing": 8,
+    "first_process": {
+      "list_pages": 3,
+      "targets": 91,
+      "succeeded": 76,
+      "failed": 6,
+      "pending": 9,
+      "stop_reason": "unavailable",
+      "controlled_page_stop_passed": false,
+      "detail_calls": 19,
+      "downloads": 36
+    },
+    "resumed_new_process": {
+      "list_calls": 4,
+      "detail_calls": 76,
+      "downloads": 156,
+      "prior_success_not_revisited": true,
+      "prior_success_snapshot_counts_unchanged": true
+    },
+    "reference_replay_diagnostic": {
+      "missing": 8,
+      "in_ssr": 0,
+      "in_ssr_with_token": 0,
+      "in_target_api_page": 0,
+      "in_replayed_api_pages": 0,
+      "in_cached_references": 0,
+      "missing_after_prepare": 8,
+      "prior_page_count": 30,
+      "current_page_count": 30,
+      "prior_only": 8,
+      "current_only": 8,
+      "prior_only_equals_missing": true,
+      "observed_ssr_states": 1,
+      "no_details_requested": true,
+      "database_unchanged": true
+    },
+    "offline": {
+      "job": 35,
+      "state": "partial",
+      "list_pages": 6,
+      "targets": 152,
+      "content_success": 144,
+      "history_coverage": "complete_for_accessible_scope",
+      "corpus_rows": 144,
+      "target_body_rows": 144,
+      "target_body_missing": 8,
+      "target_html_read": 144,
+      "assets_read_and_hashed": 327,
+      "images_completely_decoded": 327,
+      "mp4_headers_checked": 0,
+      "browser_closed_during_offline_read": true,
+      "first_phase_files_preserved": true,
+      "old_bodies_preserved": true,
+      "old_item_id_set_preserved": true,
+      "pending_confirmation_count": 1
+    },
+    "protection": {
+      "integrity": "ok",
+      "old_files_unchanged": true,
+      "old_file_count": 310,
+      "current_files": 671,
+      "old_rows_preserved": {
+        "assets": true,
+        "batches": true,
+        "item_metrics": false,
+        "job_items": true,
+        "jobs": true,
+        "metric_snapshots": true,
+        "page_pipelines": true,
+        "pages": true,
+        "pipeline_pages": true,
+        "platform_cooldowns": true,
+        "runs": true,
+        "subscription_confirmations": true,
+        "subscription_intents": true,
+        "subscriptions": true,
+        "validation_imports": true
+      },
+      "counts": {
+        "assets": 335,
+        "batches": 19,
+        "item_metrics": 468,
+        "items": 1401,
+        "job_items": 240,
+        "jobs": 40,
+        "metric_snapshots": 198,
+        "page_pipelines": 2,
+        "pages": 98,
+        "pipeline_pages": 8,
+        "platform_cooldowns": 0,
+        "runs": 19,
+        "subscription_confirmations": 0,
+        "subscription_intents": 0,
+        "subscriptions": 3,
+        "validation_imports": 2
+      }
+    },
+    "existing_metric_change": {
+      "changed_metric_rows": 3,
+      "changed_items": 1,
+      "old_changed_detail_states": [
+        [
+          "missing",
+          "unknown"
+        ]
+      ]
+    },
+    "ui": {
+      "version": "0.4.11",
+      "job_state": "partial",
+      "pages": 6,
+      "success": 144,
+      "target": 152,
+      "failed": 8,
+      "author_latest_state": "partial",
+      "author_reason": "author_archive_partial",
+      "task32_success": 61,
+      "active": 0,
+      "stats": {
+        "subscriptions": 3,
+        "items": 1401,
+        "details": 147,
+        "running": 0
+      },
+      "ui_extra_resume_attempts": 2,
+      "extra_resume_only_failed_item_snapshots": true,
+      "extra_resume_snapshot_count": 16
+    },
+    "tests": {
+      "python_full_passed": 163,
+      "node_frontend_contract": true,
+      "node_syntax": true,
+      "pip_check": true
+    },
+    "pending": [
+      "8 fixed-scope IDs absent from current replay; no replacement IDs added to old child",
+      "Cross-process nonempty cursor SSR reference caching gap only reproduced with synthetic source; not this live failure",
+      "Long-term reference/session expiry",
+      "All-subscription orchestration",
+      "WeChat and dual-platform G1"
+    ]
+  },
+  "demo_ten_2026_09_27": {
+    "latest_user_scope": "first_10_unique_per_confirmed_author_in_observed_homepage_order",
+    "real_run": {
+      "real_platform": true,
+      "platform_mock": false,
+      "max_unique_detail_targets_per_author": 10,
+      "jobs": [
+        {
+          "id": 43,
+          "mode": "demo_archive",
+          "state": "succeeded",
+          "reason": "demo_archive_complete",
+          "run_id": 21,
+          "pages": 1,
+          "target_count": 10,
+          "item_count": 10,
+          "failed_count": 0,
+          "pending_count": 0,
+          "coverage": "partial",
+          "item_limit": 10,
+          "list_finished": false,
+          "children": [
+            {
+              "page_number": 1,
+              "id": 45,
+              "state": "succeeded",
+              "reason": "content_complete"
+            }
+          ]
+        },
+        {
+          "id": 42,
+          "mode": "demo_archive",
+          "state": "succeeded",
+          "reason": "demo_archive_complete",
+          "run_id": 20,
+          "pages": 1,
+          "target_count": 10,
+          "item_count": 10,
+          "failed_count": 0,
+          "pending_count": 0,
+          "coverage": "partial",
+          "item_limit": 10,
+          "list_finished": false,
+          "children": [
+            {
+              "page_number": 1,
+              "id": 44,
+              "state": "succeeded",
+              "reason": "content_complete"
+            }
+          ]
+        }
+      ],
+      "unique_detail_requests_per_author": [
+        10
+      ],
+      "details_total": 10,
+      "downloads": 14,
+      "list_fetches": 2,
+      "confirmed_authors_tested": 2,
+      "pending_confirmation_count": 1,
+      "sql_has_access_parameters": false,
+      "old_task_32_35": [
+        [
+          32,
+          "page_archive",
+          "succeeded"
+        ],
+        [
+          35,
+          "author_archive",
+          "partial"
+        ]
+      ]
+    },
+    "offline": {
+      "jobs": [
+        {
+          "job": 43,
+          "targets": 10,
+          "html_read": 10,
+          "corpus_target_rows": 10,
+          "assets_hashed": 24,
+          "images_decoded": 24,
+          "mp4_headers_checked": 0,
+          "metrics_rows": 30,
+          "metrics_with_value": 8,
+          "metric_qualities": {
+            "exact": 8,
+            "unknown": 22
+          }
+        },
+        {
+          "job": 42,
+          "targets": 10,
+          "html_read": 10,
+          "corpus_target_rows": 10,
+          "assets_hashed": 14,
+          "images_decoded": 14,
+          "mp4_headers_checked": 0,
+          "metrics_rows": 30,
+          "metrics_with_value": 17,
+          "metric_qualities": {
+            "exact": 17,
+            "unknown": 13
+          }
+        }
+      ],
+      "browser_closed": true,
+      "old_bodies_preserved": true,
+      "old_id_set_preserved": true,
+      "complete_bodies": 157,
+      "active_jobs": 0
+    },
+    "protection": {
+      "integrity": "ok",
+      "old_files_unchanged": true,
+      "old_file_count": 671,
+      "current_files": 710,
+      "old_rows_preserved": {
+        "assets": true,
+        "batches": true,
+        "item_metrics": true,
+        "job_items": true,
+        "jobs": true,
+        "metric_snapshots": true,
+        "page_pipelines": true,
+        "pages": true,
+        "pipeline_pages": true,
+        "platform_cooldowns": true,
+        "runs": true,
+        "subscription_confirmations": true,
+        "subscription_intents": true,
+        "subscriptions": true,
+        "validation_imports": true
+      },
+      "counts": {
+        "assets": 349,
+        "batches": 21,
+        "item_metrics": 498,
+        "items": 1401,
+        "job_items": 260,
+        "jobs": 44,
+        "metric_snapshots": 208,
+        "page_pipelines": 4,
+        "pages": 100,
+        "pipeline_pages": 10,
+        "platform_cooldowns": 0,
+        "runs": 21,
+        "subscription_confirmations": 0,
+        "subscription_intents": 0,
+        "subscriptions": 3,
+        "validation_imports": 2
+      }
+    },
+    "python_tests": 167,
+    "new_demo_tests": 4,
+    "test_platform": "simulated; real_run separately uses real platform and CDN",
+    "ui_verified": {
+      "default_mode": "demo_archive",
+      "full_experiments_collapsed": true,
+      "job_42_43": "10/10 each",
+      "collection_active": false
+    },
+    "limits": [
+      "35 unknown interaction fields of 60; retained as unknown",
+      "one pending author excluded",
+      "full-history continuation deferred",
+      "dual-platform G1 not passed"
+    ]
   }
 }

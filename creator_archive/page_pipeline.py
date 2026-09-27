@@ -1,4 +1,4 @@
-"""Bounded page/content experiment with independent durable checkpoints.
+"""Author page/content pipelines with independent durable checkpoints.
 
 Only stable identities and page cursors are persisted. Browser access references
 are refreshed by replaying the original list page after process restart.
@@ -9,6 +9,15 @@ import sqlite3
 import time
 from urllib.parse import quote
 from .validation import AdapterFailure
+
+
+MODES = {"page_archive", "author_archive", "demo_archive"}
+DEMO_ITEM_LIMIT = 10
+# A resumable per-execution safety budget, never evidence of a terminal page.
+AUTHOR_PAGE_BUDGET = 100
+PAGE_ERRORS = {"stale_checkpoint", "invalid_page", "missing_cursor", "repeated_cursor",
+               "empty_nonterminal_page", "missing_terminal_evidence", "identity_mismatch",
+               "invalid_stable_id"}
 
 
 def initialize(workflow):
@@ -74,10 +83,12 @@ def _stage(service, parent_id, stage):
 def execute(service, job):
     workflow = service.workflow
     parent_id = job["id"]
+    until_terminal = job["mode"] == "author_archive"
+    demo = job["mode"] == "demo_archive"
     with workflow.connect() as db:
         if not job["run_id"]:
-            batch = db.execute("INSERT INTO batches(mode,created_at) VALUES('page_archive',?)", (time.time(),)).lastrowid
-            run_id = db.execute("INSERT INTO runs(batch_id,platform,author_id,mode,adapter_version,updated_at) VALUES(?,?,?,'page_archive','pending',?)", (batch,job["platform"],job["author_id"],time.time())).lastrowid
+            batch = db.execute("INSERT INTO batches(mode,created_at) VALUES(?,?)", (job["mode"],time.time())).lastrowid
+            run_id = db.execute("INSERT INTO runs(batch_id,platform,author_id,mode,adapter_version,updated_at) VALUES(?,?,?,?,'pending',?)", (batch,job["platform"],job["author_id"],job["mode"],time.time())).lastrowid
             db.execute("UPDATE jobs SET run_id=? WHERE id=?", (run_id,parent_id))
         else:
             run_id = job["run_id"]
@@ -108,39 +119,65 @@ def execute(service, job):
                 transport.page(job["author_id"],child["request_cursor"] or None)
             if not _consume(service,parent_id,child):
                 return
+        new_pages = 0
         while True:
             if service._stopping.is_set():
                 service._finish(parent_id,"interrupted","process_interrupted")
                 return
             with workflow.connect() as db:
                 run = dict(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
-            if run["terminal_evidence"] or run["pages"] >= checkpoint["page_limit"]:
+                chosen = {item["item_id"] for item in progress(db,parent_id)} if demo else set()
+            # jobs.mode is the durable scope policy. The legacy page_limit=2
+            # column remains unchanged and applies only to page_archive jobs.
+            if run["terminal_evidence"]:
+                break
+            if demo and len(chosen) >= DEMO_ITEM_LIMIT:
+                break
+            if ((until_terminal or demo) and new_pages >= AUTHOR_PAGE_BUDGET) or (job["mode"] == "page_archive" and run["pages"] >= checkpoint["page_limit"]):
                 break
             _stage(service,parent_id,"list")
             service._check_cooldown(job["platform"])
             page = transport.page(job["author_id"],run["cursor"])
+            if page.has_more and page.terminal_evidence:
+                raise AdapterFailure("invalid_page")
             with workflow.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
-                workflow._commit_page_in_db(db,run_id,run["cursor"],page)
+                try:
+                    workflow._commit_page_in_db(db,run_id,run["cursor"],page)
+                except ValueError as error:
+                    # Keep the typed validation cause without exposing source
+                    # response data; the surrounding transaction rolls back.
+                    raise AdapterFailure(str(error) if str(error) in PAGE_ERRORS else "invalid_response") from None
+                targets = []
+                for item in page.items:
+                    if demo:
+                        if item.item_id in chosen or len(chosen) >= DEMO_ITEM_LIMIT:
+                            continue
+                        chosen.add(item.item_id)
+                    targets.append(item.item_id)
                 child_id = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,'content','queued',?,?)", (job["platform"],job["author_id"],time.time(),time.time())).lastrowid
-                db.executemany("INSERT OR IGNORE INTO job_items(job_id,platform,item_id) VALUES(?,?,?)", [(child_id,job["platform"],item.item_id) for item in page.items])
+                db.executemany("INSERT OR IGNORE INTO job_items(job_id,platform,item_id) VALUES(?,?,?)", [(child_id,job["platform"],item_id) for item_id in targets])
                 db.execute("INSERT INTO pipeline_pages VALUES(?,?,?)", (parent_id,run["pages"]+1,child_id))
                 db.execute("UPDATE page_pipelines SET stage='content' WHERE parent_job_id=?", (parent_id,))
                 child = dict(db.execute("SELECT * FROM jobs WHERE id=?", (child_id,)).fetchone())
+            new_pages += 1
             _reuse_complete(service,child)
             if not _consume(service,parent_id,child):
                 return
         _stage(service,parent_id,"archive")
         with workflow.connect() as db:
             if not run["terminal_evidence"]:
-                db.execute("UPDATE runs SET state='partial',coverage='partial',reason='page_budget_reached',updated_at=? WHERE id=?", (time.time(),run_id))
+                list_reason = "demo_item_limit_reached" if demo and len(chosen) >= DEMO_ITEM_LIMIT else "page_budget_reached"
+                db.execute("UPDATE runs SET state='partial',coverage='partial',reason=?,updated_at=? WHERE id=?", (list_reason,time.time(),run_id))
             pending = any(item["state"] != "succeeded" for item in progress(db,parent_id))
         exported = workflow.export_all(batch_id=run["batch_id"])
         for author in exported["authors"]:
             for key in ("manifest","corpus","index"):
                 author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(service.root / "archive").as_posix(),safe="/")
-        _stage(service,parent_id,"content" if pending else "done")
-        service._finish(parent_id,"partial" if pending else "succeeded","page_archive_partial" if pending else "page_archive_complete",exported)
+        list_pending = not run["terminal_evidence"] and (until_terminal or (demo and len(chosen) < DEMO_ITEM_LIMIT))
+        _stage(service,parent_id,"list" if list_pending else "content" if pending else "done")
+        reason = "page_budget_reached" if list_pending else job["mode"] + ("_partial" if pending else "_complete")
+        service._finish(parent_id,"partial" if pending or list_pending else "succeeded",reason,exported)
 
 
 def _consume(service, parent_id, child):
