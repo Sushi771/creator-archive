@@ -116,6 +116,28 @@ async function refresh(forceItems = false, background = false) {
   finally { if (ui.refreshPromise === request) ui.refreshPromise = null; }
 }
 async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();const result=await api("/api/jobs",body);notify(result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
+async function resolveAndSaveItem() {
+  const input=$("resolve-item-link"),status=$("resolve-item-result");
+  if(!input.reportValidity())return;
+  const text=input.value.trim();
+  let item;
+  try {item=await api("/api/items/resolve",{text});}
+  catch(error){status.textContent=`作品核验未完成，旧资料保留。${error.message}`;throw error;}
+  status.textContent="目标作品与作者已核验收录；正在创建仅含这篇作品的保存任务…";
+  const sourceUrl=text.match(/https?:\/\/[^\s<>"'，。；）]+/g)?.[0];
+  try {
+    const job=await api("/api/jobs",{mode:"content",platform:item.platform,author_id:item.author_id,item_id:item.item_id,source_url:sourceUrl});
+    status.textContent=`目标作品已核验收录；单篇保存任务 #${job.job_id} 已创建。请到“历史与任务”查看正文与媒体结果。`;
+    notify(status.textContent);
+  } catch(error) {
+    const message=`作品已核验收录，但保存任务未创建：${error.message}请在“作品资料库”找到这篇作品，待当前任务结束后点击“保存正文与缺失媒体”。`;
+    status.textContent=message;
+    throw new Error(message);
+  }
+  input.value="";
+  await refresh(true);
+  $("jobs").scrollIntoView();
+}
 const metricNames = {likes:"点赞",collects:"收藏",comments:"评论"};
 const contentTypeNames = {image:"图文",video:"视频",unknown:"类型未知"};
 function metricValue(metric) {
@@ -286,6 +308,7 @@ async function openItem(item) {
 }
 
 $("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined});$("link-result").textContent=result.message||"订阅已保存。作者核验与采集能力请查看订阅和平台状态。";notify($("link-result").textContent);await refresh(true);});});
+$("resolve-item-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,resolveAndSaveItem);});
 $("classify").onclick=()=>perform($("classify"),async()=>{if(!$("link").reportValidity())return;const r=await api("/api/links/classify",{text:$("link").value});$("link-result").textContent=`${nameOf(r.platform)} · ${kindName[r.kind]||r.kind}。${r.message||""}${r.candidate_author_id?` 候选作者 ID：${r.candidate_author_id}`:""}`;});
 for(const b of document.querySelectorAll("[data-job]"))b.onclick=()=>perform(b,()=>startJob(b.dataset.job));
 $("refresh").onclick=()=>perform($("refresh"),async()=>{await refresh(true);notify("已刷新本机持久状态。");});
