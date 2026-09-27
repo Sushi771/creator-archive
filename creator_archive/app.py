@@ -188,6 +188,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         target = (archive / relative_path).resolve()
         if not target.is_relative_to(archive) or not target.is_file() or target.suffix.lower() not in {".html", ".md", ".json", ".jsonl", ".jpg", ".png", ".webp", ".mp4"}:
             raise HTTPException(status_code=404, detail="归档文件不存在或不可访问")
+        if service.workflow.archive_asset_valid(target.relative_to(archive).as_posix()) is False:
+            raise HTTPException(status_code=404, detail="附件缺失或完整性校验失败；已保留登记，请恢复原文件或重新保存缺失媒体")
         return FileResponse(target)
 
     @app.post("/api/links/classify")

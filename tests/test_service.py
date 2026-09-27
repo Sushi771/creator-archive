@@ -230,27 +230,33 @@ class WorkspaceTests(unittest.TestCase):
         kept_path = self.service.workflow.attach_media("xiaohongshu", item["item_id"], "kept", source,
                                                        position=1, kind="image", mime="image/png")
         kept = (kept_path.read_bytes(), kept_path.stat().st_mtime_ns)
-        manual = self.service.root / "archive" / "notes.txt"
+        manual = self.service.root / "archive" / "notes.json"
         manual.write_text("manual note", encoding="utf-8")
         preserved = (manual.read_bytes(), manual.stat().st_mtime_ns)
         with TestClient(create_app(self.service.root)) as client:
             url = f"/api/items/xiaohongshu/{item['item_id']}"
             valid = client.get(url).json()["assets"][0]
+            old_asset_url = valid["url"]
             self.assertEqual(valid["state"], "complete")
-            self.assertEqual(client.get(valid["url"]).content, original)
+            self.assertEqual(client.get(old_asset_url).content, original)
             asset_path.unlink()
             missing = client.get(url).json()["assets"][0]
             self.assertEqual(missing["state"], "missing")
             self.assertFalse(missing.get("url"))
             self.assertFalse(missing.get("archive_url"))
+            self.assertEqual(client.get(old_asset_url).status_code, 404)
             asset_path.write_bytes(original[:-1] + b"X")
             corrupt = client.get(url).json()["assets"][0]
             self.assertEqual(corrupt["state"], "missing")
             self.assertFalse(corrupt.get("url"))
+            self.assertEqual(client.get(old_asset_url).status_code, 404)
+            self.assertEqual(client.get("/archive/" + kept_path.relative_to(self.service.root / "archive").as_posix()).content, original)
+            self.assertEqual(client.get("/archive/notes.json").content, preserved[0])
             asset_path.write_bytes(original)
             recovered = client.get(url).json()["assets"][0]
             self.assertEqual(recovered["state"], "complete")
             self.assertEqual(client.get(recovered["url"]).content, original)
+            self.assertEqual(client.get(old_asset_url).content, original)
         self.assertEqual((manual.read_bytes(), manual.stat().st_mtime_ns), preserved)
         self.assertEqual((kept_path.read_bytes(), kept_path.stat().st_mtime_ns), kept)
 

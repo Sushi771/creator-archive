@@ -410,6 +410,17 @@ class ArchiveWorkflow:
         path = self.root / "archive" / row["relative_path"]
         return path.is_file() and path.stat().st_size == row["bytes"] and _file_sha256(path) == row["sha256"]
 
+    def archive_asset_valid(self, relative_path: str) -> bool | None:
+        """Return None for non-asset files; verify every registration for an asset path."""
+        windows_path = relative_path.replace("/", "\\")
+        with self.connect() as db:
+            rows = db.execute("""SELECT platform,item_id,asset_id FROM assets
+                WHERE relative_path=? COLLATE NOCASE OR relative_path=? COLLATE NOCASE""",
+                (relative_path, windows_path)).fetchall()
+        if not rows:
+            return None
+        return all(self.asset_valid(row["platform"], row["item_id"], row["asset_id"]) for row in rows)
+
     def candidate_saved(self, platform, item_id, candidate):
         """Reuse verified legacy files at the same item/kind/position, without aliases.
 
