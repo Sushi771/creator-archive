@@ -243,42 +243,46 @@ class ArchiveWorkflow:
     def _commit_page(self, run_id: int, cursor: str | None, page: Page) -> None:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-            if row["cursor"] != cursor or row["state"] == "succeeded":
-                raise ValueError("stale_checkpoint")
-            seen = {r[0] for r in db.execute("SELECT request_cursor FROM pages WHERE run_id=?", (run_id,))}
-            requested = cursor or ""
-            if type(page.has_more) is not bool:
-                raise ValueError("invalid_page")
-            if page.has_more:
-                if not page.items:
-                    raise ValueError("empty_nonterminal_page")
-                if not isinstance(page.next_cursor, str) or not page.next_cursor:
-                    raise ValueError("missing_cursor")
-                if page.next_cursor == requested or page.next_cursor in seen:
-                    raise ValueError("repeated_cursor")
-            elif page.next_cursor is not None or not page.terminal_evidence:
-                raise ValueError("missing_terminal_evidence")
-            for item in page.items:
-                if not item.item_id or item.author_id != row["author_id"]:
-                    raise ValueError("identity_mismatch")
-                _id(item.item_id)
-                old = db.execute("SELECT author_id FROM items WHERE platform=? AND item_id=?",
-                                 (row["platform"], item.item_id)).fetchone()
-                if old and old[0] != item.author_id:
-                    raise ValueError("identity_mismatch")
-                db.execute("""INSERT INTO items(platform,item_id,author_id,published_at)
-                    VALUES(?,?,?,?) ON CONFLICT(platform,item_id)
-                    DO UPDATE SET published_at=CASE WHEN excluded.published_at!='' THEN excluded.published_at ELSE items.published_at END""",
-                    (row["platform"], item.item_id, item.author_id, item.published_at))
-            db.execute("INSERT INTO pages VALUES(?,?,?,?,?,?,?)",
-                       (run_id, row["pages"] + 1, requested, page.next_cursor,
-                        json.dumps([i.item_id for i in page.items]), page.terminal_evidence, time.time()))
-            db.execute("""UPDATE runs SET cursor=?,pages=pages+1,state=?,coverage=?,reason=NULL,
-                terminal_evidence=?,retry_at=0,updated_at=? WHERE id=?""",
-                (page.next_cursor, "running" if page.has_more else "succeeded",
-                 "scanning" if page.has_more else "complete_for_accessible_scope",
-                 page.terminal_evidence, time.time(), run_id))
+            self._commit_page_in_db(db, run_id, cursor, page)
+
+    def _commit_page_in_db(self, db, run_id, cursor, page):
+        """Validate and commit a page inside the caller-owned transaction."""
+        row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if row["cursor"] != cursor or row["state"] == "succeeded":
+            raise ValueError("stale_checkpoint")
+        seen = {r[0] for r in db.execute("SELECT request_cursor FROM pages WHERE run_id=?", (run_id,))}
+        requested = cursor or ""
+        if type(page.has_more) is not bool:
+            raise ValueError("invalid_page")
+        if page.has_more:
+            if not page.items:
+                raise ValueError("empty_nonterminal_page")
+            if not isinstance(page.next_cursor, str) or not page.next_cursor:
+                raise ValueError("missing_cursor")
+            if page.next_cursor == requested or page.next_cursor in seen:
+                raise ValueError("repeated_cursor")
+        elif page.next_cursor is not None or not page.terminal_evidence:
+            raise ValueError("missing_terminal_evidence")
+        for item in page.items:
+            if not item.item_id or item.author_id != row["author_id"]:
+                raise ValueError("identity_mismatch")
+            _id(item.item_id)
+            old = db.execute("SELECT author_id FROM items WHERE platform=? AND item_id=?",
+                             (row["platform"], item.item_id)).fetchone()
+            if old and old[0] != item.author_id:
+                raise ValueError("identity_mismatch")
+            db.execute("""INSERT INTO items(platform,item_id,author_id,published_at)
+                VALUES(?,?,?,?) ON CONFLICT(platform,item_id)
+                DO UPDATE SET published_at=CASE WHEN excluded.published_at!='' THEN excluded.published_at ELSE items.published_at END""",
+                (row["platform"], item.item_id, item.author_id, item.published_at))
+        db.execute("INSERT INTO pages VALUES(?,?,?,?,?,?,?)",
+                   (run_id, row["pages"] + 1, requested, page.next_cursor,
+                    json.dumps([i.item_id for i in page.items]), page.terminal_evidence, time.time()))
+        db.execute("""UPDATE runs SET cursor=?,pages=pages+1,state=?,coverage=?,reason=NULL,
+            terminal_evidence=?,retry_at=0,updated_at=? WHERE id=?""",
+            (page.next_cursor, "running" if page.has_more else "succeeded",
+             "scanning" if page.has_more else "complete_for_accessible_scope",
+             page.terminal_evidence, time.time(), run_id))
 
     def run_all(self, adapters: Mapping[str, HistoryAdapter], *, mode: str = "full",
                 batch_id: int | None = None, include_paused: bool = True,

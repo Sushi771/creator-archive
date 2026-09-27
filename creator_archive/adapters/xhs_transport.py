@@ -80,6 +80,7 @@ INITIAL_STATE = """() => {
   const raw = Array.isArray(groups) ? groups.flat() : [];
   const notes = raw.map(n => {const c=n.noteCard ?? n; return {
     note_id:n.id ?? n.noteId ?? c.noteId,
+    xsec_token:n.xsecToken,
     user:{user_id:c.user?.userId ?? c.user?.user_id}};});
   return {author:q?.userId, cursor:q?.cursor, logged_in:unwrap(u?.loggedIn),
     has_more:q?.hasMore ?? q?.has_more, notes};
@@ -104,7 +105,7 @@ class XhsBrowserTransport:
             raise ValueError("positive_timeout_required")
         self.channel, self.timeout = channel, timeout
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="xhs-browser")
-        self._runtime = self._context = self._page = None
+        self._runtime = self._context = self._page = self._detail_page = None
         self._author = None
         self._responses: dict[tuple[str, str], dict] = {}
         self._failure = None
@@ -114,17 +115,45 @@ class XhsBrowserTransport:
         self._verified_detail_links: dict[tuple[str, str], str] = {}
         self._detail_authors: set[str] = set()
 
-    def _profile_links(self, author_id):
+    def _profile_links(self, author_id, *, page=None, item_ids=None):
         """Only retain actual profile anchors, after listing identity validation."""
-        links = self._page.locator('a[href]').evaluate_all("nodes => nodes.map(n => n.href)")
+        page = self._page if page is None else page
+        links = page.locator('a[href]').evaluate_all("nodes => nodes.map(n => n.href)")
         for link in links:
             parsed = urlsplit(link)
             match = re.fullmatch(rf"/(?:explore|user/profile/{author_id})/([0-9a-f]{{24}})", parsed.path)
-            if match and parse_qs(parsed.query).get("xsec_token"):
+            if match and (item_ids is None or match[1] in item_ids) and parse_qs(parsed.query).get("xsec_token"):
                 try:
                     self._detail_links[(author_id, match[1])] = detail_url(match[1], link)
                 except ValueError:
                     pass
+
+    def prepare_page_details(self, author_id, item_ids):
+        """Consume observed page references without resetting the listing.
+
+        Return missing IDs for diagnostics; detail() fails those items separately
+        so a missing reference cannot discard the rest of the fixed page batch.
+        A resumed process must first replay page() to its saved request cursor.
+        No navigation references are persisted by this operation.
+        """
+        targets = set(item_ids)
+
+        def prepare():
+            if not targets:
+                return ()
+            self._ensure()
+            if self._failure:
+                raise self._failure
+            # Also disables the legacy first-screen fallback for missing items.
+            self._detail_authors.add(author_id)
+            if self._author == author_id:
+                self._check_wall()
+                if not all((author_id, item) in self._detail_links for item in targets):
+                    self._page.wait_for_timeout(300)
+                    self._profile_links(author_id, item_ids=targets)
+            return tuple(sorted(item for item in targets if (author_id, item) not in self._detail_links))
+
+        return self._call(prepare)
 
     def prepare_details(self, author_id, item_ids):
         """Reuse verified session links; refresh missing references in three pages.
@@ -210,13 +239,12 @@ class XhsBrowserTransport:
                 if not supplied_token:
                     href = self._detail_links.get((author_id, item_id))
                     if not href and author_id not in self._detail_authors:
-                        self._author = None
-                        self._page.goto(f"https://www.xiaohongshu.com/user/profile/{author_id}", wait_until="domcontentloaded", timeout=int(self.timeout * 1000))
-                        self._page.wait_for_timeout(1000)
-                        self._check_wall()
+                        self._detail_page.goto(f"https://www.xiaohongshu.com/user/profile/{author_id}", wait_until="domcontentloaded", timeout=int(self.timeout * 1000))
+                        self._detail_page.wait_for_timeout(1000)
+                        self._check_wall(self._detail_page)
                         # First-screen links only: no repeat of the validated
                         # historical page chain just to obtain navigation tokens.
-                        links = self._page.locator('a[href]').evaluate_all("nodes => nodes.map(n => n.href)")
+                        links = self._detail_page.locator('a[href]').evaluate_all("nodes => nodes.map(n => n.href)")
                         for link in links:
                             parsed_link = urlsplit(link)
                             match = re.fullmatch(rf"/(?:explore|user/profile/{author_id})/([0-9a-f]{{24}})", parsed_link.path)
@@ -233,11 +261,9 @@ class XhsBrowserTransport:
                         raise TransportFailure("reference_missing", "本轮未取得该历史作品的有效访问引用；已保留旧资料，请补充同篇完整官方链接。未重扫历史长链。")
                 else:
                     url_to_open = url
-                # Navigation invalidates the listing page location but never a
-                # workflow checkpoint. A later page() rejoins via its cursor.
-                self._author = None
-                self._responses.clear()
-                response = self._page.goto(url_to_open, wait_until="domcontentloaded", timeout=int(self.timeout * 1000))
+                # Detail navigation stays in a second tab of the same context.
+                # The listing tab, its scroll position and responses stay intact.
+                response = self._detail_page.goto(url_to_open, wait_until="domcontentloaded", timeout=int(self.timeout * 1000))
                 if response is not None and response.status == 429:
                     failure = TransportFailure("rate_limited", "作品详情收到限流；正文、指标与成功媒体已保留，请等待冷却后恢复。", 60)
                     self._failure = failure
@@ -249,7 +275,7 @@ class XhsBrowserTransport:
                 hydration_deadline = None
                 projected = None
                 while time.monotonic() < deadline:
-                    state = self._page.evaluate(DETAIL_STATE, item_id)
+                    state = self._detail_page.evaluate(DETAIL_STATE, item_id)
                     if isinstance(state, dict):
                         observed_author = state.get("note", {}).get("user", {}).get("userId")
                         if not isinstance(observed_author, str) or not re.fullmatch(r"[0-9a-f]{24}", observed_author):
@@ -270,7 +296,7 @@ class XhsBrowserTransport:
                         # a bounded interval; missing values never become zero.
                         if hydration_deadline is None:
                             hydration_deadline = min(deadline, time.monotonic() + 2.0)
-                    text = self._page.locator("body").inner_text(timeout=3000)
+                    text = self._detail_page.locator("body").inner_text(timeout=3000)
                     if any(s in text for s in ("访问频次异常", "操作频繁")):
                         failure = TransportFailure("rate_limited", "作品详情触发平台频次限制；已保留旧资料，请等待冷却后恢复。", 60)
                         self._failure, self._cooldown_until = failure, time.monotonic() + 60
@@ -288,7 +314,7 @@ class XhsBrowserTransport:
                         raise TransportFailure("item_unavailable", "作品详情暂不可访问，可能受链接或平台权限限制；已保留旧资料，请在浏览器确认并补充可访问的完整作品链接后重试。")
                     if projected is not None and time.monotonic() >= hydration_deadline:
                         return projected
-                    self._page.wait_for_timeout(300)
+                    self._detail_page.wait_for_timeout(300)
                 if projected is not None:
                     return projected
                 raise TransportFailure("timeout", "作品详情未在等待时间内返回，原因未知；旧指标与成功媒体已保留，可补充完整作品链接后重试。")
@@ -340,11 +366,19 @@ class XhsBrowserTransport:
 
     def _ensure(self):
         if self._context is not None:
-            if self._page is not None and not self._page.is_closed():
+            try:
+                if self._page is None or self._page.is_closed():
+                    self._page = self._context.new_page()
+                    self._page.on("response", self._observe)
+                    self._author = None
+                    self._responses.clear()
+                if self._detail_page is None or self._detail_page.is_closed():
+                    self._detail_page = self._context.new_page()
                 return
+            except Exception:
+                # A closed browser/context needs a fresh dedicated session.
+                pass
             self._cleanup()
-            self._author = None
-            self._responses.clear()
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -357,6 +391,10 @@ class XhsBrowserTransport:
                 accept_downloads=False, viewport={"width": 1280, "height": 900})
             self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
             self._page.on("response", self._observe)
+            # Playwright supports independent tabs in one persistent context;
+            # only the listing tab may contribute pagination observations.
+            # https://playwright.dev/python/docs/pages#multiple-pages
+            self._detail_page = self._context.new_page()
         except Exception:
             self._cleanup()
             raise TransportFailure("unavailable", "独立浏览器启动失败；请确认 Edge 已安装、专用登录窗口未被其他进程占用，再重试。") from None
@@ -378,14 +416,7 @@ class XhsBrowserTransport:
             # database evidence, exports and logs. Never sign or invent tokens.
             # Field contract: pinned MCP Feed.xsecToken and MediaCrawler's
             # creator-note xsec_token field (schema research only, no code reuse).
-            for note in payload["data"]["notes"]:
-                token = note.get("xsec_token", note.get("xsecToken"))
-                if isinstance(token, str) and 0 < len(token) <= 2048 and not any(ord(c) < 32 for c in token):
-                    query = {"xsec_token": token}
-                    source = note.get("xsec_source", note.get("xsecSource"))
-                    if isinstance(source, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", source):
-                        query["xsec_source"] = source
-                    self._detail_links[(key[0], note["note_id"])] = detail_url(note["note_id"]) + "?" + urlencode(query)
+            self._cache_references(key[0], payload["data"]["notes"])
             self._responses[key] = normalized
         except AdapterFailure as exc:
             self._failure = exc
@@ -393,9 +424,25 @@ class XhsBrowserTransport:
         except Exception:
             self._failure = TransportFailure("unavailable", "作者响应无法解析；进度已保留，请稍后重试。")
 
-    def _check_wall(self):
+    def _cache_references(self, author_id, notes):
+        """Memory-only navigation references from an already validated full page.
+
+        Both the API and SSR callers must validate every item's identity and the
+        page cursor before this method can retain any navigation references.
+        """
+        for note in notes:
+            token = note.get("xsec_token", note.get("xsecToken"))
+            if isinstance(token, str) and 0 < len(token) <= 2048 and not any(ord(c) < 32 for c in token):
+                query = {"xsec_token": token}
+                source = note.get("xsec_source", note.get("xsecSource"))
+                if isinstance(source, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", source):
+                    query["xsec_source"] = source
+                self._detail_links[(author_id, note["note_id"])] = detail_url(note["note_id"]) + "?" + urlencode(query)
+
+    def _check_wall(self, page=None):
         # A login button in the header alone is not proof of a login wall.
-        text = self._page.locator("body").inner_text(timeout=3000)
+        page = self._page if page is None else page
+        text = page.locator("body").inner_text(timeout=3000)
         if any(s in text for s in ("安全验证", "访问频次异常", "请完成验证")):
             raise TransportFailure("unavailable", "作者页要求平台验证；进度已保留，请在浏览器完成处理后恢复。")
         if any(s in text for s in ("登录后查看", "登录后浏览", "手机号登录", "扫码登录")):
@@ -438,6 +485,10 @@ class XhsBrowserTransport:
                         seed = {"success": True, "data": {k: state[k] for k in ("notes", "cursor", "has_more")}}
                         seed = normalized_response(200, {"success": True, "code": 0, "data": seed["data"]})
                         XhsPageAdapter(lambda _a, _c: seed).page(author, None)
+                        # SSR cards can exist before virtualized anchors mount.
+                        # Retain their observed top-level xsecToken only after
+                        # the same identity/cursor checks as an API response.
+                        self._cache_references(author, state["notes"])
                         return seed
                     if state.get("has_more") is False:
                         raise TransportFailure("invalid_cursor", "浏览器已停在末页但未观察到所需游标响应；检查点保留，请核对作者后恢复。")
@@ -456,7 +507,9 @@ class XhsBrowserTransport:
             if self._context:
                 self._context.close()
         finally:
-            self._context = self._page = None
+            self._context = self._page = self._detail_page = None
+            self._author = None
+            self._responses.clear()
             self._detail_links.clear()
             self._verified_detail_links.clear()
             self._detail_authors.clear()

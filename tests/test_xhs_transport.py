@@ -2,6 +2,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import MagicMock, patch
 from creator_archive.validation import AdapterFailure
 
 from creator_archive.adapters.xhs_transport import (
@@ -32,16 +33,21 @@ class FakePage:
     def __init__(self, transport, initial=None, responses=(), text=""):
         self.transport, self.initial, self.responses = transport, initial or {}, list(responses)
         self.text, self.scrolls = text, 0
+        self.navigations = []
+        self.links = []
         self.mouse = self
 
     def goto(self, *args, **kwargs):
-        pass
+        self.navigations.append(args[0])
 
     def locator(self, selector):
         return self
 
     def inner_text(self, **kwargs):
         return self.text
+
+    def evaluate_all(self, code):
+        return self.links
 
     def evaluate(self, code):
         return self.initial
@@ -176,6 +182,162 @@ class TransportTests(unittest.TestCase):
     def test_browser_profile_cannot_be_written_in_repository(self):
         with self.assertRaises(ValueError):
             XhsBrowserTransport(Path(__file__).resolve().parents[1] / "profile")
+
+    def test_two_pages_with_immediate_details_keep_listing_position_and_observations(self):
+        from tests.test_xhs_content import detail
+        first = payload(True, CURSOR)
+        first["data"]["notes"][0]["xsec_token"] = "first-page-reference"
+        second = payload()
+        second["data"]["notes"][0].update(note_id="d" * 24, xsec_token="second-page-reference")
+        transport = self.make(responses=[Response("", first), Response(CURSOR, second)])
+        transport._detail_page = MagicMock()
+        transport._detail_page.goto.return_value.status = 200
+        snapshot = detail()
+        snapshot["note"]["noteId"] = NOTE
+        transport._detail_page.evaluate.return_value = snapshot
+        first_page = transport.page(AUTHOR, None)
+        self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE]), ())
+        listing = transport._page
+        observations = dict(transport._responses)
+        transport.detail(AUTHOR, NOTE)
+        self.assertEqual(transport._responses, observations)
+        self.assertEqual(transport._author, AUTHOR)
+        second_page = transport.page(AUTHOR, first_page.next_cursor)
+        self.assertEqual(transport.prepare_page_details(AUTHOR, ["d" * 24]), ())
+        snapshot["note"]["noteId"] = "d" * 24
+        transport.detail(AUTHOR, "d" * 24)
+        self.assertFalse(second_page.has_more)
+        self.assertEqual(listing.navigations, [f"https://www.xiaohongshu.com/user/profile/{AUTHOR}"])
+        self.assertEqual(listing.scrolls, 2)
+        self.assertEqual(transport._detail_page.goto.call_count, 2)
+        self.assertIn("first-page-reference", transport._detail_page.goto.call_args_list[0].args[0])
+        self.assertIn("second-page-reference", transport._detail_page.goto.call_args_list[1].args[0])
+
+    def test_page_prepare_reports_missing_individually_without_reset_or_fallback(self):
+        from tests.test_xhs_content import detail
+        data = payload(True, CURSOR)
+        data["data"]["notes"][0]["xsec_token"] = "observed-reference"
+        transport = self.make(responses=[Response("", data)])
+        transport._detail_page = MagicMock()
+        transport._detail_page.goto.return_value.status = 200
+        snapshot = detail()
+        snapshot["note"]["noteId"] = NOTE
+        transport._detail_page.evaluate.return_value = snapshot
+        transport.page(AUTHOR, None)
+        missing = "d" * 24
+        self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE, missing]), (missing,))
+        with self.assertRaises(TransportFailure) as error:
+            transport.detail(AUTHOR, missing)
+        self.assertEqual(error.exception.category, "reference_missing")
+        transport._detail_page.goto.assert_not_called()
+        self.assertEqual(transport.detail(AUTHOR, NOTE)["item_id"], NOTE)
+        self.assertEqual(len(transport._page.navigations), 1)
+        self.assertEqual(transport._page.scrolls, 1)
+
+    def test_page_prepare_collects_ssr_anchor_only_for_requested_items(self):
+        transport = self.make(initial=dict(payload(True, CURSOR)["data"], author=AUTHOR))
+        transport._page.links = [
+            f"https://www.xiaohongshu.com/user/profile/{AUTHOR}/{NOTE}?xsec_token=observed-anchor",
+            f"https://www.xiaohongshu.com/explore/{'d' * 24}?xsec_token=other-anchor",
+        ]
+        transport.page(AUTHOR, None)
+        self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE]), ())
+        self.assertEqual(set(transport._detail_links), {(AUTHOR, NOTE)})
+        self.assertEqual(len(transport._page.navigations), 1)
+        self.assertEqual(transport._page.scrolls, 0)
+
+    def test_ssr_reference_without_dom_anchor_is_consumed_and_never_in_page_evidence(self):
+        from tests.test_xhs_content import detail
+        state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+        marker = "synthetic-ssr-reference"
+        state["notes"][0]["xsec_token"] = marker
+        transport = self.make(initial=state)
+        transport._detail_page = MagicMock()
+        transport._detail_page.goto.return_value.status = 200
+        snapshot = detail()
+        snapshot["note"]["noteId"] = NOTE
+        transport._detail_page.evaluate.return_value = snapshot
+        # Capture the actual normalized transport return, not just Page's ID list.
+        normalized = transport._call(transport._fetch, AUTHOR, "")
+        self.assertNotIn(marker, str(normalized))
+        self.assertNotIn(marker, str(transport._responses))
+        self.assertEqual(transport._page.links, [])
+        self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE]), ())
+        result = transport.detail(AUTHOR, NOTE)
+        self.assertIn(marker, transport._detail_page.goto.call_args.args[0])
+        self.assertNotIn(marker, result["source_url"])
+        self.assertEqual(len(transport._page.navigations), 1)
+        self.assertEqual(transport._page.scrolls, 0)
+        transport.close()
+        self.assertEqual(transport._detail_links, {})
+        self.assertEqual(transport._verified_detail_links, {})
+
+    def test_ssr_validates_entire_page_before_retaining_any_reference(self):
+        for invalid in ("foreign_author", "invalid_id", "missing_cursor", "logged_out"):
+            with self.subTest(invalid=invalid):
+                state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+                state["notes"][0]["xsec_token"] = "first-valid-reference"
+                second = {"note_id": "d" * 24, "user": {"user_id": AUTHOR}, "xsec_token": "second-reference"}
+                state["notes"].append(second)
+                if invalid == "foreign_author":
+                    second["user"]["user_id"] = "e" * 24
+                elif invalid == "invalid_id":
+                    second["note_id"] = "invalid"
+                elif invalid == "missing_cursor":
+                    state["cursor"] = ""
+                else:
+                    state["logged_in"] = False
+                transport = self.make(initial=state)
+                with self.assertRaises(AdapterFailure):
+                    transport.page(AUTHOR, None)
+                self.assertEqual(transport._detail_links, {})
+                self.assertEqual(transport._responses, {})
+
+    def test_missing_or_invalid_ssr_token_stays_an_individual_reference_gap(self):
+        for token in (None, "", False, 42, "x" * 2049, "reference\ncontrol"):
+            with self.subTest(token_type=type(token).__name__, length=len(token) if isinstance(token,str) else 0):
+                state = dict(payload(True, CURSOR)["data"], author=AUTHOR)
+                state["notes"][0]["xsec_token"] = token
+                transport = self.make(initial=state)
+                page = transport.page(AUTHOR, None)
+                self.assertEqual(page.items[0].item_id, NOTE)
+                self.assertEqual(transport.prepare_page_details(AUTHOR, [NOTE]), (NOTE,))
+                with self.assertRaises(TransportFailure) as error:
+                    transport.detail(AUTHOR, NOTE)
+                self.assertEqual(error.exception.category, "reference_missing")
+                self.assertEqual(len(transport._page.navigations), 1)
+                self.assertEqual(transport._page.scrolls, 0)
+
+    def test_context_creates_distinct_tabs_and_reopens_detail_without_losing_listing(self):
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        transport = XhsBrowserTransport(Path(temp.name) / "profile")
+        self.addCleanup(transport.close)
+        listing, detail_page, replacement = MagicMock(), MagicMock(), MagicMock()
+        for page in (listing, detail_page, replacement):
+            page.is_closed.return_value = False
+        context = MagicMock()
+        context.pages = [listing]
+        context.new_page.side_effect = [detail_page, replacement]
+        with patch('playwright.sync_api.sync_playwright') as playwright:
+            runtime = playwright.return_value.start.return_value
+            runtime.chromium.launch_persistent_context.return_value = context
+            transport._call(transport._ensure)
+        self.assertIs(transport._page, listing)
+        self.assertIs(transport._detail_page, detail_page)
+        listing.on.assert_called_once_with("response", transport._observe)
+        detail_page.on.assert_not_called()
+        transport._author = AUTHOR
+        transport._responses[(AUTHOR, CURSOR)] = normalized_response(200, payload())
+        detail_page.is_closed.return_value = True
+        transport._call(transport._ensure)
+        self.assertIs(transport._detail_page, replacement)
+        self.assertIs(transport._page, listing)
+        self.assertEqual(transport._author, AUTHOR)
+        self.assertIn((AUTHOR, CURSOR), transport._responses)
+        transport.close()
+        context.close.assert_called_once()
+        self.assertIsNone(transport._detail_page)
 
 
 if __name__ == "__main__":

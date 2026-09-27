@@ -130,3 +130,16 @@ await assert.rejects(run('confirmSubscription()'),/确认暂不可用/);
 assert.equal(elements['confirm-subscription-dialog'].open,true,'Failed confirmation keeps the decision visible');
 assert.match(elements['confirm-subscription-error'].textContent,/已核验作品与旧任务保留/);
 console.log('Author confirmation UI checks passed: explicit identity, durable request, no history job, retry state.');
+
+run('globalThis.pageCalls=[];api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};};refresh=async()=>{}');
+await run('startJob("page_archive",{platform:"xiaohongshu",author_id:"author"})');
+assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls[0].body)')),{mode:'page_archive',platform:'xiaohongshu',author_id:'author'});
+await run('openRecovery({id:32,mode:"page_archive",can_resume:true})');
+assert.equal(elements['recovery-link-fields'].hidden,true);
+assert.match(elements['recovery-resume'].textContent,/原两页任务/);
+await run('$("recovery-resume").onclick()');
+assert.equal(run('pageCalls.at(-1).path'),'/api/jobs/32/resume');
+assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{});
+run('renderJobs([{id:32,mode:"page_archive",state:"interrupted",pages:1,page_limit:2,target_count:10,item_count:9,failed_count:1,pending_count:0,coverage:"partial",can_resume:true}])');
+assert.match(elements['job-list'].children[0].children[1].textContent,/列表 1 \/ 2 页.*正文媒体 9 \/ 10 篇/);
+console.log('Page archive UI checks passed: explicit two-page scope, separate progress, parent recovery without unsupported links.');

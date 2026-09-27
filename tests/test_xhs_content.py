@@ -139,22 +139,22 @@ class DetailTransportTests(unittest.TestCase):
             adapter = XhsBrowserTransport(Path(tmp) / "profile")
             try:
                 adapter._ensure = lambda: None
-                adapter._page = MagicMock()
-                adapter._page.goto.return_value.status = 200
-                adapter._page.locator.return_value.inner_text.return_value = ""
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 200
+                adapter._detail_page.locator.return_value.inner_text.return_value = ""
                 partial = detail()
                 partial["note"]["interactInfo"] = {}
-                adapter._page.evaluate.side_effect = [partial, detail(), detail()]
+                adapter._detail_page.evaluate.side_effect = [partial, detail(), detail()]
                 supplied = detail_url(ITEM) + "?xsec_token=synthetic"
                 result = adapter.detail(AUTHOR, ITEM, supplied)
                 self.assertEqual(result["metrics"]["likes"]["value"], 0)
-                self.assertEqual(adapter._page.evaluate.call_count, 2)
-                adapter._page.wait_for_timeout.assert_called_once_with(300)
+                self.assertEqual(adapter._detail_page.evaluate.call_count, 2)
+                adapter._detail_page.wait_for_timeout.assert_called_once_with(300)
                 self.assertEqual(adapter._detail_links[(AUTHOR, ITEM)], supplied)
                 adapter.detail(AUTHOR, ITEM, detail_url(ITEM))
-                self.assertEqual(adapter._page.goto.call_args.args[0], supplied)
-                self.assertEqual(adapter._page.goto.call_count, 2)
-                adapter._page.locator.return_value.evaluate_all.assert_not_called()
+                self.assertEqual(adapter._detail_page.goto.call_args.args[0], supplied)
+                self.assertEqual(adapter._detail_page.goto.call_count, 2)
+                adapter._detail_page.locator.return_value.evaluate_all.assert_not_called()
             finally:
                 adapter.close()
 
@@ -164,15 +164,15 @@ class DetailTransportTests(unittest.TestCase):
             adapter = XhsBrowserTransport(Path(tmp) / "profile", timeout=.01)
             try:
                 adapter._ensure = lambda: None
-                adapter._page = MagicMock()
-                adapter._page.goto.return_value.status = 200
-                adapter._page.locator.return_value.inner_text.return_value = ""
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 200
+                adapter._detail_page.locator.return_value.inner_text.return_value = ""
                 partial = detail()
                 partial["note"]["interactInfo"] = {}
-                adapter._page.evaluate.return_value = partial
+                adapter._detail_page.evaluate.return_value = partial
                 result = adapter.detail(AUTHOR, ITEM, detail_url(ITEM) + "?xsec_token=synthetic")
                 self.assertTrue(all(m["value"] is None for m in result["metrics"].values()))
-                self.assertEqual(adapter._page.goto.call_count, 1)
+                self.assertEqual(adapter._detail_page.goto.call_count, 1)
             finally:
                 adapter.close()
 
@@ -184,17 +184,17 @@ class DetailTransportTests(unittest.TestCase):
             adapter = XhsBrowserTransport(Path(tmp) / "profile")
             try:
                 adapter._ensure = lambda: None
-                adapter._check_wall = lambda: None
-                adapter._page = MagicMock()
-                adapter._page.goto.return_value.status = 200
-                adapter._page.evaluate.return_value = detail()
+                adapter._check_wall = lambda *_: None
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 200
+                adapter._detail_page.evaluate.return_value = detail()
                 profile_url = f"https://www.xiaohongshu.com/user/profile/{AUTHOR}/{ITEM}?xsec_token=synthetic"
-                adapter._page.locator.return_value.evaluate_all.return_value = [detail_url(ITEM), profile_url]
+                adapter._detail_page.locator.return_value.evaluate_all.return_value = [detail_url(ITEM), profile_url]
                 result = adapter.detail(AUTHOR, ITEM, detail_url(ITEM))
-                self.assertEqual(adapter._page.goto.call_args.args[0], profile_url)
+                self.assertEqual(adapter._detail_page.goto.call_args.args[0], profile_url)
                 self.assertEqual(result["source_url"], detail_url(ITEM))
-                self.assertEqual(adapter._page.goto.call_count, 2)
-                adapter._page.mouse.wheel.assert_not_called()
+                self.assertEqual(adapter._detail_page.goto.call_count, 2)
+                adapter._detail_page.mouse.wheel.assert_not_called()
             finally:
                 adapter.close()
 
@@ -207,20 +207,20 @@ class DetailTransportTests(unittest.TestCase):
             finally:
                 adapter.close()
 
-    def test_supplied_link_fresh_navigation_clears_pagination_location(self):
+    def test_supplied_link_fresh_navigation_preserves_pagination_location(self):
         from unittest.mock import MagicMock
         with TemporaryDirectory() as tmp:
             adapter = XhsBrowserTransport(Path(tmp) / "profile")
             try:
                 adapter._ensure = lambda: None
-                adapter._page = MagicMock()
-                adapter._page.goto.return_value.status = 200
-                adapter._page.evaluate.return_value = detail()
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 200
+                adapter._detail_page.evaluate.return_value = detail()
                 adapter._author = AUTHOR
                 result = adapter.detail(AUTHOR, ITEM, detail_url(ITEM) + "?xsec_token=synthetic")
-                self.assertIsNone(adapter._author)
+                self.assertEqual(adapter._author, AUTHOR)
                 self.assertEqual(result["text"], "Body\nSecond line")
-                adapter._page.mouse.wheel.assert_not_called()
+                adapter._detail_page.mouse.wheel.assert_not_called()
             finally:
                 adapter.close()
 
@@ -230,13 +230,13 @@ class DetailTransportTests(unittest.TestCase):
             adapter = XhsBrowserTransport(Path(tmp) / "profile")
             try:
                 adapter._ensure = lambda: None
-                adapter._page = MagicMock()
-                adapter._page.goto.return_value.status = 429
+                adapter._detail_page = MagicMock()
+                adapter._detail_page.goto.return_value.status = 429
                 for _ in range(2):
                     with self.assertRaises(TransportFailure) as error:
                         adapter.detail(AUTHOR, ITEM, detail_url(ITEM) + "?xsec_token=synthetic")
                     self.assertEqual(error.exception.category, "rate_limited")
-                self.assertEqual(adapter._page.goto.call_count, 1)
+                self.assertEqual(adapter._detail_page.goto.call_count, 1)
             finally:
                 adapter.close()
 

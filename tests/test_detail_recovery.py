@@ -303,16 +303,17 @@ class ReferenceTests(unittest.TestCase):
             try:
                 transport._ensure = lambda: None
                 transport._page = MagicMock()
-                transport._page.goto.return_value.status = 200
-                transport._page.evaluate.return_value = detail()
+                transport._detail_page = MagicMock()
+                transport._detail_page.goto.return_value.status = 200
+                transport._detail_page.evaluate.return_value = detail()
                 url = f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED_ONLY_IN_MEMORY"
                 transport.resolve_item(url)
                 transport._fetch = MagicMock(side_effect=AssertionError("unnecessary author scan"))
                 transport.prepare_details(author, [ITEM])
-                transport._page.evaluate.return_value["note"]["desc"] = "Fresh body"
+                transport._detail_page.evaluate.return_value["note"]["desc"] = "Fresh body"
                 result = transport.detail(author, ITEM)
                 self.assertEqual(result["text"], "Fresh body")
-                self.assertEqual(transport._page.goto.call_count, 2)
+                self.assertEqual(transport._detail_page.goto.call_count, 2)
                 transport._fetch.assert_not_called()
                 self.assertNotIn("VERIFIED_ONLY_IN_MEMORY", result["source_url"])
             finally:
@@ -326,8 +327,9 @@ class ReferenceTests(unittest.TestCase):
             try:
                 transport._ensure = lambda: None
                 transport._page = MagicMock()
-                transport._page.goto.return_value.status = 200
-                transport._page.evaluate.return_value = detail()
+                transport._detail_page = MagicMock()
+                transport._detail_page.goto.return_value.status = 200
+                transport._detail_page.evaluate.return_value = detail()
                 url = f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED"
                 transport.resolve_item(url)
                 transport._detail_links[(author, IDS[-1])] = "unverified-stale"
@@ -352,12 +354,13 @@ class ReferenceTests(unittest.TestCase):
                 try:
                     transport._ensure = lambda: None
                     transport._page = MagicMock()
-                    transport._page.goto.return_value.status = 200
-                    transport._page.evaluate.return_value = detail()
+                    transport._detail_page = MagicMock()
+                    transport._detail_page.goto.return_value.status = 200
+                    transport._detail_page.evaluate.return_value = detail()
                     transport.resolve_item(f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED")
                     if category in {"item_unavailable", "resolve_unavailable"}:
-                        transport._page.evaluate.return_value = None
-                        transport._page.locator.return_value.inner_text.return_value = "当前笔记暂时无法浏览"
+                        transport._detail_page.evaluate.return_value = None
+                        transport._detail_page.locator.return_value.inner_text.return_value = "当前笔记暂时无法浏览"
                         action = (lambda: transport.detail(author, ITEM)) if category == "item_unavailable" else (lambda: transport.resolve_item(f"https://www.xiaohongshu.com/explore/{ITEM}?xsec_token=VERIFIED"))
                     else:
                         def action():
@@ -379,14 +382,15 @@ class ReferenceTests(unittest.TestCase):
             try:
                 transport._ensure = lambda: None
                 transport._page = MagicMock()
-                transport._page.goto.return_value.status = 200
-                transport._page.evaluate.return_value = detail()
+                transport._detail_page = MagicMock()
+                transport._detail_page.goto.return_value.status = 200
+                transport._detail_page.evaluate.return_value = detail()
                 url = f"https://www.xiaohongshu.com/discovery/item/{ITEM}?xsec_token=RESOLVE_SECRET"
                 result = transport.resolve_item(url)
                 self.assertEqual(result["author_id"], observed_author)
                 self.assertNotIn("RESOLVE_SECRET",result["source_url"])
                 transport._page.mouse.wheel.assert_not_called()
-                self.assertEqual(transport._page.goto.call_count,1)
+                self.assertEqual(transport._detail_page.goto.call_count,1)
                 from creator_archive.links import classify
                 profile_url = f"https://www.xiaohongshu.com/user/profile/{observed_author}/{ITEM}?xsec_token=RESOLVE_SECRET"
                 classified = classify(profile_url)
@@ -395,7 +399,7 @@ class ReferenceTests(unittest.TestCase):
                 self.assertEqual(transport.resolve_item(profile_url)["author_id"], observed_author)
                 with self.assertRaises(AdapterFailure):
                     transport.resolve_item(profile_url.replace(observed_author, "c" * 24))
-                transport._page.evaluate.return_value["note"]["noteId"] = IDS[6]
+                transport._detail_page.evaluate.return_value["note"]["noteId"] = IDS[6]
                 with self.assertRaises(AdapterFailure):
                     transport.resolve_item(url)
                 with self.assertRaises(ValueError):

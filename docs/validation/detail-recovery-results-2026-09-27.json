@@ -275,5 +275,141 @@
     }
   },
   "latest_evidence_section": "controlled_local_media_failure",
-  "prior_sections_are_historical": true
+  "prior_sections_are_historical": true,
+  "page_archive_v0410": {
+    "evidence_level": "live_platform_controlled_process_boundary_and_local_http",
+    "parent_job": 32,
+    "child_jobs": [
+      33,
+      34
+    ],
+    "pages": 2,
+    "raw_page_sizes": [
+      32,
+      30
+    ],
+    "unique_targets": 61,
+    "content_success": 61,
+    "coverage": "partial",
+    "g1_passed": false,
+    "first_phase_success": 30,
+    "after_first_resume_success": 59,
+    "after_ssr_fix_success": 61,
+    "final_resume_requests": {
+      "list_page": 1,
+      "detail": 2,
+      "download": 3
+    },
+    "prior_59_success_not_revisited": true,
+    "separate_pages_same_context": true,
+    "listing_position_preserved": true,
+    "ssr_missing_reference_root_cause": "validated_ssr_card_token_present_but_dom_anchor_absent_and_projection_omitted_token",
+    "tokens_persisted": false,
+    "controlled_page_boundary_stop": true,
+    "natural_login_expiry_tested": false,
+    "old_history_pages_preserved": 90,
+    "old_archive_files_hash_mtime_preserved": 113,
+    "offline": {
+      "job": 32,
+      "state": "succeeded",
+      "list_pages": 2,
+      "targets": 61,
+      "content_success": 61,
+      "history_coverage": "partial",
+      "corpus_rows": 63,
+      "target_html_read": 61,
+      "assets_read_and_hashed": 130,
+      "images_completely_decoded": 130,
+      "image_dimensions": [
+        [
+          728,
+          968
+        ],
+        [
+          810,
+          1080
+        ],
+        [
+          1078,
+          1387
+        ],
+        [
+          1080,
+          1438
+        ],
+        [
+          1080,
+          1440
+        ],
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1470
+        ],
+        [
+          1080,
+          1731
+        ],
+        [
+          1080,
+          1735
+        ],
+        [
+          1080,
+          1920
+        ]
+      ],
+      "mp4_headers_checked": 0,
+      "browser_closed_during_offline_read": true,
+      "first_phase_files_preserved": true,
+      "old_bodies_preserved": true,
+      "old_item_id_set_preserved": true,
+      "pending_confirmation_count": 1
+    },
+    "data_protection": {
+      "integrity": "ok",
+      "old_files_unchanged": true,
+      "old_file_count": 113,
+      "current_files": 310,
+      "old_rows_preserved": {
+        "assets": true,
+        "batches": true,
+        "item_metrics": true,
+        "job_items": true,
+        "jobs": true,
+        "metric_snapshots": true,
+        "pages": true,
+        "platform_cooldowns": true,
+        "runs": true,
+        "subscription_confirmations": true,
+        "subscription_intents": true,
+        "subscriptions": true,
+        "validation_imports": true
+      },
+      "counts": {
+        "assets": 143,
+        "batches": 18,
+        "item_metrics": 204,
+        "items": 1393,
+        "job_items": 86,
+        "jobs": 33,
+        "metric_snapshots": 87,
+        "page_pipelines": 1,
+        "pages": 92,
+        "pipeline_pages": 2,
+        "platform_cooldowns": 0,
+        "runs": 18,
+        "subscription_confirmations": 0,
+        "subscription_intents": 0,
+        "subscriptions": 3,
+        "validation_imports": 2
+      }
+    },
+    "offline_regression_tests": 155,
+    "real_ui_result_visible": true,
+    "real_job_launched_through_ui": false
+  }
 }
