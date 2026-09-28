@@ -58,6 +58,36 @@ class AllArchiveBatchTests(unittest.TestCase):
     def batch(self, service=None):
         return (service or self.service).workspace()["archive_batches"][0]
 
+    def test_batch_adopts_latest_unfinished_author_checkpoints_without_restarting_them(self):
+        self.source.author_pages = {self.first: [ids(1, 2)], self.second: [ids(101, 2)]}
+        self.source.failures[ids(1, 1)[0]] = "item_unavailable"
+        self.source.failures[ids(101, 1)[0]] = "item_unavailable"
+        older = self.service.start("author_archive", "xiaohongshu", self.first)["job_id"]
+        self.service.wait()
+        first = self.service.start("author_archive", "xiaohongshu", self.first)["job_id"]
+        self.service.wait()
+        second = self.service.start("author_archive", "xiaohongshu", self.second)["job_id"]
+        self.service.wait()
+        self.assertLess(older, first)
+        with self.service.workflow.connect() as db:
+            before = {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY 1")]
+                      for table in ("jobs", "runs", "pages", "page_pipelines", "pipeline_pages", "job_items")}
+        events = list(self.source.events)
+        created = self.service.start("all_archive")
+        self.assertEqual(created["reused_job_ids"], [first, second])
+        self.assertEqual(created["job_ids"], [])
+        members = {m["author_id"]: m for m in self.batch()["members"]}
+        self.assertEqual((members[self.first]["job_id"], members[self.second]["job_id"]), (first, second))
+        self.assertTrue(members[self.first]["reused_existing_job"])
+        self.assertTrue(members[self.second]["reused_existing_job"])
+        self.assertEqual(self.batch()["state"], "partial")
+        self.assertEqual(self.service.start("all_archive")["batch_id"], created["batch_id"])
+        self.assertEqual(self.source.events, events, "Batch creation must not retry blocked authors")
+        with self.service.workflow.connect() as db:
+            after = {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY 1")]
+                     for table in before}
+        self.assertEqual(after, before, "Existing job, page and item checkpoints must stay unchanged")
+
     def test_export_file_failure_isolates_author_and_resumes_without_redownloading(self):
         for failed_name in ("article.md", "manifest.json"):
             with self.subTest(failed_name=failed_name), tempfile.TemporaryDirectory() as directory:

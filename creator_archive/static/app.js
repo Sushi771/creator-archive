@@ -97,7 +97,7 @@ function renderArchiveBatches(batches) {
     card.append(top,node("p",`固定作者 ${num(batch.total)} 位 · 完成 ${num(batch.complete)} · 进行/待恢复 ${num(batch.pending)} · 部分 ${num(batch.partial)} · 失败/受限 ${num(batch.failed)} · 公众号未接入 ${num(batch.blocked)}。正文媒体成功 ${num(batch.items_complete)} / 已纳入 ${num(batch.items_target)} 篇，已尝试未完成 ${num(batch.items_failed)}，待处理 ${num(batch.items_pending)}。完成仅指对应作者已观察到的可获取范围；公众号及双平台G1仍未通过。`,"job-progress"));
     for(const member of batch.members){
       const label=displayAuthor(member.platform,member.author_id);
-      card.append(node("p",`${nameOf(member.platform)} · ${label} · ${member.job_id?`任务 #${member.job_id}`:"无采集任务"} · ${member.job_id?(stateName[member.state]||member.state):"接入未完成"} · 列表 ${num(member.pages)} 页 · 正文媒体 ${num(member.item_count)} / ${num(member.target_count)} 篇 · ${member.list_finished?"可信末页已观察":"末页未核验"}${member.reason?` · ${reasonName[member.reason]||member.reason}`:""}`,"meta"));
+      card.append(node("p",`${nameOf(member.platform)} · ${label} · ${member.job_id?`任务 #${member.job_id}`:"无采集任务"}${member.reused_existing_job?" · 沿用已有检查点（未自动重试）":""} · ${member.job_id?(stateName[member.state]||member.state):"接入未完成"} · 列表 ${num(member.pages)} 页 · 正文媒体 ${num(member.item_count)} / ${num(member.target_count)} 篇 · ${member.list_finished?"可信末页已观察":"末页未核验"}${member.reason?` · ${reasonName[member.reason]||member.reason}`:""}`,"meta"));
       if(member.scan_url){const link=safeLink(member.scan_url,"查看当前扫描范围");if(link)card.append(link);}
       if(member.scan_manifest_url){const link=safeLink(member.scan_manifest_url,"查看本轮扫描清单（导出时状态）");if(link)card.append(link);}
       if(member.state!=="succeeded")card.append(node("p",`${member.message||"进度已保留"} ${member.next_step||"请查看对应作者任务。"}`,"hint"));

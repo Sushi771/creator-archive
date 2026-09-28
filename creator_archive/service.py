@@ -417,6 +417,7 @@ class WorkspaceService:
                 members.append({"platform": row["platform"], "author_id": row["author_id"],
                                 "job_id": row["job_id"], "state": job["state"] if job else "blocked",
                                 "reason": job["reason"] if job else row["reason"],
+                                "reused_existing_job": row["reason"] == "existing_checkpoint",
                                 "pages": job["pages"] if job else 0,
                                 "list_finished": job.get("list_finished", False) if job else False,
                                 "target_count": job["target_count"] if job else 0,
@@ -609,7 +610,7 @@ class WorkspaceService:
         return {"job_id": ids[0], "job_ids": ids, "state": "queued", "includes_paused": True}
 
     def start_archive_batch(self):
-        """Atomically snapshot confirmed subscriptions and enqueue XHS author pipelines."""
+        """Snapshot subscriptions, retaining each author's latest unfinished checkpoint."""
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             latest = db.execute("SELECT id FROM batches WHERE mode='all_archive' ORDER BY id DESC LIMIT 1").fetchone()
@@ -629,20 +630,33 @@ class WorkspaceService:
                     raise ValueError(f"作者 {sub['display_name']} 已有任务排队或运行，请等待完成后创建全订阅批次")
             batch_id = db.execute("INSERT INTO batches(mode,created_at) VALUES('all_archive',?)", (time.time(),)).lastrowid
             ids = []
+            reused_ids = []
             for sub in scope:
                 job_id = None
                 reason = "wechat_blocked" if sub["platform"] == "wechat" else None
                 if sub["platform"] == "xiaohongshu":
-                    job_id = db.execute("""INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at)
-                        VALUES(?,?,'author_archive','queued',?,?)""", (sub["platform"],sub["author_id"],time.time(),time.time())).lastrowid
-                    db.execute("INSERT INTO page_pipelines(parent_job_id,page_limit) VALUES(?,2)", (job_id,))
-                    ids.append(job_id)
+                    latest = db.execute("""SELECT j.id,j.state,m.batch_id FROM jobs j
+                        LEFT JOIN archive_batch_members m ON m.job_id=j.id
+                        WHERE j.platform=? AND j.author_id=? AND j.mode='author_archive'
+                        ORDER BY j.id DESC LIMIT 1""", (sub["platform"],sub["author_id"])).fetchone()
+                    if latest and latest["state"] != "succeeded":
+                        if latest["batch_id"] is not None:
+                            raise ValueError(f"作者 {sub['display_name']} 的未完成历史任务已属于批次 #{latest['batch_id']}；请恢复原批次")
+                        job_id = latest["id"]
+                        reason = "existing_checkpoint"
+                        reused_ids.append(job_id)
+                    else:
+                        job_id = db.execute("""INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at)
+                            VALUES(?,?,'author_archive','queued',?,?)""", (sub["platform"],sub["author_id"],time.time(),time.time())).lastrowid
+                        db.execute("INSERT INTO page_pipelines(parent_job_id,page_limit) VALUES(?,2)", (job_id,))
+                        ids.append(job_id)
                 db.execute("INSERT INTO archive_batch_members VALUES(?,?,?,?,?)",
                            (batch_id,sub["platform"],sub["author_id"],job_id,reason))
         for job_id in ids:
             self._spawn(job_id)
-        return {"batch_id": batch_id, "job_ids": ids, "reused": False, "includes_paused": True,
-                "message": f"已建立全订阅归档批次 #{batch_id}；小红书逐作者实验执行，公众号暂不可采集并在批次中标明。"}
+        return {"batch_id": batch_id, "job_ids": ids, "reused_job_ids": reused_ids,
+                "reused": False, "includes_paused": True,
+                "message": f"已建立全订阅归档批次 #{batch_id}；接入 {len(reused_ids)} 个已有检查点，新建 {len(ids)} 个作者任务。已有未完成任务不会自动重试；请在历史与任务查看原因后恢复。公众号暂不可采集并在批次中标明。"}
 
     def resume_archive_batch(self, batch_id):
         with self.workflow.connect() as db:
