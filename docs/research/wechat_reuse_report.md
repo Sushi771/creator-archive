@@ -1,5 +1,20 @@
 # 微信公众号项目复用核查
 
+## 2026-09-28 新文章入口与两个补充候选
+
+用户给出的“妈妈部落畅聊阁”文章 `https://mp.weixin.qq.com/s/K_oKauPpwhSyavBWQXFMKw` 经网页工具直接打开返回 `cannot be opened (non-retryable error)`。这只证明本次工具无法读取，不证明文章失效或平台永久拒绝；按当前工具拒绝边界，没有改用另一通道读取同一链接。本项目未从该链接取得 `__biz`、作者名称的页面佐证、`mid/idx`、正文、媒体或历史入口，因此**稳定作者身份、首屏、后续页与可信末页均未验**。没有登录、扫码、平台分页请求或真实资料写入。
+
+补充对两个 GitHub 仓库做固定源码、许可和维护状态核查，源码只放本机 `%LOCALAPPDATA%/CreatorArchive/source-review/2026-09-28-*`，未执行或复制到产品：
+
+| 候选 | 已确认的能力与问题 | 决定 |
+| --- | --- | --- |
+| [halohazhang/wechat-mp-obsidian-archiver `1578159`](https://github.com/halohazhang/wechat-mp-obsidian-archiver/tree/1578159ef9c3208ca9ee6cf1ca1cc2a6e3652a20)，2026-07-16，MIT | [订阅脚本](https://github.com/halohazhang/wechat-mp-obsidian-archiver/blob/1578159ef9c3208ca9ee6cf1ca1cc2a6e3652a20/skill/scripts/wechat_subscriptions.py) 同时使用 WeWe 列表和后台 `appmsgpublish`，解析 `appmsgex[]`；首轮 `range(max_pages + 1)` 且 `max_pages=30`，后续默认2，空页即 `break`，按水位时间早停，跨源再按标题＋发布日期去重。未找到测试/CI或该目标真实四页及末页证据；两源仍依赖此前已知的外部中转/公众号后台条件。 | 可参考响应映射，**不接为 P0 历史引擎**；页数上限、空页早停和弱去重不满足既定覆盖合同，不能以安装整包代替来源验证。 |
+| [Alex-giao/wechat-mp-article-list `b96b28e`](https://github.com/Alex-giao/wechat-mp-article-list/tree/b96b28e8429be594749072c21a1faa56f7c7fe45)，2026-06-12，MIT | [后台流程记录](https://github.com/Alex-giao/wechat-mp-article-list/blob/b96b28e8429be594749072c21a1faa56f7c7fe45/references/backend-workflow.md) 自述一次真实会话看见 `searchbiz.fakeid`、`publish_page.total_count`、嵌套 `publish_info.appmsgex[]`、`appmsgid/itemidx`及分页控件，也记录快速请求后 `200013`；仓库只有流程文档/Skill，未见可运行的持久页引擎或本目标验收。 | 保留为响应结构与人工核对参考，不能把第三方单次会话当本项目的作者身份、完整历史或可恢复采集证据。其冷却建议不覆盖项目禁止规避限制的规则。 |
+
+[we-mp-rss 主分支](https://github.com/rachelos/we-mp-rss/tree/126993c81a00466e9a6bbab041eef34ab27abe9c) `git ls-remote` 仍为 `126993c`；[#469](https://github.com/rachelos/we-mp-rss/issues/469) 与 [PR #470](https://github.com/rachelos/we-mp-rss/pull/470) 仍显示 open。PR 的测试与投稿者入库报告是降级路径证据，不能当目标号原来源历史首屏/四页/末页验证。没有新证据推翻下文的条件候选结论，也没有运行它或重放 `200013`。
+
+**本单元 G1 决定**：公众号来源仍未锁定，不加正式适配器。恢复条件是允许的真实入口能给出稳定 `__biz`/目标 `fakeid` 的对应关系，以及原来源的有效首屏、下一页和可信终止证据；随后再用独立有界任务检验至少四页、多图文次条、失败检查点与正文媒体。若仅有有限合集或旧库作品，单列已知范围，不冒充全历史。WeWe-RSS 另有正在执行的独立项目任务，本次只读查看其状态，没有读写其资料或并发运行采集；其结果须经本项目单独验收才可采用。
+
 ## 2026-09-27 续评：历史分页来源与许可
 
 本轮 Creator Archive 基线为 c5fc / `codex/runnable-mvp` / `152ba33d803a73dda5f8acbe6a24a348f591e0a4`，fetch 与 ls-remote 一致，初始工作树干净。仅读取公开 GitHub API、固定源码、许可和上游报告；未访问微信/XHS、运行候选、读取会话或操作实际资料。应用仍为 v0.4.13。下文替代旧选型优先级，不抹除旧审查记录。
