@@ -37,6 +37,10 @@ class ToggleInput(AuthorInput):
     enabled: bool
 
 
+class TagsInput(AuthorInput):
+    tags: list[str] = Field(max_length=10)
+
+
 class JobInput(BaseModel):
     mode: str = "full"
     platform: str | None = None
@@ -126,6 +130,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/subscriptions/resubscribe")
     def resubscribe(body: AuthorInput):
         return service.resubscribe(body.platform, body.author_id)
+
+    @app.post("/api/subscriptions/tags")
+    def set_subscription_tags(body: TagsInput):
+        return service.set_subscription_tags(body.platform, body.author_id, body.tags)
 
     @app.post("/api/subscriptions/confirm")
     def confirm_subscription(body: AuthorInput):

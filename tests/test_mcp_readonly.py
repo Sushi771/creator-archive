@@ -152,6 +152,7 @@ class McpReadOnlyTests(unittest.TestCase):
             service.adapter_factory = lambda _: source
             service.workflow.subscribe("xiaohongshu", author, "Synthetic MCP author",
                                        verified=True, evidence="synthetic fixture")
+            service.set_subscription_tags("xiaohongshu", author, ["合成标签"])
             parent = service.start("author_archive", "xiaohongshu", author)["job_id"]
             service.wait()
             self.assertEqual(service.job_scan(parent)["pages_scanned"], 5)
@@ -209,8 +210,10 @@ class McpReadOnlyTests(unittest.TestCase):
                             creators = await call("list_creators", {"limit": 1})
                             self.assertEqual((creators["total"], creators["returned"]), (1, 1))
                             self.assertTrue(creators["items"][0]["subscribed"])
+                            self.assertEqual(creators["items"][0]["tags"], ["合成标签"])
                             coverage = await call("get_creator_coverage", {"platform": "xiaohongshu", "author_id": author})
                             self.assertTrue(coverage["subscribed"])
+                            self.assertEqual(coverage["tags"], ["合成标签"])
                             self.assertEqual((coverage["item_count"], coverage["detail_count"]), (6, 6))
                             self.assertEqual(coverage["unseen_items"], "unknown_not_enumerable")
                             seen = []

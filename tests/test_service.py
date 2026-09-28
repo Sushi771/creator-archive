@@ -140,6 +140,79 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM subscriptions")], before)
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
+    def test_tags_follow_stable_author_id_without_changing_archive_or_lifecycle(self):
+        author = "t" * 24
+        self.seed(author)
+        self.service.start("full", "xiaohongshu", author)
+        self.service.wait()
+        export = self.service.workflow.export_all()["authors"][0]
+        manual = Path(export["manifest"]).parent / "my-notes.md"
+        manual.write_text("manual tag note", encoding="utf-8")
+        self.service._spawn = lambda job_id: None
+        batch = self.service.start("all_archive")
+        with self.service.workflow.connect() as db:
+            baseline = {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+                        for table in ("subscriptions", "items", "runs", "pages", "jobs", "archive_batch_members", "assets")}
+        saved = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                 for path in (Path(export["manifest"]), manual)}
+        self.assertEqual(self.service.set_subscription_tags("xiaohongshu", author, ["家庭", " 研究 ", "家庭"])["tags"], ["家庭", "研究"])
+        self.service.workflow.subscribe("xiaohongshu", author, "Renamed", verified=True, evidence="synthetic test")
+        self.service.toggle("xiaohongshu", author, False)
+        self.service.cancel_subscription("xiaohongshu", author)
+        with self.service.workflow.connect() as db:
+            for table in ("items", "runs", "pages", "jobs", "archive_batch_members", "assets"):
+                self.assertEqual([tuple(row) for row in db.execute(f"SELECT * FROM {table}")], baseline[table])
+        restarted = WorkspaceService(self.service.root)
+        sub = next(s for s in restarted.workspace()["subscriptions"] if s["author_id"] == author)
+        self.assertEqual((sub["display_name"], sub["tags"], sub["subscribed"]), ("Renamed", ["家庭", "研究"], False))
+        self.assertEqual(restarted.resubscribe("xiaohongshu", author)["subscribed"], True)
+        self.assertEqual(next(s for s in restarted.workspace()["subscriptions"] if s["author_id"] == author)["tags"], ["家庭", "研究"])
+        self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in saved}, saved)
+        with restarted.workflow.connect() as db:
+            for table in ("items", "pages", "archive_batch_members", "assets"):
+                self.assertEqual([tuple(row) for row in db.execute(f"SELECT * FROM {table}")], baseline[table])
+            self.assertEqual(db.execute("SELECT count(*) FROM archive_batch_members WHERE batch_id=?", (batch["batch_id"],)).fetchone()[0], 1)
+        self.assertEqual(restarted.set_subscription_tags("xiaohongshu", author, [])["tags"], [])
+        self.assertEqual(next(s for s in restarted.workspace()["subscriptions"] if s["author_id"] == author)["tags"], [])
+
+    def test_tags_api_intent_identity_and_invalid_update(self):
+        app = create_app(self.root / "tags-api")
+        headers = {"X-Creator-Archive": "local-validation"}
+        author = "a" * 24
+        with TestClient(app) as client:
+            service = app.state.service
+            service.subscribe(f"https://www.xiaohongshu.com/user/profile/{author}", "Candidate")
+            body = {"platform": "xiaohongshu", "author_id": author, "tags": ["读书", "家长"]}
+            self.assertEqual(client.post("/api/subscriptions/tags", json=body, headers=headers).status_code, 200)
+            service.workflow.subscribe("xiaohongshu", author, "Verified", verified=True, evidence="synthetic")
+            service.workflow.subscribe("wechat", author, "Same ID other platform", verified=True, evidence="synthetic")
+            sub = next(s for s in client.get("/api/workspace").json()["subscriptions"] if s["platform"] == "xiaohongshu" and s["author_id"] == author)
+            self.assertEqual(sub["tags"], ["读书", "家长"])
+            self.assertEqual(sub["display_name"], "Verified")
+            other = next(s for s in service.workspace()["subscriptions"] if s["platform"] == "wechat")
+            self.assertEqual(other["tags"], [])
+            for tags in (["ok", ""], ["a" * 33], ["bad,tag"], ["x"] * 11):
+                self.assertEqual(client.post("/api/subscriptions/tags", json={**body, "tags": tags}, headers=headers).status_code, 422)
+            self.assertEqual(next(s for s in service.workspace()["subscriptions"] if s["platform"] == "xiaohongshu" and s["author_id"] == author)["tags"], ["读书", "家长"])
+            self.assertEqual(client.post("/api/subscriptions/tags", json={**body, "author_id": "missing"}, headers=headers).status_code, 404)
+            self.assertEqual(client.post("/api/subscriptions/tags", json=body).status_code, 403)
+
+    def test_tags_migration_has_verified_backup_and_rollback_source(self):
+        self.seed("legacy-tag-author")
+        with self.service.workflow.connect() as db:
+            before = [tuple(row) for row in db.execute("SELECT * FROM subscriptions")]
+            db.execute("DROP TABLE subscription_tags")
+        restarted = WorkspaceService(self.service.root)
+        backup_path = Path(restarted.workflow.tags_migration_backup)
+        self.assertTrue(backup_path.is_file())
+        with closing(sqlite3.connect(backup_path)) as backup:
+            self.assertEqual(backup.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(backup.execute("SELECT * FROM subscriptions").fetchall(), before)
+            self.assertIsNone(backup.execute("SELECT 1 FROM sqlite_master WHERE name='subscription_tags'").fetchone())
+        with restarted.workflow.connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM subscriptions")], before)
+            self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
     def test_interrupted_job_reuses_exact_run_and_cursor(self):
         self.seed()
         adapter = SyntheticAdapter(2, "timeout")

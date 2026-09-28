@@ -371,6 +371,35 @@ class WorkspaceService:
                 "message": "已恢复订阅意图；请先确认作品作者订阅。旧资料和任务保留。" if pending else
                            "已重新订阅；旧归档和任务检查点保留，本次未自动扫描历史。"}
 
+    def set_subscription_tags(self, platform: str, author_id: str, tags: list[str]) -> dict:
+        _id(author_id)
+        if not isinstance(tags, list) or len(tags) > 10:
+            raise ValueError("每位作者最多设置10个标签；原标签已保留")
+        cleaned = []
+        seen = set()
+        for value in tags:
+            if not isinstance(value, str):
+                raise ValueError("标签须为文字；原标签已保留")
+            tag = value.strip()
+            if not tag or len(tag) > 32 or any(ord(char) < 32 or char in ",，" for char in tag):
+                raise ValueError("每个标签须为1至32个字符，不能包含逗号或换行；原标签已保留")
+            if tag.casefold() in seen:
+                continue
+            seen.add(tag.casefold())
+            cleaned.append(tag)
+        with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            found = db.execute("""SELECT 1 FROM subscriptions WHERE platform=? AND author_id=?
+                UNION ALL SELECT 1 FROM subscription_intents WHERE platform=? AND author_id=? LIMIT 1""",
+                (platform, author_id, platform, author_id)).fetchone()
+            if not found:
+                raise KeyError("subscription_not_found")
+            db.execute("DELETE FROM subscription_tags WHERE platform=? AND author_id=?", (platform, author_id))
+            db.executemany("INSERT INTO subscription_tags VALUES(?,?,?,?)",
+                           [(platform, author_id, tag, position) for position, tag in enumerate(cleaned)])
+        return {"platform": platform, "author_id": author_id, "tags": cleaned,
+                "message": "作者标签已保存；归档、手工资料及任务进度保留。"}
+
     def _public_job(self, row: dict, db) -> dict:
         run = db.execute("SELECT * FROM runs WHERE id=?", (row["run_id"],)).fetchone() if row["run_id"] else None
         count = db.execute("SELECT count(*) FROM items WHERE platform=? AND author_id=?", (row["platform"], row["author_id"])).fetchone()[0]
@@ -427,6 +456,9 @@ class WorkspaceService:
 
     def workspace(self) -> dict:
         with self.workflow.connect() as db:
+            author_tags = {}
+            for row in db.execute("SELECT platform,author_id,tag FROM subscription_tags ORDER BY position"):
+                author_tags.setdefault((row["platform"], row["author_id"]), []).append(row["tag"])
             subscriptions = [dict(r, identity_verified=True, evidence_level="observed_platform_identity",
                                   subscription_confirmation_required=self._confirmation_required(r, db))
                              for r in db.execute("SELECT * FROM subscriptions ORDER BY created_at")]
@@ -439,6 +471,7 @@ class WorkspaceService:
             archive_batches = self._archive_batches(db, jobs)
             for sub in subscriptions:
                 args = (sub["platform"], sub["author_id"])
+                sub["tags"] = author_tags.get(args, [])
                 sub["enabled"] = bool(sub["enabled"])
                 sub["subscribed"] = not self._is_cancelled(db, *args)
                 counts = db.execute("SELECT count(*),coalesce(sum(detail_state='complete'),0) FROM items WHERE platform=? AND author_id=?", args).fetchone()

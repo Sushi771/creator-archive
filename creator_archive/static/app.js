@@ -6,7 +6,7 @@ const coverageName = {complete_for_accessible_scope:"已观察到可获取列表
 const modeName = {full:"全部历史",latest:"检查更新",archive:"本地归档",all_archive:"全订阅逐作者归档（实验）",page_archive:"两页采集并归档（实验）",author_archive:"单作者全历史归档（实验）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
 const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
-const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:"",confirmAuthor:null};
+const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
 function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
@@ -43,11 +43,20 @@ async function perform(button, action) {
 }
 function authorBy(platform,id) {return ui.workspace?.subscriptions.find(x=>x.platform===platform&&x.author_id===id);}
 function displayAuthor(platform,id) {return authorBy(platform,id)?.display_name||id||"全部作者";}
+function renderSubscriptionTags(subscriptions) {
+  const select=$("subscription-tag"), selected=select.value;
+  const tags=[...new Set(subscriptions.flatMap(sub=>sub.tags||[]))].sort((a,b)=>a.localeCompare(b,"zh-CN"));
+  select.replaceChildren(new Option("全部标签",""),...tags.map(tag=>new Option(tag,tag)));
+  select.value=tags.includes(selected)?selected:"";
+}
 function renderSubscriptions(subscriptions) {
   $("nav-count").textContent=num(subscriptions.length);
   const list=$("subscription-list");list.replaceChildren();
   if(!subscriptions.length){empty(list,"从第一位作者开始","粘贴链接添加订阅，或在「数据与接入」导入已有真实验证资料。");return;}
-  for(const sub of subscriptions){
+  const visible=subscriptions.filter(sub=>(!$("subscription-platform").value||sub.platform===$("subscription-platform").value)&&(!$("subscription-tag").value||(sub.tags||[]).includes($("subscription-tag").value)));
+  $("subscription-filter-count").textContent=`显示 ${visible.length} / ${subscriptions.length} 位作者；筛选只影响列表显示，不改变批次范围。`;
+  if(!visible.length){empty(list,"没有匹配的作者","请调整平台或标签筛选；订阅及归档仍保留。");return;}
+  for(const sub of visible){
     const row=node("article",null,"subscription-row"),info=node("div",null,"author-info"),text=node("div");
     info.append(node("div",(sub.display_name||sub.author_id||"?").slice(0,1),"avatar"));
     text.append(node("h3",sub.display_name||sub.author_id),node("div",`${nameOf(sub.platform)} · ${sub.author_id}`,"meta"));
@@ -55,6 +64,7 @@ function renderSubscriptions(subscriptions) {
     tags.append(badge(sub.subscribed===false?"已取消订阅":sub.subscription_confirmation_required?"待确认订阅":sub.enabled?"订阅中":"已暂停",sub.subscribed===false?"neutral":sub.subscription_confirmation_required?"warning":sub.enabled?"":"neutral"),
                 badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),
                 badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文`,"neutral"));
+    for(const tag of sub.tags||[])tags.append(badge(tag,"neutral"));
     text.append(tags);
     if(sub.subscribed===false)text.append(node("p","新批次不再包含这位作者；旧归档、手工资料、任务及固定批次检查点保留。","hint"));
     else if(sub.subscription_confirmation_required)text.append(node("p","作品作者已核验；确认前不进入全部订阅批次，也不会自动扫描历史。","hint"));
@@ -62,6 +72,7 @@ function renderSubscriptions(subscriptions) {
     info.append(text);
     const actions=node("div",null,"author-actions");
     actions.append(actionButton("查看作品",async()=>{ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
+    actions.append(actionButton("编辑标签",()=>openTagEditor(sub)));
     if(sub.subscribed===false){
       actions.append(actionButton("重新订阅",async()=>{
         const result=await api("/api/subscriptions/resubscribe",{platform:sub.platform,author_id:sub.author_id});
@@ -98,6 +109,29 @@ function renderSubscriptions(subscriptions) {
     if(sub.archive_url){const link=safeLink(sub.archive_url,"打开归档");if(link)actions.append(link);}
     row.append(info,actions);list.append(row);
   }
+}
+function openTagEditor(sub) {
+  ui.tagAuthor={platform:sub.platform,author_id:sub.author_id};
+  $("tag-author").textContent=`${sub.display_name||sub.author_id} · ${nameOf(sub.platform)} · ${sub.author_id}`;
+  $("tag-input").value=(sub.tags||[]).join("，");
+  $("tag-error").hidden=true;
+  $("tag-dialog").showModal();
+}
+async function saveTags() {
+  const author=ui.tagAuthor;
+  if(!author)return;
+  const raw=$("tag-input").value.trim();
+  const tags=raw?raw.split(/[,，]/).map(tag=>tag.trim()):[];
+  let result;
+  try {
+    result=await api("/api/subscriptions/tags",{...author,tags});
+  } catch(error) {
+    $("tag-error").textContent=`${error.message} 原标签及归档仍保留，可修改后重试。`;
+    $("tag-error").hidden=false;
+    return;
+  }
+  $("tag-dialog").close();notify(result.message);
+  try {await refresh(true);} catch {notify("标签已保存，但页面刷新失败；请刷新工作区查看。归档和任务进度保留。",true);}
 }
 function isPagePipeline(run) {return ["page_archive","author_archive","demo_archive"].includes(run.mode);}
 function renderArchiveBatches(batches) {
@@ -162,6 +196,7 @@ async function refresh(forceItems = false, background = false) {
       const runsSignature = dataSignature([w.runs,w.archive_batches]);
       const platformsSignature = dataSignature(w.platforms || []);
       if (subscriptionsSignature !== ui.subscriptionsSignature) {
+        renderSubscriptionTags(w.subscriptions);
         renderSubscriptions(w.subscriptions);
         renderFilters(w.subscriptions);
         ui.subscriptionsSignature = subscriptionsSignature;
@@ -423,6 +458,11 @@ $("resolve-item-form").addEventListener("submit",event=>{event.preventDefault();
 $("confirm-subscription").onclick=()=>perform($("confirm-subscription"),confirmSubscription);
 $("cancel-subscription").onclick=()=>$("confirm-subscription-dialog").close();
 $("confirm-subscription-dialog").addEventListener("close",()=>{ui.confirmAuthor=null;});
+$("subscription-platform").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
+$("subscription-tag").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
+$("save-tags").onclick=()=>perform($("save-tags"),saveTags);
+$("close-tags").onclick=()=>$('tag-dialog').close();
+$("tag-dialog").addEventListener("close",()=>{ui.tagAuthor=null;});
 $("classify").onclick=()=>perform($("classify"),async()=>{if(!$("link").reportValidity())return;const r=await api("/api/links/classify",{text:$("link").value});$("link-result").textContent=`${nameOf(r.platform)} · ${kindName[r.kind]||r.kind}。${r.message||""}${r.candidate_author_id?` 候选作者 ID：${r.candidate_author_id}`:""}`;});
 for(const b of document.querySelectorAll("[data-job]"))b.onclick=()=>perform(b,()=>startJob(b.dataset.job));
 $("refresh").onclick=()=>perform($("refresh"),async()=>{await refresh(true);notify("已刷新本机持久状态。");});

@@ -177,6 +177,27 @@ class ArchiveWorkflow:
             """)
         self.migration_backup = migrate(self.db_path, backup_required=existing_database)
         self.cancellation_migration_backup = self._initialize_subscription_cancellations(existing_database)
+        self.tags_migration_backup = self._initialize_subscription_tags(existing_database)
+
+    def _initialize_subscription_tags(self, backup_required):
+        """Add local author labels without rewriting subscriptions or archive data."""
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='subscription_tags'").fetchone():
+                return None
+            backup = None
+            if backup_required:
+                backups = self.db_path.parent / "backups"
+                backups.mkdir(exist_ok=True)
+                backup = backups / f"archive-before-subscription-tags-{time.time_ns()}.sqlite3"
+                with closing(sqlite3.connect(backup)) as target:
+                    db.backup(target)
+                    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise ValueError("数据库备份校验失败，未执行作者标签升级")
+            db.execute("""CREATE TABLE subscription_tags (
+                platform TEXT NOT NULL, author_id TEXT NOT NULL, tag TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY(platform,author_id,tag))""")
+            return str(backup) if backup else None
 
     def _initialize_subscription_cancellations(self, backup_required):
         """Keep archived authors and old rows intact while adding cancel state."""

@@ -64,7 +64,7 @@ def create_server(base_url: str = "http://127.0.0.1:8765") -> MCPServer:
         """List local creators with identity, list coverage and content counts; follow next_cursor."""
         offset = check_page(cursor, limit)
         rows = get("/api/workspace")["subscriptions"]
-        records = [{key: row.get(key) for key in ("platform", "author_id", "display_name", "identity_verified",
+        records = [{key: row.get(key) for key in ("platform", "author_id", "display_name", "tags", "identity_verified",
                    "enabled", "subscribed", "item_count", "detail_count", "coverage", "latest_state", "reason", "message")}
                    for row in rows[offset:offset + limit]]
         return page(offset, limit, len(rows), records)
@@ -73,7 +73,7 @@ def create_server(base_url: str = "http://127.0.0.1:8765") -> MCPServer:
     def get_creator_coverage(platform: str, author_id: str) -> dict:
         """Get local author list coverage, body counts and unread external scope."""
         row = creator(platform, author_id)
-        return {key: row.get(key) for key in ("platform", "author_id", "display_name", "identity_verified",
+        return {key: row.get(key) for key in ("platform", "author_id", "display_name", "tags", "identity_verified",
                 "subscribed", "item_count", "detail_count", "coverage", "latest_state", "reason", "message") } | {
                 "unseen_items": "unknown_not_enumerable", "media_coverage": "unknown_expected_count"}
 
