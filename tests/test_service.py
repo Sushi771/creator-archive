@@ -1,9 +1,11 @@
 """Product persistence regressions using synthetic sources, never live evidence."""
+from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 import tempfile
 import time
 import unittest
+import sqlite3
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -58,6 +60,85 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len(ids), total)
         restarted = WorkspaceService(self.service.root)
         self.assertEqual(restarted.workspace()["stats"]["items"], total)
+
+    def test_cancel_keeps_archive_checkpoint_and_manual_note_then_resubscribes(self):
+        author = "a" * 24
+        self.seed(author)
+        self.service.start("full", "xiaohongshu", author)
+        self.service.wait()
+        export = self.service.workflow.export_all()["authors"][0]
+        manual = Path(export["manifest"]).parent / "my-notes.md"
+        manual.write_text("my annotation", encoding="utf-8")
+        with self.service.workflow.connect() as db:
+            before = {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+                      for table in ("subscriptions", "items", "runs", "pages", "jobs", "assets")}
+        saved = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                 for path in (Path(export["manifest"]), manual)}
+
+        cancelled = self.service.cancel_subscription("xiaohongshu", author)
+        self.assertFalse(cancelled["subscribed"])
+        self.assertFalse(next(s for s in self.service.workspace()["subscriptions"] if s["author_id"] == author)["subscribed"])
+        with self.assertRaisesRegex(ValueError, "取消订阅"):
+            self.service.start("full", "xiaohongshu", author)
+        self.service.start("archive", "xiaohongshu", author)
+        self.service.wait()
+        restarted = WorkspaceService(self.service.root)
+        self.assertFalse(next(s for s in restarted.workspace()["subscriptions"] if s["author_id"] == author)["subscribed"])
+        with restarted.workflow.connect() as db:
+            for table in ("subscriptions", "items", "runs", "pages", "assets"):
+                rows = [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+                self.assertEqual(rows[:len(before[table])], before[table])
+        self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in saved}, saved)
+        restored = restarted.resubscribe("xiaohongshu", author)
+        self.assertTrue(restored["subscribed"])
+        self.assertTrue(restored["enabled"])
+        self.assertEqual(manual.read_text(encoding="utf-8"), "my annotation")
+
+    def test_cancel_api_intent_and_confirmation_do_not_reactivate_silently(self):
+        root = self.root / "cancel-api"
+        app = create_app(root)
+        headers = {"X-Creator-Archive": "local-validation"}
+        author = "b" * 24
+        pending = "c" * 24
+        with TestClient(app) as client:
+            service = app.state.service
+            service.workflow.subscribe("xiaohongshu", author, "Saved name", verified=True, evidence="synthetic")
+            service.toggle("xiaohongshu", author, False)
+            response = client.post("/api/subscriptions/cancel", json={"platform": "xiaohongshu", "author_id": author}, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["subscribed"])
+            self.assertFalse(next(s for s in client.get("/api/workspace").json()["subscriptions"] if s["author_id"] == author)["subscribed"])
+            self.assertEqual(client.post("/api/subscriptions/toggle", json={"platform": "xiaohongshu", "author_id": author, "enabled": True}, headers=headers).status_code, 422)
+            self.assertEqual(client.post("/api/subscriptions/resubscribe", json={"platform": "xiaohongshu", "author_id": author}, headers=headers).status_code, 200)
+            self.assertEqual(next(s for s in service.workspace()["subscriptions"] if s["author_id"] == author)["display_name"], "Saved name")
+            service.toggle("xiaohongshu", author, False)
+            self.assertEqual(client.post("/api/subscriptions/resubscribe", json={"platform": "xiaohongshu", "author_id": author}, headers=headers).status_code, 422)
+            self.assertFalse(next(s for s in service.workspace()["subscriptions"] if s["author_id"] == author)["enabled"])
+            service.workflow.subscribe("xiaohongshu", pending, "Observed", verified=True, evidence="observed_browser_exact_note")
+            service.workflow.set_enabled("xiaohongshu", pending, False)
+            service.cancel_subscription("xiaohongshu", pending)
+            self.assertFalse(service.resubscribe("xiaohongshu", pending)["enabled"])
+            self.assertTrue(next(s for s in service.workspace()["subscriptions"] if s["author_id"] == pending)["subscription_confirmation_required"])
+            intent = "d" * 24
+            service.subscribe(f"https://www.xiaohongshu.com/user/profile/{intent}", "My intent")
+            service.cancel_subscription("xiaohongshu", intent)
+            self.assertFalse(next(s for s in service.workspace()["subscriptions"] if s["author_id"] == intent)["subscribed"])
+            service.subscribe(f"https://www.xiaohongshu.com/user/profile/{intent}")
+            self.assertTrue(next(s for s in service.workspace()["subscriptions"] if s["author_id"] == intent)["subscribed"])
+
+    def test_cancel_migration_backs_up_old_data(self):
+        self.seed("legacy-author")
+        with self.service.workflow.connect() as db:
+            before = [tuple(row) for row in db.execute("SELECT * FROM subscriptions")]
+            db.execute("DROP TABLE subscription_cancellations")
+        restarted = WorkspaceService(self.service.root)
+        self.assertTrue(Path(restarted.workflow.cancellation_migration_backup).is_file())
+        with closing(sqlite3.connect(restarted.workflow.cancellation_migration_backup)) as backup:
+            self.assertEqual(backup.execute("SELECT * FROM subscriptions").fetchall(), before)
+            self.assertIsNone(backup.execute("SELECT 1 FROM sqlite_master WHERE name='subscription_cancellations'").fetchone())
+        with restarted.workflow.connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM subscriptions")], before)
+            self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_interrupted_job_reuses_exact_run_and_cursor(self):
         self.seed()

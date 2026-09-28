@@ -208,7 +208,9 @@ class McpReadOnlyTests(unittest.TestCase):
 
                             creators = await call("list_creators", {"limit": 1})
                             self.assertEqual((creators["total"], creators["returned"]), (1, 1))
+                            self.assertTrue(creators["items"][0]["subscribed"])
                             coverage = await call("get_creator_coverage", {"platform": "xiaohongshu", "author_id": author})
+                            self.assertTrue(coverage["subscribed"])
                             self.assertEqual((coverage["item_count"], coverage["detail_count"]), (6, 6))
                             self.assertEqual(coverage["unseen_items"], "unknown_not_enumerable")
                             seen = []

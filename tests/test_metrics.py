@@ -234,7 +234,8 @@ class MetricsTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT detail_text,content_type FROM items").fetchone()[:],("old body","unknown"))
             self.assertEqual(db.execute("SELECT note FROM manual_notes").fetchone()[0],"keep me")
         self.assertIsNone(ArchiveWorkflow(legacy).migration_backup)
-        self.assertEqual(len(list((legacy/"backups").iterdir())),1)
+        self.assertTrue(Path(workflow.cancellation_migration_backup).is_file())
+        self.assertEqual(len(list((legacy/"backups").iterdir())),2)
         restored = self.root / "restored"
         restored.mkdir()
         shutil.copyfile(backup,restored/"archive.sqlite3")

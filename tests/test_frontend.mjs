@@ -4,10 +4,10 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 class Element {
-  constructor(tag='div') {this.tagName=tag;this.children=[];this.value='';this.checked=false;this.textContent='';this.open=false;this.classList={add(){},remove(){},toggle(){}};}
+  constructor(tag='div') {this.tagName=tag;this.children=[];this.value='';this.checked=false;this.textContent='';this.open=false;this.handlers={};this.classList={add(){},remove(){},toggle(){}};}
   append(...children) {this.children.push(...children);}
   replaceChildren(...children) {this.children=children;}
-  addEventListener() {}
+  addEventListener(event,callback) {this.handlers[event]=callback;}
   setAttribute() {}
   reportValidity() {return true;}
   querySelectorAll() {return [];}
@@ -202,8 +202,17 @@ assert.doesNotMatch(flattenText(elements['job-list'].children[1]),/两页任务/
 console.log('Author archive UI checks passed: separate author scope, unknown page total, independent terminal/content progress, parent-only recovery and subscription/platform boundaries.');
 
 const visibleText=element=>element.tagName==='details'?visibleText(element.children[0]):[element.textContent,...(element.children||[]).map(visibleText)].join(' ');
+run('renderSubscriptions([{platform:"xiaohongshu",author_id:"archived",identity_verified:true,enabled:false,subscribed:false,item_count:2}])');
+assert.match(flattenText(elements['subscription-list']),/已取消订阅.*重新订阅.*归档已有资料/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/测试前10篇并归档|暂停|启用|取消订阅（保留归档）/);
+run('globalThis.lifecycleCalls=[];api=async(path,body)=>{lifecycleCalls.push({path,body});return {message:"已重新订阅；旧资料保留。"}};refresh=async()=>{}');
+await walk(elements['subscription-list']).find(x=>x.textContent==='重新订阅').handlers.click();
+assert.deepEqual(JSON.parse(run('JSON.stringify(lifecycleCalls)')),[{path:'/api/subscriptions/resubscribe',body:{platform:'xiaohongshu',author_id:'archived'}}]);
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"author",identity_verified:true,enabled:true}])');
 assert.match(visibleText(elements['subscription-list']),/测试前10篇并归档/);
+assert.match(flattenText(elements['subscription-list']),/取消订阅（保留归档）/);
+await walk(elements['subscription-list']).find(x=>x.textContent==='取消订阅（保留归档）').handlers.click();
+assert.deepEqual(JSON.parse(run('JSON.stringify(lifecycleCalls.at(-1))')),{path:'/api/subscriptions/cancel',body:{platform:'xiaohongshu',author_id:'author'}});
 assert.doesNotMatch(visibleText(elements['subscription-list']),/单作者全历史归档（实验）|两页采集并归档（实验）|保存全部已收录内容/,'Broad jobs are collapsed by default');
 assert.match(flattenText(elements['subscription-list']),/完整归档实验（超出本轮10篇测试）.*单作者全历史归档/,'Existing P0 experiments remain available in advanced controls');
 const batchAdvanced=html.match(/<details class="archive-experiments">[\s\S]*?<\/details>/)?.[0];
@@ -214,6 +223,7 @@ assert.match(batchAdvanced,/data-job="content"/);
 assert.doesNotMatch(batchAdvanced,/data-job="demo_archive"/);
 assert.match(html.replace(batchAdvanced,''),/data-job="demo_archive"[^>]*>测试各作者前10篇/);
 assert.doesNotMatch(html.replace(batchAdvanced,''),/data-job="(?:full|content|metrics|latest)"/,'Broad bulk actions are not primary controls');
+run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 await run('startJob("all_archive")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
 run('renderArchiveBatches([{id:7,state:"partial",total:2,complete:0,unfinished:1,blocked:1,members:[{platform:"wechat",author_id:"wx",job_id:null,reason:"wechat_blocked",pages:0,item_count:0,target_count:0},{platform:"xiaohongshu",author_id:"author",job_id:8,state:"partial",reason:"item_unavailable",reused_existing_job:true,pages:3,item_count:2,target_count:3,can_resume:true,scan_url:"/api/jobs/8/scan",scan_manifest_url:"/archive/xiaohongshu/author/scan-run-1.json"}]}])');

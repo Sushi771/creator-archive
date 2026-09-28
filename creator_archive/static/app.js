@@ -52,16 +52,23 @@ function renderSubscriptions(subscriptions) {
     info.append(node("div",(sub.display_name||sub.author_id||"?").slice(0,1),"avatar"));
     text.append(node("h3",sub.display_name||sub.author_id),node("div",`${nameOf(sub.platform)} · ${sub.author_id}`,"meta"));
     const tags=node("div",null,"badges");
-    tags.append(badge(sub.subscription_confirmation_required?"待确认订阅":sub.enabled?"订阅中":"已暂停",sub.subscription_confirmation_required?"warning":sub.enabled?"":"neutral"),
+    tags.append(badge(sub.subscribed===false?"已取消订阅":sub.subscription_confirmation_required?"待确认订阅":sub.enabled?"订阅中":"已暂停",sub.subscribed===false?"neutral":sub.subscription_confirmation_required?"warning":sub.enabled?"":"neutral"),
                 badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),
                 badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文`,"neutral"));
     text.append(tags);
-    if(sub.subscription_confirmation_required)text.append(node("p","作品作者已核验；确认前不进入全部订阅批次，也不会自动扫描历史。","hint"));
+    if(sub.subscribed===false)text.append(node("p","新批次不再包含这位作者；旧归档、手工资料、任务及固定批次检查点保留。","hint"));
+    else if(sub.subscription_confirmation_required)text.append(node("p","作品作者已核验；确认前不进入全部订阅批次，也不会自动扫描历史。","hint"));
     else if(sub.message)text.append(node("p",sub.message,"hint"));
     info.append(text);
     const actions=node("div",null,"author-actions");
     actions.append(actionButton("查看作品",async()=>{ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
-    if(sub.subscription_confirmation_required){
+    if(sub.subscribed===false){
+      actions.append(actionButton("重新订阅",async()=>{
+        const result=await api("/api/subscriptions/resubscribe",{platform:sub.platform,author_id:sub.author_id});
+        notify(result.message);await refresh(true);
+      }));
+      actions.append(actionButton("归档已有资料",()=>startJob("archive",sub)));
+    } else if(sub.subscription_confirmation_required){
       actions.append(actionButton("确认订阅",()=>openSubscriptionConfirmation(sub)));
     } else {
       const advanced=node("details",null,"archive-experiments"),advancedActions=node("div",null,"actions");
@@ -80,6 +87,10 @@ function renderSubscriptions(subscriptions) {
         notify(`${sub.display_name||sub.author_id}：已${sub.enabled?"暂停":"启用"}订阅。已有资料保留。`);await refresh(true);
       }));
     }
+    if(sub.subscribed!==false)actions.append(actionButton("取消订阅（保留归档）",async()=>{
+      const result=await api("/api/subscriptions/cancel",{platform:sub.platform,author_id:sub.author_id});
+      notify(`${sub.display_name||sub.author_id}：${result.message}`);await refresh(true);
+    }));
     if(!sub.identity_verified&&sub.platform==="xiaohongshu")actions.append(actionButton("核验作者",async()=>{
       const result=await api("/api/subscriptions/verify",{platform:sub.platform,author_id:sub.author_id});
       notify(result.message||"作者核验已返回，请查看身份状态。");await refresh(true);

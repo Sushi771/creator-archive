@@ -373,6 +373,21 @@ class AllArchiveBatchTests(unittest.TestCase):
         self.assertEqual({m["author_id"] for m in self.batch(restarted)["members"]}, {self.first, self.second, self.wechat})
         self.assertTrue(all(m["state"] == "interrupted" for m in self.batch(restarted)["members"] if m["job_id"]))
 
+    def test_cancel_excludes_new_batch_but_preserves_fixed_old_batch(self):
+        self.service._spawn = lambda _: None
+        first = self.service.start("all_archive")
+        original = [(m["platform"], m["author_id"], m["job_id"]) for m in self.batch()["members"]]
+        self.service.cancel_subscription("xiaohongshu", self.first)
+        self.assertEqual(self.service.start("all_archive")["batch_id"], first["batch_id"])
+        self.assertEqual([(m["platform"], m["author_id"], m["job_id"]) for m in self.batch()["members"]], original)
+        with self.service.workflow.connect() as db:
+            db.execute("UPDATE jobs SET state='succeeded' WHERE id IN (SELECT job_id FROM archive_batch_members WHERE batch_id=?)", (first["batch_id"],))
+        second = self.service.start("all_archive")
+        self.assertNotEqual(second["batch_id"], first["batch_id"])
+        self.assertEqual({m["author_id"] for m in self.batch()["members"]}, {self.second, self.wechat})
+        self.assertEqual({m["author_id"] for m in self.service.workspace()["archive_batches"][1]["members"]},
+                         {self.first, self.second, self.wechat})
+
     def test_run_scan_manifest_separates_observed_failures_and_library_only_after_restart(self):
         old_id = ids(900, 1)[0]
         with self.service.workflow.connect() as db:

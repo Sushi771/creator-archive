@@ -65,7 +65,7 @@ def create_server(base_url: str = "http://127.0.0.1:8765") -> MCPServer:
         offset = check_page(cursor, limit)
         rows = get("/api/workspace")["subscriptions"]
         records = [{key: row.get(key) for key in ("platform", "author_id", "display_name", "identity_verified",
-                   "enabled", "item_count", "detail_count", "coverage", "latest_state", "reason", "message")}
+                   "enabled", "subscribed", "item_count", "detail_count", "coverage", "latest_state", "reason", "message")}
                    for row in rows[offset:offset + limit]]
         return page(offset, limit, len(rows), records)
 
@@ -74,7 +74,7 @@ def create_server(base_url: str = "http://127.0.0.1:8765") -> MCPServer:
         """Get local author list coverage, body counts and unread external scope."""
         row = creator(platform, author_id)
         return {key: row.get(key) for key in ("platform", "author_id", "display_name", "identity_verified",
-                "item_count", "detail_count", "coverage", "latest_state", "reason", "message") } | {
+                "subscribed", "item_count", "detail_count", "coverage", "latest_state", "reason", "message") } | {
                 "unseen_items": "unknown_not_enumerable", "media_coverage": "unknown_expected_count"}
 
     @server.tool(annotations=readonly)

@@ -6,7 +6,7 @@ must supply verified author identity and pages with a trustworthy terminal signa
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from hashlib import sha256
 from html import escape
 from pathlib import Path
@@ -176,6 +176,26 @@ class ArchiveWorkflow:
                     PRIMARY KEY(platform,item_id,asset_id));
             """)
         self.migration_backup = migrate(self.db_path, backup_required=existing_database)
+        self.cancellation_migration_backup = self._initialize_subscription_cancellations(existing_database)
+
+    def _initialize_subscription_cancellations(self, backup_required):
+        """Keep archived authors and old rows intact while adding cancel state."""
+        with self.connect() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='subscription_cancellations'").fetchone():
+                return None
+            backup = None
+            if backup_required:
+                backups = self.db_path.parent / "backups"
+                backups.mkdir(exist_ok=True)
+                backup = backups / f"archive-before-subscription-cancel-{time.time_ns()}.sqlite3"
+                with closing(sqlite3.connect(backup)) as target:
+                    db.backup(target)
+                    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise ValueError("数据库备份校验失败，未执行取消订阅升级")
+            db.execute("""CREATE TABLE subscription_cancellations (
+                platform TEXT NOT NULL, author_id TEXT NOT NULL, cancelled_at REAL NOT NULL,
+                PRIMARY KEY(platform,author_id))""")
+            return str(backup) if backup else None
 
     @contextmanager
     def connect(self):
@@ -219,9 +239,11 @@ class ArchiveWorkflow:
             if batch_id is None:
                 cur = db.execute("INSERT INTO batches(mode,created_at) VALUES(?,?)", (mode, time.time()))
                 batch_id = cur.lastrowid
-                scope = db.execute("SELECT platform,author_id FROM subscriptions" +
-                                   ("" if include_paused else " WHERE enabled=1") +
-                                   " ORDER BY platform,author_id").fetchall()
+                scope = db.execute("""SELECT s.platform,s.author_id FROM subscriptions s
+                    WHERE NOT EXISTS (SELECT 1 FROM subscription_cancellations c
+                                      WHERE c.platform=s.platform AND c.author_id=s.author_id)""" +
+                    ("" if include_paused else " AND s.enabled=1") +
+                    " ORDER BY s.platform,s.author_id").fetchall()
                 for row in scope:
                     db.execute("""INSERT INTO runs(batch_id,platform,author_id,mode,adapter_version,updated_at)
                         VALUES(?,?,?,?,?,?)""",

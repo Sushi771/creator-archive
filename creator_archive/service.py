@@ -227,12 +227,19 @@ class WorkspaceService:
         if not name or len(name) > 160:
             raise ValueError("作者名称须为1至160个字符")
         with self.workflow.connect() as db:
-            existing = db.execute("SELECT 1 FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
+            db.execute("BEGIN IMMEDIATE")
+            was_cancelled = self._is_cancelled(db, platform, author_id)
+            existing = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
             if existing:
                 if display_name:
                     db.execute("UPDATE subscriptions SET display_name=? WHERE platform=? AND author_id=?", (name, platform, author_id))
+                if was_cancelled and not self._confirmation_required(existing, db):
+                    db.execute("UPDATE subscriptions SET enabled=1 WHERE platform=? AND author_id=?", (platform, author_id))
             else:
                 db.execute("INSERT INTO subscription_intents VALUES(?,?,?,1,?) ON CONFLICT(platform,author_id) DO UPDATE SET display_name=excluded.display_name", (platform, author_id, name, time.time()))
+                if was_cancelled:
+                    db.execute("UPDATE subscription_intents SET enabled=1 WHERE platform=? AND author_id=?", (platform, author_id))
+            db.execute("DELETE FROM subscription_cancellations WHERE platform=? AND author_id=?", (platform, author_id))
         return next(s for s in self.workspace()["subscriptions"] if s["platform"] == platform and s["author_id"] == author_id)
 
     def resolve_item(self, text: str) -> dict:
@@ -289,6 +296,8 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             subscription = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
+            if self._is_cancelled(db, platform, author_id):
+                raise ValueError("该作者已取消订阅；请先在作者卡片重新订阅，旧作品和任务已保留")
             if not subscription or subscription["identity_evidence"] != "observed_browser_exact_note":
                 raise ValueError("没有待确认的作品作者；请先在作品入口核验目标作品与作者")
             if not db.execute("SELECT 1 FROM items WHERE platform=? AND author_id=? LIMIT 1", (platform, author_id)).fetchone():
@@ -305,6 +314,8 @@ class WorkspaceService:
     def toggle(self, platform: str, author_id: str, enabled: bool) -> dict:
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if self._is_cancelled(db, platform, author_id):
+                raise ValueError("该作者已取消订阅；请先重新订阅，旧归档和检查点已保留")
             subscription = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
             if subscription and self._confirmation_required(subscription, db) and enabled:
                 raise ValueError("这位作品作者尚未确认订阅；请在作者卡片点击“确认订阅”，旧资料已保留")
@@ -317,6 +328,48 @@ class WorkspaceService:
             if not count:
                 raise KeyError("subscription_not_found")
         return {"platform": platform, "author_id": author_id, "enabled": enabled}
+
+    @staticmethod
+    def _is_cancelled(db, platform, author_id):
+        return db.execute("SELECT 1 FROM subscription_cancellations WHERE platform=? AND author_id=?",
+                          (platform, author_id)).fetchone() is not None
+
+    def cancel_subscription(self, platform: str, author_id: str) -> dict:
+        _id(author_id)
+        with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            found = db.execute("""SELECT 1 FROM subscriptions WHERE platform=? AND author_id=?
+                UNION ALL SELECT 1 FROM subscription_intents WHERE platform=? AND author_id=? LIMIT 1""",
+                (platform, author_id, platform, author_id)).fetchone()
+            if not found:
+                raise KeyError("subscription_not_found")
+            db.execute("INSERT OR IGNORE INTO subscription_cancellations VALUES(?,?,?)",
+                       (platform, author_id, time.time()))
+        return {"platform": platform, "author_id": author_id, "subscribed": False,
+                "message": "已取消订阅；作者归档、手工资料、旧任务和检查点保留。已有批次仍按原固定范围显示和恢复。"}
+
+    def resubscribe(self, platform: str, author_id: str) -> dict:
+        _id(author_id)
+        with self.workflow.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            subscription = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?",
+                                      (platform, author_id)).fetchone()
+            intent = db.execute("SELECT 1 FROM subscription_intents WHERE platform=? AND author_id=?",
+                                (platform, author_id)).fetchone()
+            if not subscription and not intent:
+                raise KeyError("subscription_not_found")
+            if not self._is_cancelled(db, platform, author_id):
+                raise ValueError("该作者当前未取消订阅；如需暂停或启用，请使用作者卡片的订阅开关")
+            db.execute("DELETE FROM subscription_cancellations WHERE platform=? AND author_id=?", (platform, author_id))
+            pending = bool(subscription and self._confirmation_required(subscription, db))
+            if not pending:
+                for table in ("subscriptions", "subscription_intents"):
+                    db.execute(f"UPDATE {table} SET enabled=1 WHERE platform=? AND author_id=?",
+                               (platform, author_id))
+        return {"platform": platform, "author_id": author_id, "subscribed": True,
+                "enabled": False if pending else True,
+                "message": "已恢复订阅意图；请先确认作品作者订阅。旧资料和任务保留。" if pending else
+                           "已重新订阅；旧归档和任务检查点保留，本次未自动扫描历史。"}
 
     def _public_job(self, row: dict, db) -> dict:
         run = db.execute("SELECT * FROM runs WHERE id=?", (row["run_id"],)).fetchone() if row["run_id"] else None
@@ -387,6 +440,7 @@ class WorkspaceService:
             for sub in subscriptions:
                 args = (sub["platform"], sub["author_id"])
                 sub["enabled"] = bool(sub["enabled"])
+                sub["subscribed"] = not self._is_cancelled(db, *args)
                 counts = db.execute("SELECT count(*),coalesce(sum(detail_state='complete'),0) FROM items WHERE platform=? AND author_id=?", args).fetchone()
                 sub.update(item_count=counts[0], detail_count=counts[1])
                 run = db.execute("SELECT coverage FROM runs WHERE platform=? AND author_id=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", args).fetchone()
@@ -570,13 +624,15 @@ class WorkspaceService:
         selected = list(dict.fromkeys(item_ids)) if item_ids is not None else None
         source_url = self._validate_source(source_url,platform,item_id,author_id)
         scope = [s for s in self.workspace()["subscriptions"]
-                 if (not author_id and not s["subscription_confirmation_required"])
+                 if (not author_id and s["subscribed"] and not s["subscription_confirmation_required"])
                  or (author_id and (s["platform"], s["author_id"]) == (platform, author_id))]
+        if author_id and scope and not scope[0]["subscribed"] and mode != "archive":
+            raise ValueError("该作者已取消订阅；请先重新订阅。原归档和任务检查点保留；已有任务可从历史与任务恢复")
         if mode == "demo_archive" and not author_id:
             scope = [s for s in scope if s["platform"] == "xiaohongshu" and s["identity_verified"]
                      and not s["subscription_confirmation_required"]]
         if not scope:
-            raise ValueError("没有可处理的订阅；待确认的作品作者请先确认订阅，已有作品仍可单篇保存")
+            raise ValueError("没有可处理的订阅作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和任务检查点保留")
         if mode in {"full", "latest", *page_pipeline.MODES} and any(s["subscription_confirmation_required"] for s in scope):
             raise ValueError("该作品作者尚未确认订阅；请先在作者卡片确认，原历史和作品保持不变")
         if mode in page_pipeline.MODES and any(not s["identity_verified"] for s in scope):
@@ -621,9 +677,10 @@ class WorkspaceService:
                     return {"batch_id": latest[0], "reused": True,
                             "message": f"已复用全订阅归档批次 #{latest[0]} 的固定作者范围；从历史与任务恢复未完成作者，成功资源保持。"}
             scope = [dict(row) for row in db.execute("SELECT * FROM subscriptions ORDER BY platform,author_id")
-                     if not self._confirmation_required(row, db)]
+                     if not self._is_cancelled(db, row["platform"], row["author_id"])
+                     and not self._confirmation_required(row, db)]
             if not scope:
-                raise ValueError("没有已核验并确认的订阅作者；待确认作者不会进入批次")
+                raise ValueError("没有已核验并确认且仍订阅的作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和检查点保留")
             for sub in scope:
                 if sub["platform"] == "xiaohongshu" and db.execute("""SELECT 1 FROM jobs WHERE platform=? AND author_id=?
                     AND state IN ('queued','running') LIMIT 1""", (sub["platform"],sub["author_id"])).fetchone():
