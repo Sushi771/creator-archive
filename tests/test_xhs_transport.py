@@ -153,7 +153,7 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(transport._page.scrolls, 2)
 
     def test_replay_seed_cannot_supply_terminal_or_missing_checkpoint_evidence(self):
-        for has_more, expected in ((True, "timeout"), (False, "invalid_cursor")):
+        for has_more, expected in ((True, "timeout"), (False, "requested_response_missing")):
             with self.subTest(has_more=has_more):
                 state = dict(payload(has_more, CURSOR)["data"], author=AUTHOR)
                 state["notes"][0]["xsec_token"] = "synthetic-seed-only"
@@ -241,7 +241,32 @@ class TransportTests(unittest.TestCase):
         transport = self.make(initial={"author": AUTHOR, "has_more": False})
         with self.assertRaises(TransportFailure) as error:
             transport.page(AUTHOR, None)
-        self.assertEqual(error.exception.category, "invalid_cursor")
+        self.assertEqual(error.exception.category, "requested_response_missing")
+        self.assertEqual(transport._page.scrolls, 1)
+
+    def test_ssr_false_before_first_scroll_can_still_observe_requested_response(self):
+        state = {"author": AUTHOR, "has_more": False}
+        transport = self.make(initial=state, responses=[Response(CURSOR, payload())])
+        page = transport.page(AUTHOR, CURSOR)
+        self.assertEqual([item.item_id for item in page.items], [NOTE])
+        self.assertFalse(page.has_more)
+        self.assertEqual(transport._page.scrolls, 1)
+
+    def test_same_request_cursor_with_different_observed_pages_is_distinct_failure(self):
+        transport = self.make()
+        first = payload(True, CURSOR)
+        second = payload(True, CURSOR)
+        second["data"]["notes"][0]["note_id"] = "d" * 24
+        def two_responses(*_args):
+            transport._page.scrolls += 1
+            transport._observe(Response("", first))
+            transport._observe(Response("", second))
+        transport._page.wheel = two_responses
+        with self.assertRaises(TransportFailure) as error:
+            transport.page(AUTHOR, CURSOR)
+        self.assertEqual(error.exception.category, "cursor_response_conflict")
+        self.assertEqual(transport._responses[(AUTHOR, "")], normalized_response(200, first))
+        self.assertEqual(transport._page.scrolls, 1)
 
     def test_ssr_true_seeds_initial_page(self):
         state = dict(payload(True, CURSOR)["data"], author=AUTHOR)

@@ -56,5 +56,34 @@
     "prior_32_35_42_43_scope_unchanged": true
   },
   "private_evidence": "Actual backup, fingerprints, readback and browser decode records are outside Git under the workspace sibling private-validation/xhs-b-full-2026-09-28.",
+  "cursor_diagnostic_follow_up": {
+    "starting_local_and_remote_head": "69adfc09b9b62f75fc004bb3e3f3700c77751380",
+    "reproduced_trigger": "Previously, distinct same-cursor responses and SSR has_more=false without the requested API response both persisted as invalid_cursor; SSR could fail before the first scroll.",
+    "expected": "Distinct persisted causes, one normal scroll opportunity for an exact requested response, and no terminal commit without that API response.",
+    "synthetic_result": "Distinct cursor_response_conflict and requested_response_missing categories; SSR false then exact API response succeeds after one scroll; missing response remains blocked; both categories retain one durable checkpoint, child and successful assets through resume.",
+    "final_python_suite": "192 tests run, 191 passed, 1 skipped; synthetic temporary data only",
+    "live_result": {
+      "only_original_parent_resumed_once": true,
+      "persisted_reason": "requested_response_missing",
+      "pages_committed": 5,
+      "unique_observed": 150,
+      "content_complete": 150,
+      "terminal_evidence": false,
+      "platform_root_cause": "unknown; requested cursor response was not observed after normal browser replay and scroll"
+    },
+    "protected_before_and_after": {
+      "new_online_sqlite_backup_integrity": "ok",
+      "previous_files_fingerprinted": 1482,
+      "sqlite_integrity_after": "ok",
+      "changed_existing_rows": {"jobs": [48], "runs": [22]},
+      "pages_before_and_after": 105,
+      "assets_before_and_after": 370,
+      "old_files_changed": 0,
+      "new_files": 0,
+      "active_jobs_after": 0,
+      "server_stopped_after": true
+    },
+    "private_evidence": "workspace sibling private-validation/xhs-b-cursor-2026-09-28; not in Git"
+  },
   "conclusion": "Observed 150-item content and offline media are complete for this partial five-page scan; current author history terminal, remaining items, and full P0 are unverified."
 }

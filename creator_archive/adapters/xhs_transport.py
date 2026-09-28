@@ -416,7 +416,7 @@ class XhsBrowserTransport:
             # Validate before caching so malformed pages never advance replay.
             XhsPageAdapter(lambda _a, _c: normalized).page(key[0], key[1] or None)
             if key in self._responses and self._responses[key] != normalized:
-                raise TransportFailure("invalid_cursor", "同一游标收到不同页；已保留进度，请重新验证作者后继续。")
+                raise TransportFailure("cursor_response_conflict", "同一游标收到不同页；已保留进度，请重新验证作者后继续。")
             # Listing cards can be virtualized before their anchor is mounted.
             # The observed card token is a navigation reference, not a session
             # cookie. Keep it only in process memory, outside normalized pages,
@@ -482,6 +482,7 @@ class XhsBrowserTransport:
                 # when goto already delivered the requested API response.
                 replay_seed = bool(cursor)
             deadline = time.monotonic() + self.timeout
+            scroll_attempted = False
             while time.monotonic() < deadline:
                 if self._failure:
                     raise self._failure
@@ -510,14 +511,19 @@ class XhsBrowserTransport:
                         self._cache_references(author, notes)
                         if not cursor:
                             return seed
-                    if state.get("has_more") is False and (author, cursor) not in self._responses:
-                        raise TransportFailure("invalid_cursor", "浏览器已停在末页但未观察到所需游标响应；检查点保留，请核对作者后恢复。")
+                    # A homepage SSR terminal flag cannot prove that the saved
+                    # request cursor has no response. Give normal scrolling one
+                    # chance to deliver that exact API response first.
+                    if (scroll_attempted and state.get("has_more") is False
+                            and (author, cursor) not in self._responses):
+                        raise TransportFailure("requested_response_missing", "浏览器已停在末页但未观察到所需游标响应；检查点保留，请核对作者后恢复。")
                 replay_seed = False
                 if (author, cursor) in self._responses:
                     return self._responses[(author, cursor)]
                 # Normal scrolling can rejoin a saved cursor after browser restart.
                 # No fixed page cap or DOM emptiness is interpreted as completion.
                 self._page.mouse.wheel(0, 1800)
+                scroll_attempted = True
                 self._page.wait_for_timeout(1200)
             raise TransportFailure("timeout", "暂未收到与检查点匹配的新分页响应；进度已保留，可恢复任务继续等待。")
         except AdapterFailure:

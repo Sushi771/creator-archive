@@ -26,7 +26,7 @@ class Page:
 class AdapterFailure(Exception):
     def __init__(self, category: str, retry_after: float = 0):
         super().__init__(category)
-        if category not in {"needs_login", "rate_limited", "timeout", "unavailable", "invalid_cursor", "reference_missing", "item_unavailable", "media_failed", "verification_required",
+        if category not in {"needs_login", "rate_limited", "timeout", "unavailable", "invalid_cursor", "cursor_response_conflict", "requested_response_missing", "reference_missing", "item_unavailable", "media_failed", "verification_required",
                             "stale_checkpoint", "invalid_page", "missing_cursor", "repeated_cursor", "empty_nonterminal_page", "missing_terminal_evidence", "identity_mismatch", "invalid_stable_id", "invalid_response"}:
             raise ValueError("unknown failure category")
         self.category = category

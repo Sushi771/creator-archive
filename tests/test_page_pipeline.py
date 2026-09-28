@@ -254,6 +254,40 @@ class PagePipelineTests(unittest.TestCase):
         self.assertEqual(self.job(job)["item_count"], 3)
         self.assertTrue(all(self.asset_snapshot()[key] == value for key, value in baseline.items()))
 
+    def test_distinct_cursor_observation_failures_preserve_one_checkpoint(self):
+        original = self.source.page
+        failure = ["cursor_response_conflict"]
+        def fail_second(author, cursor):
+            if cursor == "page-2" and failure[0]:
+                raise AdapterFailure(failure[0])
+            return original(author, cursor)
+        with patch.object(self.source, "page", side_effect=fail_second):
+            job = self.start()
+            baseline_children = self.children(job)
+            baseline_assets = self.asset_snapshot()
+            for category in ("cursor_response_conflict", "requested_response_missing"):
+                if category != failure[0]:
+                    failure[0] = category
+                    self.service.resume(job)
+                    self.service.wait()
+                result = self.job(job)
+                self.assertEqual((result["state"], result["reason"], result["coverage"]),
+                                 ("blocked", category, "partial"))
+                self.assertIn("检查点", result["next_step"])
+                self.assertFalse(result["list_finished"])
+                self.assertEqual(self.children(job), baseline_children)
+                with self.service.workflow.connect() as db:
+                    run = db.execute("SELECT pages,cursor,terminal_evidence,reason FROM runs WHERE id=?",
+                                     (result["run_id"],)).fetchone()
+                    self.assertEqual(tuple(run), (1, "page-2", None, category))
+                self.assertEqual(self.asset_snapshot(), baseline_assets)
+            failure[0] = None
+            self.service.resume(job)
+            self.service.wait()
+        self.assertEqual(self.children(job)[:1], baseline_children)
+        self.assertEqual(self.job(job)["item_count"], 3)
+        self.assertTrue(all(self.asset_snapshot()[key] == value for key, value in baseline_assets.items()))
+
     def test_reuse_file_permission_error_does_not_leave_active_child_or_block_recovery(self):
         workflow = self.service.workflow
         with workflow.connect() as db:
