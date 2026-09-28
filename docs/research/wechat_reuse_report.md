@@ -1,5 +1,7 @@
 # 微信公众号项目复用核查
 
+> **2026-09-29 定向复核**：公开 [we-mp-rss PR #470](https://github.com/rachelos/we-mp-rss/pull/470) 页面仍为 open；其陈述的修复是 `200013` 后降级与回调，所谓成功例子落在 `weread_mp`，并无本目标原来源的首屏、连续分页或可信末页。[wechat-article-exporter 停维公告](https://github.com/wechat-article/wechat-article-exporter/issues/200) 仍说明其所依赖核心接口已关闭。Git HTTPS 查询连接重置，改用已授权 GitHub 只读连接器确认 WeWe fork 的最新提交为 [`61c3372`](https://github.com/Sushi771/wewe-rss-ss/commit/61c3372594755338945fba1243bd8c23b566894e)，读取其[当前交接](https://github.com/Sushi771/wewe-rss-ss/blob/61c3372594755338945fba1243bd8c23b566894e/docs/DEVELOPMENT_HANDOFF.md)：新 Wechat2RSS Provider 仅离线/模拟验收，私有实例、授权、扫码、Docker 条件未就绪，未真实导入目标号。它没有提供本仓库可复用的真实全历史来源证据。故不重复平台 200013 请求，不把有限合集或新 Provider 代码当成本产品全历史交付，也不修改 WeWe 仓库或提供凭据。本条只补当前核查缺口，历史结论及链接继续保留。
+
 ## 2026-09-28 新文章入口与两个补充候选
 
 用户给出的“妈妈部落畅聊阁”文章 `https://mp.weixin.qq.com/s/K_oKauPpwhSyavBWQXFMKw` 经网页工具直接打开返回 `cannot be opened (non-retryable error)`。这只证明本次工具无法读取，不证明文章失效或平台永久拒绝；按当前工具拒绝边界，没有改用另一通道读取同一链接。本项目未从该链接取得 `__biz`、作者名称的页面佐证、`mid/idx`、正文、媒体或历史入口，因此**稳定作者身份、首屏、后续页与可信末页均未验**。没有登录、扫码、平台分页请求或真实资料写入。

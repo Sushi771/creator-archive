@@ -22,6 +22,13 @@ class AppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
         self.assertFalse(self.client.get("/api/status").json()["g1_passed"])
+        status = self.client.get("/api/status").json()
+        self.assertEqual(len(status["commit"]), 40)
+        self.assertFalse(status["platforms"][0]["implementation"]["history_pagination"])
+        self.assertEqual(status["platforms"][0]["validation"], "not_passed")
+        self.assertEqual(status["platforms"][1]["runtime"], "not_checked_by_health")
+        self.assertEqual(self.client.get("/api/workspace").json()["build"]["commit"], status["commit"])
+        self.assertEqual(self.client.get("/favicon.ico").status_code, 204)
 
     def test_cross_origin_and_untrusted_host_blocked(self):
         self.assertEqual(self.client.post("/api/demo/run", json={}).status_code, 403)

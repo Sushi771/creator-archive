@@ -40,7 +40,7 @@ if (-not $KeepEnvironment) {
 }
 if (Test-Path -LiteralPath $settings.runtime_dir -PathType Container) {
     foreach ($state in Get-ChildItem -LiteralPath $settings.runtime_dir -Filter 'server-*.json' -File) {
-        $record = Get-Content -LiteralPath $state.FullName -Raw | ConvertFrom-Json
+        $record = Get-Content -LiteralPath $state.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($record.workspace -ne $PSScriptRoot) { continue }
         if ($state.BaseName -notmatch '^server-(\d+)$') { throw "Unknown managed server record: $($state.FullName)" }
         & (Join-Path $PSScriptRoot 'stop.ps1') -Port ([int]$Matches[1]) -RuntimeDir $settings.runtime_dir -ProfileDir (Split-Path -Parent $profilePath)

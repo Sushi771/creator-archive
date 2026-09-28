@@ -61,6 +61,28 @@ class WorkspaceTests(unittest.TestCase):
         restarted = WorkspaceService(self.service.root)
         self.assertEqual(restarted.workspace()["stats"]["items"], total)
 
+    def test_selected_local_export_uses_saved_data_without_platform(self):
+        self.seed("author-a")
+        self.seed("author-b")
+        self.service.start("full")
+        self.service.wait()
+        self.service.transport = lambda: self.fail("offline export must not open a platform transport")
+        scope = [{"platform": "xiaohongshu", "author_id": "author-b"}]
+        result = self.service.start("archive", selected_authors=scope)
+        self.service.wait()
+        self.assertEqual(len(result["job_ids"]), 1)
+        job = next(j for j in self.service.workspace()["runs"] if j["id"] == result["job_id"])
+        self.assertEqual(job["state"], "succeeded")
+        self.assertEqual(job["author_id"], "author-b")
+        self.assertGreater(job["export"]["authors"][0]["items"], 0)
+        self.assertTrue(Path(job["export"]["authors"][0]["manifest"]).is_file())
+        self.assertTrue(Path(job["export"]["authors"][0]["index"]).is_file())
+        with self.assertRaisesRegex(ValueError, "所选作者有重复"):
+            self.service.start("archive", selected_authors=scope + scope)
+        self.service.cancel_subscription("xiaohongshu", "author-b")
+        with self.assertRaisesRegex(ValueError, "所选作者须已核验"):
+            self.service.start("archive", selected_authors=scope)
+
     def test_cancel_keeps_archive_checkpoint_and_manual_note_then_resubscribes(self):
         author = "a" * 24
         self.seed(author)

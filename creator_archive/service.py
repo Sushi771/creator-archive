@@ -691,8 +691,11 @@ class WorkspaceService:
             if mode == "selected_archive" and selected_authors is None:
                 raise ValueError("所选作者归档需要明确的作者范围；未创建任务")
             return self.start_archive_batch(selected_authors)
-        if selected_authors is not None:
-            raise ValueError("所选作者范围仅用于手动逐作者全量归档")
+        if selected_authors is not None and mode != "archive":
+            raise ValueError("所选作者范围仅用于逐作者全量归档或本机已有资料导出")
+        selected_export = self._selected_author_keys(selected_authors) if selected_authors is not None else None
+        if selected_export is not None and any(value is not None for value in (platform, author_id, item_id, source_url, item_ids)):
+            raise ValueError("所选作者本机导出只接受作者选择范围")
         if mode not in {"full", "latest", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
         if mode in {"page_archive", "author_archive"} and (platform != "xiaohongshu" or not author_id):
@@ -708,6 +711,11 @@ class WorkspaceService:
         scope = [s for s in self.workspace()["subscriptions"]
                  if (not author_id and s["subscribed"] and not s["subscription_confirmation_required"])
                  or (author_id and (s["platform"], s["author_id"]) == (platform, author_id))]
+        if selected_export is not None:
+            scope = [s for s in scope if (s["platform"], s["author_id"]) in selected_export
+                     and s["identity_verified"]]
+            if {(s["platform"], s["author_id"]) for s in scope} != selected_export:
+                raise ValueError("所选作者须已核验、确认且仍订阅；请刷新选择。旧资料保持不变")
         if author_id and scope and not scope[0]["subscribed"] and mode != "archive":
             raise ValueError("该作者已取消订阅；请先重新订阅。原归档和任务检查点保留；已有任务可从历史与任务恢复")
         if mode == "demo_archive" and not author_id:
@@ -730,7 +738,7 @@ class WorkspaceService:
                 if mode != "archive":
                     self._check_cooldown(sub["platform"], db)
                 active = db.execute("SELECT id FROM jobs WHERE platform=? AND author_id=? AND state IN ('queued','running')", (sub["platform"], sub["author_id"])).fetchone()
-                if active:
+                if active and mode != "archive":
                     raise ValueError("该作者已有任务排队或运行，请等待完成")
             for sub in scope:
                 cur = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)", (sub["platform"], sub["author_id"], mode, time.time(), time.time()))
@@ -1004,7 +1012,7 @@ class WorkspaceService:
                         db.execute("UPDATE runs SET state='succeeded',coverage=?,terminal_evidence=?,updated_at=? WHERE id=?", (known[0] if known else "unknown", known[1] if known else None, time.time(), run_id))
                     exported = self.workflow.export_all(batch_id=batch)
                     for author in exported["authors"]:
-                        for key in ("manifest", "corpus", "index"):
+                        for key in ("manifest", "corpus", "index", "failures"):
                             author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.workflow.archive_root).as_posix(), safe="/")
                     self._finish(job_id, "succeeded", "archive_complete", exported)
                     return

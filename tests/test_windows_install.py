@@ -26,11 +26,11 @@ class WindowsInstallTests(unittest.TestCase):
         return result
 
     def test_install_start_stop_uninstall_reinstall_retains_old_files(self):
-        with tempfile.TemporaryDirectory(prefix="creator-install-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="Creator Archive 启停 ") as temporary:
             base = Path(temporary)
-            data = base / "old-workspace"
-            archive = base / "archive-outside-workspace"
-            runtime = base / "runtime"
+            data = base / "资料 工作区"
+            archive = base / "外置 归档"
+            runtime = base / "运行 日志"
             profiles = base / "profiles"
             desktop = base / "desktop"
             ArchiveWorkflow(data)
@@ -60,6 +60,9 @@ class WindowsInstallTests(unittest.TestCase):
                     workspace = json.load(response)
                 self.assertEqual(Path(workspace["data_dir"]), data)
                 self.assertEqual(Path(workspace["archive_dir"]), archive)
+                profile = json.loads(next(profiles.glob("*.json")).read_text(encoding="utf-8-sig"))
+                self.assertEqual(Path(profile["runtime_dir"]), runtime)
+                self.assertNotIn("\ufffd", profile["runtime_dir"])
             finally:
                 self.powershell("stop.ps1", "-Port", str(port), "-ProfileDir", str(profiles))
 

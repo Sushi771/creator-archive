@@ -79,9 +79,9 @@ function renderSubscriptions(subscriptions) {
     const actions=node("div",null,"author-actions");
     if(eligible.has(authorKey(sub))){
       const label=node("label",null,"select-author"),check=node("input");check.type="checkbox";check.checked=ui.selectedAuthors.has(authorKey(sub));
-      check.setAttribute("aria-label",`选择 ${nameOf(sub.platform)} ${sub.display_name||sub.author_id} 进行手动全量归档`);
+      check.setAttribute("aria-label",`选择 ${nameOf(sub.platform)} ${sub.display_name||sub.author_id} 进行更新或本机导出`);
       check.addEventListener("change",()=>{if(check.checked)ui.selectedAuthors.add(authorKey(sub));else ui.selectedAuthors.delete(authorKey(sub));selectedArchiveCount();});
-      label.append(check,document.createTextNode("选入归档"));actions.append(label);
+      label.append(check,document.createTextNode("选入操作"));actions.append(label);
     }
     actions.append(actionButton("查看作品",async()=>{$("library-filters").reset();ui.filters={sort:"published_at",order:"desc"};ui.platform="";ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
     actions.append(actionButton("编辑标签",()=>openTagEditor(sub)));
@@ -95,15 +95,19 @@ function renderSubscriptions(subscriptions) {
       actions.append(actionButton("确认订阅",()=>openSubscriptionConfirmation(sub)));
     } else {
       const advanced=node("details",null,"archive-experiments"),advancedActions=node("div",null,"actions");
-      advanced.append(node("summary","完整归档实验（超出本轮10篇测试）"));
+      advanced.append(node("summary","其他采集与验证操作"));
       if(sub.identity_verified&&sub.platform==="xiaohongshu"){
-        actions.append(actionButton("测试前10篇并归档",()=>startJob("demo_archive",sub)));
-        text.append(node("p","本轮仅测试列表前10篇唯一作品及对应正文、媒体和互动数据，成功后停止；已有成功资源会复用，不代表新下载或历史完整。","hint"));
-        advancedActions.append(actionButton("单作者全历史归档（实验）",()=>startJob("author_archive",sub)),actionButton("两页采集并归档（实验）",()=>startJob("page_archive",sub)));
+        advancedActions.append(actionButton("测试前10篇并归档",()=>startJob("demo_archive",sub)));
+        advanced.append(node("p","前10篇测试仅用于诊断，已有成功资源会复用，不代表新下载或历史完整。","hint"));
+        actions.append(actionButton("补齐可获取历史",()=>startJob("author_archive",sub)));
+        actions.append(actionButton("获取最新",()=>startJob("latest",sub)));
+        advancedActions.append(actionButton("两页采集并归档（实验）",()=>startJob("page_archive",sub)));
       }
-      advancedActions.append(actionButton("全部历史",()=>startJob("full",sub)),actionButton("检查更新",()=>startJob("latest",sub)),
-        actionButton("保存全部已收录内容",()=>startJob("content",sub)),actionButton("刷新全部指标",()=>startJob("metrics",sub)),
-        actionButton("归档已有资料",()=>startJob("archive",sub)));
+      if(sub.identity_verified&&sub.platform==="xiaohongshu")advancedActions.append(
+        actionButton("全部历史列表",()=>startJob("full",sub)),
+        actionButton("保存全部已收录内容",()=>startJob("content",sub)),
+        actionButton("刷新全部指标",()=>startJob("metrics",sub)));
+      actions.append(actionButton("导出本机已有资料",()=>startJob("archive",sub)));
       advanced.append(advancedActions);actions.append(advanced);
       actions.append(actionButton(sub.enabled?"暂停":"启用",async()=>{
         await api("/api/subscriptions/toggle",{platform:sub.platform,author_id:sub.author_id,enabled:!sub.enabled});
@@ -170,7 +174,7 @@ function pipelineProgress(run) {
     : `列表 ${num(run.pages)} / ${num(run.page_limit||2)} 页`;
   return `${list} · 正文媒体 ${num(run.item_count)} / ${num(run.target_count)} 篇 · 已尝试未完成 ${num(run.failed_count)} · 待处理 ${num(run.pending_count)}；${coverageName[run.coverage]||"历史覆盖未知"}；成功资源和已保存进度保留`;
 }
-function renderJobs(runs) {const list=$("job-list");list.replaceChildren();if(!runs.length){empty(list,"还没有任务","添加作者后获取历史，或将已有作品按作者归档。任务进度会保存在本机。");return;}for(const run of [...runs].sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))){const card=node("article",null,"job-card"),top=node("div",null,"job-top"),title=node("div");title.append(node("h3",`${run.display_name||displayAuthor(run.platform,run.author_id)} · ${modeName[run.mode]||run.mode||"采集任务"}`),node("div",`${nameOf(run.platform)} · 任务 #${run.id}${run.parent_job_id?` · 属于按页归档任务 #${run.parent_job_id}，请从该任务恢复`:""}`,"meta"));const tone=["failed","blocked","needs_login","partial","rate_limited","interrupted"].includes(run.state)?"warning":"";top.append(title,badge(run.reason==="validation_import"?"历史观察已导入":stateName[run.state]||run.state||"待处理",tone));const progress=isPagePipeline(run)?pipelineProgress(run):["content","metrics"].includes(run.mode)?`本次已成功 ${num(run.item_count)} / ${num(run.target_count)} 个作品 · 已尝试未完成 ${num(run.failed_count)} 个 · 待处理 ${num(run.pending_count)} 个；成功资源和有效指标已保留`:run.mode==="archive"?`本次已导出 ${num(run.item_count)} 个作品记录${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""}`:`本次已保存 ${num(run.pages)} 页 · ${num(run.item_count)} 个 ID${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""} · ${coverageName[run.coverage]||"历史覆盖未知"}`;card.append(top,node("p",progress,"job-progress"));if(run.message||run.reason||run.next_step){const issue=node("div",null,"job-issue");issue.append(node("p",run.message||reasonName[run.reason]||`原因：${run.reason||"尚未确定"}`));if(run.next_step)issue.append(node("p",`下一步：${run.next_step}`));card.append(issue);}const bottom=node("div",null,"job-bottom");bottom.append(node("span",formatTime(run.updated_at)?`更新于 ${formatTime(run.updated_at)}`:"进度已持久保存"));const actions=node("div",null,"actions");if(run.can_resume)actions.append(actionButton("从检查点继续",async()=>{await api(`/api/jobs/${encodeURIComponent(run.id)}/resume`,{});notify("已请求继续任务，成功页和已有资料会复用。请查看任务状态。");await refresh(true);}));if(!run.parent_job_id&&["content","metrics","page_archive","author_archive","demo_archive"].includes(run.mode))actions.append(actionButton(isPagePipeline(run)?"查看未完成":"查看未完成 / 补充链接",()=>openRecovery(run)));if(run.scan_url){const link=safeLink(run.scan_url,"查看当前扫描范围");if(link)actions.append(link);}const archiveUrl=run.archive_url||run.export?.archive_url;if(archiveUrl){const link=safeLink(archiveUrl,"打开归档");if(link)actions.append(link);}for(const author of run.export?.authors||[]){const label=displayAuthor(author.platform,author.author_id);for(const [url,title] of [[author.scan_manifest_url,`${label} · 本轮扫描清单（导出时状态）`],[author.manifest_url,`${label} · 全库清单`],[author.corpus_url,`${label} · 正文语料`]]){const link=safeLink(url,title);if(link)actions.append(link);}}bottom.append(actions);card.append(bottom);list.append(card);}}
+function renderJobs(runs) {const list=$("job-list");list.replaceChildren();if(!runs.length){empty(list,"还没有任务","添加作者后获取历史，或将已有作品按作者归档。任务进度会保存在本机。");return;}for(const run of [...runs].sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))){const card=node("article",null,"job-card"),top=node("div",null,"job-top"),title=node("div");title.append(node("h3",`${run.display_name||displayAuthor(run.platform,run.author_id)} · ${modeName[run.mode]||run.mode||"采集任务"}`),node("div",`${nameOf(run.platform)} · 任务 #${run.id}${run.parent_job_id?` · 属于按页归档任务 #${run.parent_job_id}，请从该任务恢复`:""}`,"meta"));const tone=["failed","blocked","needs_login","partial","rate_limited","interrupted"].includes(run.state)?"warning":"";top.append(title,badge(run.reason==="validation_import"?"历史观察已导入":stateName[run.state]||run.state||"待处理",tone));const progress=isPagePipeline(run)?pipelineProgress(run):["content","metrics"].includes(run.mode)?`本次已成功 ${num(run.item_count)} / ${num(run.target_count)} 个作品 · 已尝试未完成 ${num(run.failed_count)} 个 · 待处理 ${num(run.pending_count)} 个；成功资源和有效指标已保留`:run.mode==="archive"?`本次已导出 ${num(run.item_count)} 个作品记录${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""}`:`本次已保存 ${num(run.pages)} 页 · ${num(run.item_count)} 个 ID${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""} · ${coverageName[run.coverage]||"历史覆盖未知"}`;card.append(top,node("p",progress,"job-progress"));if(run.message||run.reason||run.next_step){const issue=node("div",null,"job-issue");issue.append(node("p",run.message||reasonName[run.reason]||`原因：${run.reason||"尚未确定"}`));if(run.next_step)issue.append(node("p",`下一步：${run.next_step}`));card.append(issue);}const bottom=node("div",null,"job-bottom");bottom.append(node("span",formatTime(run.updated_at)?`更新于 ${formatTime(run.updated_at)}`:"进度已持久保存"));const actions=node("div",null,"actions");if(run.can_resume)actions.append(actionButton("从检查点继续",async()=>{await api(`/api/jobs/${encodeURIComponent(run.id)}/resume`,{});notify("已请求继续任务，成功页和已有资料会复用。请查看任务状态。");await refresh(true);}));if(!run.parent_job_id&&["content","metrics","page_archive","author_archive","demo_archive"].includes(run.mode))actions.append(actionButton(isPagePipeline(run)?"查看未完成":"查看未完成 / 补充链接",()=>openRecovery(run)));if(run.scan_url){const link=safeLink(run.scan_url,"查看当前扫描范围");if(link)actions.append(link);}const archiveUrl=run.archive_url||run.export?.archive_url;if(archiveUrl){const link=safeLink(archiveUrl,"打开归档");if(link)actions.append(link);}for(const author of run.export?.authors||[]){const label=displayAuthor(author.platform,author.author_id);for(const [url,title] of [[author.scan_manifest_url,`${label} · 本轮扫描清单（导出时状态）`],[author.manifest_url,`${label} · 全库清单`],[author.corpus_url,`${label} · 正文语料`],[author.failures_url,`${label} · 失败清单`]]){const link=safeLink(url,title);if(link)actions.append(link);}}bottom.append(actions);card.append(bottom);list.append(card);}}
 function renderPlatforms(platforms) {const list=$("platform-list");list.replaceChildren();for(const p of platforms){const card=node("article",null,"platform-card"),heading=node("h3",nameOf(p.platform));heading.append(badge(p.status==="experimental"?"实验接入":p.available?"接入可用":"接入未完成",p.status==="experimental"||!p.available?"warning":""));card.append(heading,node("p",p.message||"尚无可验证的接入状态。"));if(p.platform==="xiaohongshu"){const actions=node("div",null,"actions");actions.append(actionButton("打开专用登录浏览器",async()=>{const result=await api("/api/platforms/xiaohongshu/login",{});notify(result.message||"已请求打开专用浏览器，请在浏览器中自行登录，再从检查点继续任务。");await refresh();}));card.append(actions);}list.append(card);}if(!platforms.length)empty(list,"暂无平台状态","请刷新本机服务。");}
 function renderFilters(subscriptions) {const selected=ui.filter;$("filter-author").replaceChildren(new Option("全部作者",""));for(const sub of subscriptions)$("filter-author").append(new Option(`${sub.display_name||sub.author_id} · ${nameOf(sub.platform)}`,`${sub.platform}|${sub.author_id}`));$("filter-author").value=selected;if($("filter-author").value!==selected){ui.filter="";ui.offset=0;}}
 function dataSignature(value) {
@@ -225,7 +229,7 @@ async function refresh(forceItems = false, background = false) {
       $("data-dir").textContent = w.data_dir || "未提供目录";
       $("archive-dir").textContent = w.archive_dir || "首次归档后生成";
       $("obsidian-dir").textContent = w.obsidian_dir || "未设置";
-      $("connection").textContent = "本机服务已连接 · 数据已持久保存";
+      $("connection").textContent = `本机服务已连接 · v${w.build?.version||"未知"} (${(w.build?.commit||"未知").slice(0,8)})`;
       $("connection-dot").classList.remove("offline");
       $("updated").textContent = `更新 ${new Date().toLocaleTimeString("zh-CN", {hour12:false})}`;
       const itemSignature = JSON.stringify([w.stats?.items, w.stats?.details, w.stats?.assets, w.stats?.metric_snapshots, w.runs.filter(run => ["content", "metrics"].includes(run.mode)), w.subscriptions.map(sub => [sub.platform, sub.author_id])]);
@@ -266,6 +270,13 @@ async function startSelectedArchive() {
     $("selected-archive-error").textContent=`${error.message}；预览后若订阅状态变化，请返回刷新并重新选择。`;
     $("selected-archive-error").hidden=false;
   }
+}
+async function exportSelectedLocal() {
+  const selected_authors=selectedAuthorPayload();
+  if(!selected_authors.length)throw new Error("请先在作者卡片勾选至少一位已核验且仍订阅的作者；未创建导出任务。");
+  const result=await api("/api/jobs",{mode:"archive",selected_authors});
+  notify(`已为 ${result.job_ids?.length||selected_authors.length} 位作者创建本机导出任务。只导出已保存内容；历史覆盖仍按各作者检查点标记。`);
+  await refresh(true);$("jobs").scrollIntoView();
 }
 function openSubscriptionConfirmation(sub) {
   if(!sub.subscription_confirmation_required)return;
@@ -505,6 +516,7 @@ $("confirm-subscription-dialog").addEventListener("close",()=>{ui.confirmAuthor=
 $("subscription-platform").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
 $("subscription-tag").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
 $("preview-selected-archive").onclick=()=>perform($("preview-selected-archive"),previewSelectedArchive);
+$("export-selected-local").onclick=()=>perform($("export-selected-local"),exportSelectedLocal);
 $("start-selected-archive").onclick=()=>perform($("start-selected-archive"),startSelectedArchive);
 $("close-selected-archive").onclick=()=>$("selected-archive-dialog").close();
 $("selected-archive-dialog").addEventListener("close",()=>{ui.previewAuthors=null;});

@@ -1,3 +1,3 @@
 """Creator Archive local workspace; platform capabilities are reported separately."""
 
-__version__ = "0.4.20"
+__version__ = "0.5.0rc1"

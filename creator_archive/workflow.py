@@ -522,18 +522,33 @@ class ArchiveWorkflow:
                         label = escape(asset["asset_id"])
                         if asset["kind"] == "image":
                             media_md.append(f"![{asset['asset_id']}]({relative})")
-                            media_html.append(f'<img src="{escape(relative, quote=True)}" alt="{label}">')
+                            media_html.append(f'<figure><img src="{escape(relative, quote=True)}" alt="{label}" loading="lazy">'
+                                              f'<figcaption>图片 {asset["position"] + 1}</figcaption></figure>')
                         else:
                             media_md.append(f"[视频 {asset['asset_id']}]({relative})")
-                            media_html.append(f'<video controls src="{escape(relative, quote=True)}"></video>')
+                            media_html.append(f'<figure><video controls preload="metadata" src="{escape(relative, quote=True)}"></video>'
+                                              f'<figcaption>视频 {asset["position"] + 1}</figcaption></figure>')
                     files = {}
                     if item["detail_state"] == "complete":
                         body = item["detail_text"]
-                        md = (f"# {item['item_id']}\n\n{body}\n\n" + "\n\n".join(media_md) +
+                        title = item["title"] or item["item_id"]
+                        md = (f"# {title}\n\n平台：{platform} · 作者ID：{author_id} · 作品ID：{item['item_id']}\n\n"
+                              f"{body}\n\n" + "\n\n".join(media_md) +
                               f"\n\n来源：{item['source_url']}\n").encode("utf-8")
-                        html = ("<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
-                                f"<title>{escape(item['item_id'])}</title><body><article><pre>{escape(body)}</pre>" +
-                                "".join(media_html) + "</article></body></html>").encode("utf-8")
+                        html = ("<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+                                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                                f"<title>{escape(title)}</title>"
+                                "<style>body{margin:0;background:#f7f8f6;color:#1d2924;font:17px/1.85 system-ui,'Microsoft YaHei',sans-serif}"
+                                "main{max-width:760px;margin:0 auto;padding:42px 24px 96px}h1{font-size:1.7em;line-height:1.4}"
+                                ".meta,figcaption{font-size:.78em;color:#647369}.body{white-space:pre-wrap;overflow-wrap:anywhere;margin:32px 0}"
+                                "figure{margin:28px 0}img,video{max-width:100%;height:auto;border-radius:8px;display:block}"
+                                "a{color:#285d4a}footer{margin-top:42px;border-top:1px solid #d7dfd8;padding-top:20px;overflow-wrap:anywhere}"
+                                "@media(prefers-color-scheme:dark){body{background:#17201b;color:#e8eee8}.meta,figcaption{color:#acb9ad}"
+                                "a{color:#a5d7b8}footer{border-color:#3d4d40}}</style></head><body><main>"
+                                f"<h1>{escape(title)}</h1><p class='meta'>{escape(platform)} · {escape(author_id)} · {escape(item['item_id'])}</p>"
+                                f"<div class='body'>{escape(body)}</div>" + "".join(media_html) +
+                                f"<footer>来源：<a href='{escape(item['source_url'], quote=True)}'>{escape(item['source_url'])}</a></footer>"
+                                "</main></body></html>").encode("utf-8")
                         for name, content in (("article.md", md), ("index.html", html)):
                             files[name] = _managed_write(item_dir / name, content).relative_to(base).as_posix()
                         corpus.append({"schema_version": 2, "platform": platform, "author_id": author_id,
@@ -565,6 +580,15 @@ class ArchiveWorkflow:
                                                json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
                 corpus_path = _managed_write(base / "corpus.jsonl",
                                              "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in corpus).encode("utf-8"))
+                failures = [{"item_id": item["item_id"], "reason": "detail_missing"}
+                            for item in manifest_items if item["detail_state"] != "complete"]
+                failures.extend({"item_id": item["item_id"], "asset_id": asset["asset_id"],
+                                 "reason": "registered_asset_missing_or_corrupt"}
+                                for item in manifest_items for asset in item["assets"]
+                                if asset["state"] != "complete")
+                failures_path = _managed_write(base / "failures.json",
+                                               json.dumps({"scope": "saved_local_items", "entries": failures},
+                                                          ensure_ascii=False, indent=2).encode("utf-8"))
                 # A complete author index is independent of the interactive API's
                 # page size. Link actual managed filenames, including hash-suffixed
                 # replacements when an earlier export was edited by the user.
@@ -604,12 +628,14 @@ class ArchiveWorkflow:
                     f'<p>媒体预期总数未知；已登记但缺失或校验失败的附件：{missing_assets} 个。</p>'
                     + scan_notice +
                     f'<nav><a href="{escape(quote(manifest_path.name), quote=True)}">归档清单</a> · '
-                    f'<a href="{escape(quote(corpus_path.name), quote=True)}">正文语料 JSONL</a>{scan_link}</nav>'
+                    f'<a href="{escape(quote(corpus_path.name), quote=True)}">正文语料 JSONL</a> · '
+                    f'<a href="{escape(quote(failures_path.name), quote=True)}">失败清单</a>{scan_link}</nav>'
                     '<h2>全部已保存作品</h2><ol>' + "".join(index_rows) + '</ol></main></body></html>'
                 )
                 index_path = _managed_write(base / "index.html", index_html.encode("utf-8"))
                 result.append({"platform": platform, "author_id": author_id, "items": len(items),
-                               "details": len(corpus), "manifest": str(manifest_path), "corpus": str(corpus_path), "index": str(index_path),
+                               "details": len(corpus), "manifest": str(manifest_path), "corpus": str(corpus_path),
+                               "failures": str(failures_path), "index": str(index_path),
                                "coverage": manifest["coverage"], "missing_registered_assets": missing_assets,
                                "media_coverage": "unknown_expected_count"})
                 if scan_path is not None:

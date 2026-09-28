@@ -27,7 +27,7 @@ $url = "http://127.0.0.1:$Port/"
 $launchLock = [System.IO.File]::Open((Join-Path $runtimeDir "launch-$Port.lock"), 'OpenOrCreate', 'ReadWrite', 'None')
 try {
     if (Test-Path -LiteralPath $stateFile) {
-        $saved = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+        $saved = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
         $existing = Get-Process -Id $saved.pid -ErrorAction SilentlyContinue
         if ($existing -and $existing.Path -eq $saved.executable -and $existing.StartTime.ToUniversalTime().Ticks.ToString() -eq $saved.start_ticks) {
             if ($saved.workspace -ne $PSScriptRoot) { throw "This port belongs to another Creator Archive checkout: $($saved.workspace)" }
@@ -86,9 +86,10 @@ try {
     if (-not $ready) { throw "Server is not ready. See $runtimeDir/server-$Port.stderr.log; stop.cmd safely stops this launch." }
     $workspace = Invoke-RestMethod -Uri ($url + 'api/workspace') -TimeoutSec 4
     $DataDir = $workspace.data_dir
-    $canonicalRuntime = & $pythonExe -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' $runtimeDir
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the runtime directory.' }
-    Save-LauncherSettings $PSScriptRoot $ProfileDir $DataDir $canonicalRuntime.Trim() | Out-Null
+    # Keep Unicode paths inside PowerShell. Python stdout can be decoded with
+    # the console codepage and corrupt Chinese runtime paths in the profile.
+    $canonicalRuntime = [IO.Path]::GetFullPath($runtimeDir)
+    Save-LauncherSettings $PSScriptRoot $ProfileDir $DataDir $canonicalRuntime | Out-Null
     @{ pid = $server.Id; executable = $pythonExe; start_ticks = $server.StartTime.ToUniversalTime().Ticks.ToString(); workspace = $PSScriptRoot; url = $url; data_dir = $DataDir } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8
     Write-Host "Creator Archive is ready: $url"
     Write-Host "Data: $DataDir"

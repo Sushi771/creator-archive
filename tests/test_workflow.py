@@ -3,6 +3,7 @@
 import base64
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -156,19 +157,28 @@ assert len(r['runs']) == 1 and r['runs'][0]['pages'] == 4, r
         asset = self.workflow.attach_media("xiaohongshu", item_id, "image-1", image,
                                            position=0, kind="image", mime="image/png")
         self.assertTrue(asset.is_file())
+        self.workflow.attach_media("xiaohongshu", item_id, "image-2", image,
+                                   position=1, kind="image", mime="image/png")
         output = self.workflow.export_all()
         author = output["authors"][0]
         manifest = json.loads(Path(author["manifest"]).read_text(encoding="utf-8"))
         item = next(row for row in manifest["items"] if row["item_id"] == item_id)
         self.assertEqual(item["detail_state"], "complete")
         self.assertNotIn("private-sample", Path(author["corpus"]).read_text(encoding="utf-8"))
-        self.assertEqual(len(item["assets"]), 1)
+        self.assertEqual(len(item["assets"]), 2)
         media_ref = "assets/image-1.png"
         note = self.root / "archive" / "xiaohongshu" / "author-a" / item_id / "article.md"
         html = note.with_name("index.html")
         self.assertIn(media_ref, note.read_text(encoding="utf-8"))
         self.assertIn(media_ref, html.read_text(encoding="utf-8"))
         self.assertTrue((note.parent / media_ref).is_file())
+        moved = self.root / "moved-offline" / "author-a"
+        shutil.copytree(Path(author["index"]).parent, moved)
+        moved_html = (moved / item_id / "index.html").read_text(encoding="utf-8")
+        self.assertLess(moved_html.index("assets/image-1.png"), moved_html.index("assets/image-2.png"))
+        self.assertIn("class='body'>正文段落", moved_html)
+        for ref in ("image-1.png", "image-2.png"):
+            self.assertTrue((moved / item_id / "assets" / ref).is_file())
         note.write_text("用户手工修改，不得丢失", encoding="utf-8")
         self.workflow.export_all()
         self.assertEqual(note.read_text(encoding="utf-8"), "用户手工修改，不得丢失")
@@ -193,6 +203,9 @@ assert len(r['runs']) == 1 and r['runs'][0]['pages'] == 4, r
         item = next(row for row in manifest["items"] if row["item_id"] == item_id)
         self.assertEqual(output["authors"][0]["missing_registered_assets"], 1)
         self.assertEqual(manifest["missing_registered_assets"], 1)
+        failures = json.loads(Path(output["authors"][0]["failures"]).read_text(encoding="utf-8"))
+        self.assertTrue(any(entry["reason"] == "registered_asset_missing_or_corrupt"
+                            for entry in failures["entries"]))
         for row in item["assets"]:
             path = self.root / "archive" / row["relative_path"]
             self.assertEqual(row["state"], "missing")

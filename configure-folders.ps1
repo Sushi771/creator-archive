@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $launcherConfig = Join-Path $PSScriptRoot '.venv/creator-archive-launcher.json'
 if (Test-Path -LiteralPath $launcherConfig) {
-    $saved = Get-Content -LiteralPath $launcherConfig -Raw | ConvertFrom-Json
+    $saved = Get-Content -LiteralPath $launcherConfig -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not $DataDir) { $DataDir = $saved.data_dir }
     if (-not $RuntimeDir) { $RuntimeDir = $saved.runtime_dir }
 }
@@ -19,7 +19,7 @@ if (-not (Test-Path -LiteralPath $pythonExe)) { throw '请先用 start.cmd 安�
 if (Test-Path -LiteralPath $RuntimeDir) {
     foreach ($stateFile in Get-ChildItem -LiteralPath $RuntimeDir -Filter 'server-*.json' -File) {
         try {
-            $state = Get-Content -LiteralPath $stateFile.FullName -Raw | ConvertFrom-Json
+            $state = Get-Content -LiteralPath $stateFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
             $process = Get-Process -Id $state.pid -ErrorAction SilentlyContinue
             if ($process -and $process.Path -eq $state.executable -and
                 $process.StartTime.ToUniversalTime().Ticks.ToString() -eq $state.start_ticks -and

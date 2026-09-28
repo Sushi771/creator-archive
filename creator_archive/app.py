@@ -3,9 +3,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 import os
+import json
+import subprocess
+from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -14,6 +17,26 @@ from . import __version__
 from .links import classify
 from .validation import AdapterFailure, Store, SyntheticAdapter, scan
 from .service import PlatformCooldown, WorkspaceService, default_workspace
+
+
+@lru_cache(maxsize=1)
+def source_commit() -> str:
+    """Identify packaged source or the current checkout without reading user data."""
+    repo = Path(__file__).resolve().parent.parent
+    manifest = repo / "release-info.json"
+    if manifest.is_file():
+        try:
+            commit = json.loads(manifest.read_text(encoding="utf-8"))["commit"]
+            if isinstance(commit, str) and len(commit) == 40 and all(c in "0123456789abcdef" for c in commit):
+                return commit
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    try:
+        result = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, timeout=3, check=True)
+        return result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 class LinkInput(BaseModel):
@@ -83,22 +106,37 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             if request.headers.get("x-creator-archive") != "local-validation" or (origin and origin != str(request.base_url).rstrip("/")):
                 return JSONResponse({"detail": "仅允许本地验证页面发起操作"}, status_code=403)
         response = await call_next(request)
+        if response.headers.get("content-type", "").startswith("application/json"):
+            response.headers["Content-Type"] = "application/json; charset=utf-8"
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        style_policy = "style-src 'self' 'unsafe-inline'" if request.url.path.startswith("/archive/") and request.url.path.endswith(".html") else "style-src 'self'"
+        response.headers["Content-Security-Policy"] = f"default-src 'self'; script-src 'self'; {style_policy}; img-src 'self'; media-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         return response
 
     @app.get("/")
     def home():
         return FileResponse(static / "index.html")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        return Response(status_code=204)
+
     @app.get("/api/status")
     def status():
-        return {"version": __version__, "mode": "local_mvp", "g1_passed": False,
-                "platforms": [{"platform": p, "creator_resolution": False, "history_pagination": p == "xiaohongshu",
-                               "detail": p == "xiaohongshu", "media": p == "xiaohongshu", "metrics": p == "xiaohongshu",
-                               "experimental": True, "known_limits": "G1未通过；字段表示实验接口已实现，不代表全库已采集或双平台已验收。旧作品可能需补充有效原文链接。"}
-                              for p in ("wechat", "xiaohongshu")], "runs": store.all()}
+        return {"version": __version__, "commit": source_commit(), "mode": "local_mvp", "g1_passed": False,
+                "platforms": [
+                    {"platform": "wechat", "implementation": {"creator_resolution": False,
+                        "latest": False, "history_pagination": False, "detail": False, "media": False},
+                     "configuration": "no_authorized_history_source", "runtime": "not_connected",
+                     "validation": "not_passed", "experimental": False,
+                     "known_limits": "尚无可用的公众号历史来源或接入适配器；本机旧资料可浏览和导出。"},
+                    {"platform": "xiaohongshu", "implementation": {"creator_resolution": True,
+                        "latest": True, "history_pagination": True, "detail": True, "media": True},
+                     "configuration": "dedicated_browser_login_required", "runtime": "not_checked_by_health",
+                     "validation": "partial_live_samples", "experimental": True,
+                     "known_limits": "已有有限真实列表、正文与媒体样本；登录状态和精确游标恢复须按任务现场核对，G1未通过。"}
+                ], "runs": store.all()}
 
     @app.exception_handler(ValueError)
     async def invalid_input(request, error):
@@ -118,7 +156,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/workspace")
     def workspace():
-        return service.workspace()
+        snapshot = service.workspace()
+        snapshot["build"] = {"version": __version__, "commit": source_commit()}
+        return snapshot
 
     @app.post("/api/subscriptions")
     def subscribe(body: SubscriptionInput):

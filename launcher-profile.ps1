@@ -12,12 +12,12 @@ function Get-LauncherSettings {
     param([string]$AppDir, [string]$ProfileDir)
     $path = Get-LauncherProfilePath $AppDir $ProfileDir
     if (Test-Path -LiteralPath $path) {
-        $saved = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $saved = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($saved.version -ne 1 -or $saved.app_dir -ne $AppDir) { throw "Launcher profile does not match this app: $path" }
         return $saved
     }
     $legacy = Join-Path $AppDir '.venv/creator-archive-launcher.json'
-    if (Test-Path -LiteralPath $legacy) { return Get-Content -LiteralPath $legacy -Raw | ConvertFrom-Json }
+    if (Test-Path -LiteralPath $legacy) { return Get-Content -LiteralPath $legacy -Raw -Encoding UTF8 | ConvertFrom-Json }
     return $null
 }
 
@@ -27,7 +27,7 @@ function Save-LauncherSettings {
     $parent = Split-Path -Parent $path
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
     if (-not $ShortcutDir -and (Test-Path -LiteralPath $path)) {
-        $previous = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $previous = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
         $ShortcutDir = $previous.shortcut_dir
     }
     $temporary = Join-Path $parent ('.launcher-' + [guid]::NewGuid().ToString('N') + '.tmp')

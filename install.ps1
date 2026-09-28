@@ -42,7 +42,7 @@ if ($saved -and -not $explicitDataDir -and -not (Test-Path -LiteralPath $DataDir
     throw "Saved workspace is unavailable: $DataDir. Restore it or explicitly select a workspace; nothing was changed."
 }
 if ((Test-Path -LiteralPath $DataDir) -and (Test-Path -LiteralPath (Join-Path $DataDir 'folders.json'))) {
-    $folders = Get-Content -LiteralPath (Join-Path $DataDir 'folders.json') -Raw | ConvertFrom-Json
+    $folders = Get-Content -LiteralPath (Join-Path $DataDir 'folders.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($folders.version -ne 1 -or -not (Test-Path -LiteralPath $folders.archive_dir -PathType Container)) {
         throw "Configured archive is unavailable. Restore it before installing: $($folders.archive_dir)"
     }

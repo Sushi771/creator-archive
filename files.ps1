@@ -7,7 +7,7 @@ $dataDir = $settings.data_dir
 $archiveDir = Join-Path $dataDir 'archive'
 $folderConfig = Join-Path $dataDir 'folders.json'
 if (Test-Path -LiteralPath $folderConfig) {
-    $folders = Get-Content -LiteralPath $folderConfig -Raw | ConvertFrom-Json
+    $folders = Get-Content -LiteralPath $folderConfig -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($folders.version -ne 1) { throw "Unsupported folder settings: $folderConfig" }
     $archiveDir = $folders.archive_dir
 }

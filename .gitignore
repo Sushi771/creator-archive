@@ -40,5 +40,6 @@ dist/
 build/
 .cache/
 .pytest_cache/
+.playwright-cli/
 .DS_Store
 Thumbs.db

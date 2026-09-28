@@ -5,7 +5,7 @@ if (-not $RuntimeDir) { $config = Get-LauncherSettings $PSScriptRoot $ProfileDir
 if (-not $RuntimeDir) { $RuntimeDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/runtime' }
 $stateFile = Join-Path $RuntimeDir "server-$Port.json"
 if (-not (Test-Path -LiteralPath $stateFile)) { Write-Host 'No managed server is recorded.'; return }
-$saved = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+$saved = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($saved.workspace -ne $PSScriptRoot) { throw "This server belongs to $($saved.workspace). Use that checkout to stop it." }
 $server = Get-Process -Id $saved.pid -ErrorAction SilentlyContinue
 if ($server) {

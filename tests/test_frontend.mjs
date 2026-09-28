@@ -178,11 +178,11 @@ console.log('Page archive UI checks passed: explicit two-page scope, separate pr
 
 const flattenText=element=>[element.textContent,...(element.children||[]).map(flattenText)].join(' ');
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"author",identity_verified:true,enabled:true}])');
-assert.match(flattenText(elements['subscription-list']),/单作者全历史归档（实验）/);
+assert.match(flattenText(elements['subscription-list']),/补齐可获取历史.*获取最新.*导出本机已有资料/);
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"pending",identity_verified:true,subscription_confirmation_required:true}])');
-assert.doesNotMatch(flattenText(elements['subscription-list']),/单作者全历史归档（实验）/,'Pending subscription authors cannot start a full-author pipeline');
+assert.doesNotMatch(flattenText(elements['subscription-list']),/补齐可获取历史/,'Pending subscription authors cannot start a full-author pipeline');
 run('renderSubscriptions([{platform:"wechat",author_id:"author",identity_verified:true,enabled:true}])');
-assert.doesNotMatch(flattenText(elements['subscription-list']),/单作者全历史归档（实验）/,'Unvalidated platforms do not expose this experiment');
+assert.doesNotMatch(flattenText(elements['subscription-list']),/补齐可获取历史/,'Unvalidated platforms do not expose this experiment');
 run('pageCalls=[]');
 await run('startJob("author_archive",{platform:"xiaohongshu",author_id:"author"})');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls[0].body)')),{mode:'author_archive',platform:'xiaohongshu',author_id:'author'},'Full-author collection creates a separate mode and never resumes or expands old task 32');
@@ -235,21 +235,25 @@ run('globalThis.lifecycleCalls=[];api=async(path,body)=>{lifecycleCalls.push({pa
 await walk(elements['subscription-list']).find(x=>x.textContent==='重新订阅').handlers.click();
 assert.deepEqual(JSON.parse(run('JSON.stringify(lifecycleCalls)')),[{path:'/api/subscriptions/resubscribe',body:{platform:'xiaohongshu',author_id:'archived'}}]);
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"author",identity_verified:true,enabled:true}])');
-assert.match(visibleText(elements['subscription-list']),/测试前10篇并归档/);
+assert.doesNotMatch(visibleText(elements['subscription-list']),/测试前10篇并归档/);
+assert.match(flattenText(elements['subscription-list']),/测试前10篇并归档/);
 assert.match(flattenText(elements['subscription-list']),/取消订阅（保留归档）/);
 await walk(elements['subscription-list']).find(x=>x.textContent==='取消订阅（保留归档）').handlers.click();
 assert.deepEqual(JSON.parse(run('JSON.stringify(lifecycleCalls.at(-1))')),{path:'/api/subscriptions/cancel',body:{platform:'xiaohongshu',author_id:'author'}});
-assert.doesNotMatch(visibleText(elements['subscription-list']),/单作者全历史归档（实验）|两页采集并归档（实验）|保存全部已收录内容/,'Broad jobs are collapsed by default');
-assert.match(flattenText(elements['subscription-list']),/完整归档实验（超出本轮10篇测试）.*单作者全历史归档/,'Existing P0 experiments remain available in advanced controls');
+assert.match(visibleText(elements['subscription-list']),/补齐可获取历史.*获取最新.*导出本机已有资料/,'Core author actions are visible');
+assert.doesNotMatch(visibleText(elements['subscription-list']),/两页采集并归档（实验）|保存全部已收录内容/,'Diagnostic actions remain collapsed');
+assert.match(flattenText(elements['subscription-list']),/其他采集与验证操作.*测试前10篇并归档.*两页采集并归档/,'Existing diagnostic experiments remain available');
 const batchAdvanced=html.match(/<details class="archive-experiments">[\s\S]*?<\/details>/)?.[0];
 assert.ok(batchAdvanced);
 assert.match(batchAdvanced,/data-job="full"/);
-assert.match(batchAdvanced,/data-job="all_archive"/);
-assert.match(batchAdvanced,/id="preview-selected-archive"/);
+assert.doesNotMatch(batchAdvanced,/data-job="all_archive"/);
+assert.doesNotMatch(batchAdvanced,/id="preview-selected-archive"/);
 assert.match(batchAdvanced,/data-job="content"/);
-assert.doesNotMatch(batchAdvanced,/data-job="demo_archive"/);
-assert.match(html.replace(batchAdvanced,''),/data-job="demo_archive"[^>]*>测试各作者前10篇/);
-assert.doesNotMatch(html.replace(batchAdvanced,''),/data-job="(?:full|content|metrics|latest)"/,'Broad bulk actions are not primary controls');
+assert.match(batchAdvanced,/data-job="demo_archive"/);
+assert.match(html.replace(batchAdvanced,''),/data-job="all_archive"[^>]*>更新并归档全订阅/);
+assert.match(html.replace(batchAdvanced,''),/id="preview-selected-archive"[^>]*>更新所选作者/);
+assert.match(html.replace(batchAdvanced,''),/id="export-selected-local"[^>]*>导出所选已保存/);
+assert.match(html.replace(batchAdvanced,''),/data-job="archive"[^>]*>导出全部已保存/);
 run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 await run('startJob("all_archive")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
@@ -280,6 +284,9 @@ await run('startSelectedArchive()');
 assert.deepEqual(JSON.parse(run('JSON.stringify(selectedCalls[1].body)')),
   {mode:'selected_archive',selected_authors:[{platform:'xiaohongshu',author_id:'first'},{platform:'xiaohongshu',author_id:'second'}]});
 assert.equal(elements['selected-archive-dialog'].open,false);
+await run('exportSelectedLocal()');
+assert.deepEqual(JSON.parse(run('JSON.stringify(selectedCalls.at(-1).body)')),
+  {mode:'archive',selected_authors:[{platform:'xiaohongshu',author_id:'first'},{platform:'xiaohongshu',author_id:'second'}]});
 elements['subscription-tag'].value='';
 console.log('Selected archive UI checks passed: stable IDs, cross-filter selection, paused author, preview and fixed submit payload.');
 run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');

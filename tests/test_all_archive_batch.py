@@ -669,7 +669,8 @@ class AllArchiveBatchTests(unittest.TestCase):
                     if local.suffix == ".html":
                         links = LocalLinks()
                         links.feed(response.text)
-                        pending.extend(urljoin(url, link) for link in links.links)
+                        pending.extend(target for link in links.links
+                                       if (target := urljoin(url, link)).startswith("/archive/"))
                     elif local.suffix == ".md":
                         pending.extend(urljoin(url, link) for link in re.findall(r"!?(?:\[[^]]*\])\(([^)]+)\)", response.text)
                                        if not link.startswith("https://"))
