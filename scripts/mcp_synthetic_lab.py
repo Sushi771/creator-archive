@@ -9,14 +9,43 @@ import json
 from pathlib import Path
 import shlex
 import socket
+import struct
 import sys
 import tempfile
 import threading
+import zlib
 
 import uvicorn
 
 from creator_archive.app import create_app
 from tests.test_demo_pipeline import DemoSource, IDS
+
+
+def vision_probe_png() -> bytes:
+    """A recognizable image whose layout is absent from MCP metadata and prompts."""
+    width, height = 128, 96
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)  # PNG filter: none
+        for x in range(width):
+            color = (226, 42, 49) if 48 <= x < 80 and 32 <= y < 64 else (
+                (22, 96, 215) if x < 64 else (255, 208, 12))
+            rows.extend(color)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+class VisionProbeSource(DemoSource):
+    def download_media(self, candidate, target):
+        self.events.append(("download", target.name))
+        target.mkdir(parents=True, exist_ok=True)
+        image = target / "sample.png"
+        image.write_bytes(vision_probe_png())
+        return {"path": str(image), "mime": "image/png"}
 
 
 def main():
@@ -31,7 +60,7 @@ def main():
         service = app.state.service
         timer = None
         try:
-            source = DemoSource(pages=[IDS[:2], IDS[1:4], IDS[4:5], IDS[4:6], IDS[5:6]])
+            source = VisionProbeSource(pages=[IDS[:2], IDS[1:4], IDS[4:5], IDS[4:6], IDS[5:6]])
             service.adapter_factory = lambda _: source
             author = "a" * 24
             service.workflow.subscribe("xiaohongshu", author, "Synthetic MCP author",

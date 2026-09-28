@@ -10,12 +10,14 @@ from pathlib import Path
 import shlex
 import socket
 import subprocess
+import struct
 import sys
 import tempfile
 import threading
 import time
 import unittest
 from urllib.parse import urlsplit
+import zlib
 
 import httpx
 import uvicorn
@@ -88,7 +90,7 @@ class McpReadOnlyTests(unittest.TestCase):
 
     def test_synthetic_lab_uses_temporary_root_and_removes_it_on_normal_stop(self):
         process = subprocess.Popen(
-            [sys.executable, "-X", "utf8", "-m", "scripts.mcp_synthetic_lab", "--duration", "5"],
+            [sys.executable, "-X", "utf8", "-m", "scripts.mcp_synthetic_lab", "--duration", "20"],
             cwd=Path(__file__).resolve().parents[1], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8")
         try:
@@ -101,7 +103,31 @@ class McpReadOnlyTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual((response.json()["total"], len(response.json()["items"])), (6, 2))
                 self.assertEqual(client.get("/api/workspace").json()["stats"]["running"], 0)
-            _, errors = process.communicate(timeout=15)
+                detail = client.get("/api/items/xiaohongshu/" + IDS[0]).json()
+                image = client.get(detail["assets"][0]["url"]).content
+                self.assertTrue(image.startswith(b"\x89PNG\r\n\x1a\n"))
+                self.assertEqual(struct.unpack(">II", image[16:24]), (128, 96))
+                idat_start = image.index(b"IDAT") + 4
+                compressed_length = struct.unpack(">I", image[idat_start - 8:idat_start - 4])[0]
+                pixels = zlib.decompress(image[idat_start:idat_start + compressed_length])
+                def pixel(x, y):
+                    start = y * (1 + 128 * 3) + 1 + x * 3
+                    return tuple(pixels[start:start + 3])
+                self.assertEqual(pixel(10, 48), (22, 96, 215))
+                self.assertEqual(pixel(118, 48), (255, 208, 12))
+                self.assertEqual(pixel(64, 48), (226, 42, 49))
+            async def read_image_through_mcp():
+                command = shlex.split(metadata["mcp_command"])
+                params = StdioServerParameters(command=command[0], args=command[1:],
+                                               cwd=metadata["command_working_directory"])
+                async with Client(params) as client:
+                    result = await client.call_tool("read_image", {"platform": "xiaohongshu", "item_id": IDS[0],
+                                                                   "asset_id": detail["assets"][0]["asset_id"]})
+                    self.assertFalse(result.is_error)
+                    block = next(value for value in result.content if isinstance(value, ImageContent))
+                    self.assertEqual(base64.b64decode(block.data), image)
+            asyncio.run(read_image_through_mcp())
+            _, errors = process.communicate(timeout=25)
             self.assertEqual(process.returncode, 0, errors)
             self.assertFalse(root.exists())
         finally:

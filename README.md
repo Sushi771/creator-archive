@@ -1,5 +1,7 @@
 # Creator Archive｜博主订阅与内容归档
 
+> **2026-09-28 G4视觉盲测材料**：独立合成入口现提供可辨认图像；HTTP与实际MCP客户端取得相同PNG，便于将来判断ChatGPT新会话是否真的看见图片。真实会话仍未接通。操作与停止方法见[docs/07](docs/07_验证骨架运行与接口.md)。
+
 > **v0.4.20 ChatGPT接入准备**：官方Secure MCP Tunnel本地测试模式已通过stdio桥接的分页正文、图片字节和只读核验；真实ChatGPT账户连接仍未验收。新增`.venv/Scripts/python.exe -X utf8 -m scripts.mcp_synthetic_lab`可启动独立临时合成库，首行给出连接命令/结果路径，Ctrl+C停止清理。账户条件、Windows命令路径注意事项和真实会话验证步骤见[运行说明](docs/07_验证骨架运行与接口.md)。普通工作台与真实资料保持不变。
 
 > **v0.4.20 本机只读 MCP（合成验收）**：可选安装 `requirements-mcp.txt` 后，先用 Start 启动本机工作台，再以 `python -m creator_archive.mcp_readonly --base-url http://127.0.0.1:8765` 配置 stdio MCP 客户端；关闭客户端进程即停止桥接，工作台仍由 Stop 停止。实际 MCP 客户端已在独立合成库读齐分页正文、来源及校验有效的图片块/字节，读前后资料保持。当前没有真实 ChatGPT 连接或真实资料 G4 验收；入口、工具及边界见[运行说明](docs/07_验证骨架运行与接口.md)。
