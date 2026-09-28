@@ -6,7 +6,7 @@ const coverageName = {complete_for_accessible_scope:"已观察到可获取列表
 const modeName = {full:"全部历史",latest:"检查更新",archive:"本地归档",all_archive:"全订阅逐作者归档（实验）",page_archive:"两页采集并归档（实验）",author_archive:"单作者全历史归档（实验）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
 const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
-const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
+const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
 function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
@@ -83,7 +83,7 @@ function renderSubscriptions(subscriptions) {
       check.addEventListener("change",()=>{if(check.checked)ui.selectedAuthors.add(authorKey(sub));else ui.selectedAuthors.delete(authorKey(sub));selectedArchiveCount();});
       label.append(check,document.createTextNode("选入归档"));actions.append(label);
     }
-    actions.append(actionButton("查看作品",async()=>{ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
+    actions.append(actionButton("查看作品",async()=>{$("library-filters").reset();ui.filters={sort:"published_at",order:"desc"};ui.platform="";ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
     actions.append(actionButton("编辑标签",()=>openTagEditor(sub)));
     if(sub.subscribed===false){
       actions.append(actionButton("重新订阅",async()=>{
@@ -318,6 +318,7 @@ async function resolveAndSaveItem() {
 }
 const metricNames = {likes:"点赞",collects:"收藏",comments:"评论"};
 const contentTypeNames = {image:"图文",video:"视频",unknown:"类型未知"};
+const archiveStatusNames = {complete:"完整",partial:"部分",missing:"缺失",unknown:"未知"};
 const hasMetricValue = metric => metric?.value !== null && metric?.value !== undefined && metric.quality !== "unknown";
 function metricValue(metric) {
   if (!hasMetricValue(metric)) return "未知";
@@ -357,7 +358,7 @@ function itemParams() {
   if (ui.filter) {
     const [platform, author_id] = ui.filter.split("|");
     params.set("platform",platform);params.set("author_id",author_id);
-  }
+  } else if (ui.platform) params.set("platform",ui.platform);
   return params;
 }
 async function applyFilters() {
@@ -367,12 +368,19 @@ async function applyFilters() {
     notify("起始日期不能晚于结束日期，请调整后重新应用筛选。", true);
     return;
   }
+  const selectedAuthor = $("filter-author").value;
+  const selectedPlatform = $("filter-platform").value;
+  if (selectedAuthor && selectedPlatform && !selectedAuthor.startsWith(`${selectedPlatform}|`)) {
+    notify("所选作者与平台不一致，请调整后再筛选。已保存资料不变。",true);
+    return;
+  }
   ui.filters = {};
-  for (const [id,key] of [["filter-type","content_type"],["filter-date-from","date_from"],["filter-date-to","date_to"],["filter-sort","sort"],["filter-order","order"],["filter-min-likes","min_likes"],["filter-min-collects","min_collects"],["filter-min-comments","min_comments"],["filter-missing","missing_metric"]]) {
+  for (const [id,key] of [["filter-text","text"],["filter-archive-status","archive_status"],["filter-type","content_type"],["filter-date-from","date_from"],["filter-date-to","date_to"],["filter-sort","sort"],["filter-order","order"],["filter-min-likes","min_likes"],["filter-min-collects","min_collects"],["filter-min-comments","min_comments"],["filter-missing","missing_metric"]]) {
     if ($(id).value !== "") ui.filters[key] = $(id).value;
   }
   if ($("filter-assets").checked) ui.filters.has_assets = "true";
-  ui.filter = $("filter-author").value;
+  ui.filter = selectedAuthor;
+  ui.platform = selectedPlatform;
   ui.offset = 0;
   await loadItems();
 }
@@ -396,9 +404,9 @@ async function loadItems(canApply = () => true) {
     const row=node("article",null,"item-row"),main=node("div",null,"item-main"),title=node("button",item.title||item.item_id,"item-title");
     title.type="button";
     title.addEventListener("click",()=>openItem(item).catch(e=>notify(e.message,true)));
-    main.append(title,node("div",`${displayAuthor(item.platform,item.author_id)} · ${nameOf(item.platform)} · ${contentTypeNames[item.content_type]||"类型未知"}${item.published_at?` · ${formatTime(item.published_at)||item.published_at}`:" · 发布日期未知"}`,"meta"));
+    main.append(title,node("div",`${item.display_name||displayAuthor(item.platform,item.author_id)} · ${nameOf(item.platform)} · 作者ID ${item.author_id} · 作品ID ${item.item_id} · ${contentTypeNames[item.content_type]||"类型未知"}${item.published_at?` · ${formatTime(item.published_at)||item.published_at}`:" · 发布日期未知"}`,"meta"));
     appendMetrics(main,item.metrics);
-    row.append(node("span",num(ui.offset+index+1),"item-number"),main,badge(item.detail_state==="complete"?"正文已保存":item.asset_count?`${num(item.asset_count)} 个附件 · 缺正文`:"仅列表记录",item.detail_state==="complete"?"":"warning"),actionButton("查看",()=>openItem(item)));
+    row.append(node("span",num(ui.offset+index+1),"item-number"),main,badge(`本机归档 ${archiveStatusNames[item.archive_status]||"未知"}`,item.archive_status==="complete"?"":"warning"),actionButton("查看",()=>openItem(item)));
     list.append(row);
   }
 }
@@ -448,9 +456,11 @@ async function openItem(item) {
   $("detail-source").hidden=target.platform!=="xiaohongshu";
   $("detail-title").textContent=data.title||data.item_id||item.item_id;
   const content=$("detail-content");
-  content.replaceChildren(node("p",`${displayAuthor(target.platform,target.author_id)} · ${nameOf(target.platform)} · ${contentTypeNames[data.content_type]||"类型未知"}`,"meta"));
+  content.replaceChildren(node("p",`${displayAuthor(target.platform,target.author_id)} · ${nameOf(target.platform)} · 作者ID ${target.author_id} · 作品ID ${target.item_id} · ${contentTypeNames[data.content_type]||"类型未知"}`,"meta"));
   const tags=node("div",null,"badges");
-  tags.append(badge(data.detail_state==="complete"?"正文已保存":"正文尚未保存",data.detail_state==="complete"?"":"warning"),badge(`本地附件 ${num(data.assets?.filter(asset=>asset.state==="complete").length)} 个`,"neutral"),badge(data.media_state==="complete_for_observed_detail"?"本次详情中已知媒体已保存":"媒体完整性未确认",data.media_state==="complete_for_observed_detail"?"":"warning"));
+  const mediaVerified=data.media_state==="complete_for_observed_detail"&&!(data.assets||[]).some(asset=>asset.state!=="complete");
+  const mediaPartial=data.media_state==="partial"||(data.assets||[]).some(asset=>asset.state!=="complete");
+  tags.append(badge(`本机归档 ${archiveStatusNames[data.archive_status]||"未知"}`,data.archive_status==="complete"?"":"warning"),badge(data.detail_state==="complete"&&data.detail_text?.trim()?"正文已保存":"正文尚未保存",data.detail_state==="complete"&&data.detail_text?.trim()?"":"warning"),badge(`本地附件 ${num(data.assets?.filter(asset=>asset.state==="complete").length)} 个`,"neutral"),badge(mediaVerified?"本次详情中已知媒体已保存":mediaPartial?"已知媒体部分缺失":"媒体完整性未确认",mediaVerified?"":"warning"));
   content.append(tags);
   const actions=node("div",null,"detail-actions");
   actions.append(actionButton("保存正文与缺失媒体",()=>startDetailJob("content",target)),actionButton("仅刷新指标",()=>startDetailJob("metrics",target)),actionButton("刷新本地详情",()=>openItem(target)));

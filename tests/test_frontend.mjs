@@ -10,6 +10,7 @@ class Element {
   addEventListener(event,callback) {this.handlers[event]=callback;}
   setAttribute() {}
   reportValidity() {return true;}
+  reset() {}
   querySelectorAll() {return [];}
   scrollIntoView() {}
   close() {this.open=false;}
@@ -56,8 +57,9 @@ run('api=async()=>({item:{platform:"xiaohongshu",author_id:"author",item_id:"sam
 await run('openItem({platform:"xiaohongshu",author_id:"author",item_id:"sample"})');
 assert.equal(walk(elements['detail-content']).filter(entry=>entry?.tagName==='a'&&entry?.textContent==='打开附件').length,1);
 assert.equal(walk(elements['detail-content']).filter(entry=>entry?.tagName==='img').length,1);
-run('globalThis.calls=[];api=async path=>{calls.push(path);return {total:42,items:[{platform:"xiaohongshu",author_id:"author",item_id:"cross-page-result",metrics:{likes:{value:200,quality:"exact"}}}]};}');
+run('globalThis.calls=[];api=async path=>{calls.push(path);return {total:42,items:[{platform:"xiaohongshu",author_id:"author",item_id:"cross-page-result",archive_status:"partial",metrics:{likes:{value:200,quality:"exact"}}}]};}');
 elements['filter-author'].value='xiaohongshu|author';
+elements['filter-platform'].value='xiaohongshu';elements['filter-text'].value='中文正文';elements['filter-archive-status'].value='partial';
 elements['filter-type'].value='video';elements['filter-sort'].value='likes';elements['filter-order'].value='asc';
 elements['filter-min-likes'].value='0';elements['filter-min-collects'].value='10';elements['filter-min-comments'].value='2';
 elements['filter-date-from'].value='2026-01-01';elements['filter-date-to'].value='2026-09-27';
@@ -65,9 +67,10 @@ elements['filter-missing'].value='comments';elements['filter-assets'].checked=tr
 await run('applyFilters()');
 let params=new URL(run('calls.at(-1)'), 'http://local').searchParams;
 assert.equal(params.get('offset'),'0');assert.equal(params.get('author_id'),'author');assert.equal(params.get('platform'),'xiaohongshu');
-for(const [key,value] of Object.entries({content_type:'video',sort:'likes',order:'asc',min_likes:'0',min_collects:'10',min_comments:'2',date_from:'2026-01-01',date_to:'2026-09-27',missing_metric:'comments',has_assets:'true'})) assert.equal(params.get(key),value);
+for(const [key,value] of Object.entries({text:'中文正文',archive_status:'partial',content_type:'video',sort:'likes',order:'asc',min_likes:'0',min_collects:'10',min_comments:'2',date_from:'2026-01-01',date_to:'2026-09-27',missing_metric:'comments',has_assets:'true'})) assert.equal(params.get(key),value);
 assert.match(elements['item-count'].textContent,/42/);
 assert.equal(elements['item-list'].children.length,1,'Server results rendered without per-page client filtering');
+assert.ok(walk(elements['item-list']).some(entry=>entry?.textContent==='本机归档 部分'));
 const libraryMetrics=walk(elements['item-list']).filter(entry=>entry?.className==='metric-value');
 assert.deepEqual(libraryMetrics.map(entry=>entry.children?.[1]?.textContent),['200','未知','未知'],'Absent library metrics remain unknown');
 await run('ui.offset=20;loadItems()');

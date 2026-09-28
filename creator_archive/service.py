@@ -565,13 +565,35 @@ class WorkspaceService:
                                                   (job["platform"], job["author_id"]))]
             return self.workflow._author_scan_manifest(db, run, items)
 
+    def _archive_status(self, db, item):
+        """Classify saved local evidence, independent of author list coverage."""
+        assets = db.execute("SELECT asset_id FROM assets WHERE platform=? AND item_id=?",
+                            (item["platform"], item["item_id"])).fetchall()
+        has_body = item["detail_state"] == "complete" and bool((item["detail_text"] or "").strip())
+        if not has_body:
+            return "partial" if assets else "missing"
+        if any(not self.workflow.asset_valid(item["platform"], item["item_id"], asset["asset_id"])
+               for asset in assets):
+            return "partial"
+        if item["media_state"] == "partial":
+            return "partial"
+        if item["media_state"] != "complete_for_observed_detail":
+            return "unknown"
+        return "complete"
+
     def items(self, platform=None, author_id=None, offset=0, limit=50, has_assets=False,
               *, sort="published_at", order="desc", min_likes=None, min_collects=None, min_comments=None,
-              date_from=None, date_to=None, content_type=None, missing_metric=None) -> dict:
+              date_from=None, date_to=None, content_type=None, missing_metric=None,
+              text=None, archive_status=None) -> dict:
         if sort not in (*FIELDS,"published_at") or order not in {"asc","desc"}:
             raise ValueError("无效排序字段或方向")
         if content_type not in {None,"image","video","unknown"} or missing_metric not in {None,*FIELDS}:
             raise ValueError("无效作品类型或未知指标")
+        if archive_status not in {None,"complete","partial","missing","unknown"}:
+            raise ValueError("无效本机归档状态")
+        text = text.strip() if text is not None else None
+        if text and len(text) > 200:
+            raise ValueError("搜索文字最多200字符；本机资料未修改")
         if offset < 0 or not 1 <= limit <= 200:
             raise ValueError("无效分页范围")
         clauses, params = [], []
@@ -584,6 +606,12 @@ class WorkspaceService:
         if content_type:
             clauses.append("i.content_type=?")
             params.append(content_type)
+        if text:
+            pattern = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            clauses.append("(i.title LIKE ? ESCAPE '\\' OR i.detail_text LIKE ? ESCAPE '\\' "
+                           "OR s.display_name LIKE ? ESCAPE '\\' OR i.author_id LIKE ? ESCAPE '\\' "
+                           "OR i.item_id LIKE ? ESCAPE '\\')")
+            params.extend([pattern] * 5)
         for key, value in (("date_from",date_from),("date_to",date_to)):
             if value:
                 try:
@@ -602,13 +630,27 @@ class WorkspaceService:
         if missing_metric:
             clauses.append(f"{missing_metric}.value IS NULL")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        joins = "".join(f" LEFT JOIN item_metrics {f} ON {f}.platform=i.platform AND {f}.item_id=i.item_id AND {f}.field='{f}'" for f in FIELDS)
+        joins = " LEFT JOIN subscriptions s ON s.platform=i.platform AND s.author_id=i.author_id" + "".join(f" LEFT JOIN item_metrics {f} ON {f}.platform=i.platform AND {f}.item_id=i.item_id AND {f}.field='{f}'" for f in FIELDS)
         sort_expr = "NULLIF(i.published_at,'')" if sort == "published_at" else f"{sort}.value"
         sort_sql = f" ORDER BY {sort_expr} IS NULL, {sort_expr} {order}, i.item_id, i.platform"
         with self.workflow.connect() as db:
-            total = db.execute("SELECT count(*) FROM items i" + joins + where, params).fetchone()[0]
-            rows = [dict(r) for r in db.execute("SELECT i.platform,i.item_id,i.author_id,i.published_at,i.detail_state,i.source_url,i.content_type,i.title,i.media_state,(SELECT count(*) FROM assets a WHERE a.platform=i.platform AND a.item_id=i.item_id) AS asset_count FROM items i" + joins + where + sort_sql + " LIMIT ? OFFSET ?", params + [limit, offset])]
+            select = "SELECT i.platform,i.item_id,i.author_id,i.published_at,i.detail_state,i.detail_text,i.source_url,i.content_type,i.title,i.media_state,s.display_name,(SELECT count(*) FROM assets a WHERE a.platform=i.platform AND a.item_id=i.item_id) AS asset_count FROM items i"
+            if archive_status:
+                rows, total = [], 0
+                for candidate in db.execute(select + joins + where + sort_sql, params):
+                    row = dict(candidate)
+                    row["archive_status"] = self._archive_status(db, row)
+                    if row["archive_status"] == archive_status:
+                        if offset <= total < offset + limit:
+                            rows.append(row)
+                        total += 1
+            else:
+                total = db.execute("SELECT count(*) FROM items i" + joins + where, params).fetchone()[0]
+                rows = [dict(r) for r in db.execute(select + joins + where + sort_sql + " LIMIT ? OFFSET ?", params + [limit, offset])]
+                for row in rows:
+                    row["archive_status"] = self._archive_status(db, row)
             for row in rows:
+                row.pop("detail_text")
                 row["metrics"] = read_metrics(db,row["platform"],row["item_id"])
         return {"items": rows, "total": total, "offset": offset, "limit": limit}
 
@@ -622,6 +664,7 @@ class WorkspaceService:
             result["metric_snapshots"] = read_snapshots(db, platform, item_id)
             result["snapshot_total"] = len(result["metric_snapshots"])
             result["assets"] = [dict(r) for r in db.execute("SELECT asset_id,kind,mime,relative_path,bytes FROM assets WHERE platform=? AND item_id=? ORDER BY position", (platform, item_id))]
+            result["archive_status"] = self._archive_status(db, result)
         for asset in result["assets"]:
             asset["state"] = "complete" if self.workflow.asset_valid(platform,item_id,asset["asset_id"]) else "missing"
             asset["url"] = "/archive/" + quote(Path(asset["relative_path"]).as_posix(), safe="/") if asset["state"] == "complete" else None

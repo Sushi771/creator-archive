@@ -196,10 +196,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
               sort: str = "published_at", order: str = "desc", min_likes: int | None = Query(default=None,ge=0),
               min_collects: int | None = Query(default=None,ge=0), min_comments: int | None = Query(default=None,ge=0),
               date_from: str | None = None, date_to: str | None = None, content_type: str | None = None,
-              missing_metric: str | None = None):
+              missing_metric: str | None = None, text: str | None = None,
+              archive_status: str | None = None):
         return service.items(platform, author_id, offset, limit, has_assets,sort=sort,order=order,min_likes=min_likes,
                              min_collects=min_collects,min_comments=min_comments,date_from=date_from,date_to=date_to,
-                             content_type=content_type,missing_metric=missing_metric)
+                             content_type=content_type,missing_metric=missing_metric,
+                             text=text,archive_status=archive_status)
 
     @app.get("/api/items/{platform}/{item_id}")
     def item(platform: str, item_id: str):
