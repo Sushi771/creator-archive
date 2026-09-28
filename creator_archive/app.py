@@ -211,7 +211,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/archive/{relative_path:path}")
     def archive_file(relative_path: str):
-        archive = (service.root / "archive").resolve()
+        archive = service.workflow.archive_root.resolve()
         target = (archive / relative_path).resolve()
         if not target.is_relative_to(archive) or not target.is_file() or target.suffix.lower() not in {".html", ".md", ".json", ".jsonl", ".jpg", ".png", ".webp", ".mp4"}:
             raise HTTPException(status_code=404, detail="归档文件不存在或不可访问")

@@ -492,7 +492,9 @@ class WorkspaceService:
         return {"subscriptions": subscriptions, "runs": jobs, "archive_batches": archive_batches, "stats": stats,
                 "platforms": [{"platform": "wechat", "available": False, "status": "blocked", "message": MESSAGES["wechat_blocked"][0]},
                               {"platform": "xiaohongshu", "available": True, "status": "experimental", "message": "列表、内容保存和互动指标为实验接入；旧作品可能需补充有效完整链接。样本通过不代表全库正文媒体已保存，长期登录与双平台G1仍未通过。"}],
-                "data_dir": str(self.root), "archive_dir": str(self.root / "archive"), "g1_passed": False}
+                "data_dir": str(self.root), "archive_dir": str(self.workflow.archive_root),
+                "obsidian_dir": str(self.workflow.obsidian_root) if self.workflow.obsidian_root else None,
+                "g1_passed": False}
 
     def _archive_batches(self, db, jobs):
         by_id = {job["id"]: job for job in jobs}
@@ -960,7 +962,7 @@ class WorkspaceService:
                     exported = self.workflow.export_all(batch_id=batch)
                     for author in exported["authors"]:
                         for key in ("manifest", "corpus", "index"):
-                            author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.root / "archive").as_posix(), safe="/")
+                            author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.workflow.archive_root).as_posix(), safe="/")
                     self._finish(job_id, "succeeded", "archive_complete", exported)
                     return
                 if job["platform"] == "wechat":

@@ -20,6 +20,8 @@ media/
 corpus/
 vault/
 Obsidian*/
+folders.json
+backups/
 data/
 logs/
 *.log

@@ -181,7 +181,7 @@ def execute(service, job):
             for key in ("manifest","corpus","index","scan_manifest"):
                 if key not in author:
                     continue
-                author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(service.root / "archive").as_posix(),safe="/")
+                author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(service.workflow.archive_root).as_posix(),safe="/")
         list_pending = not run["terminal_evidence"] and (until_terminal or (demo and len(chosen) < DEMO_ITEM_LIMIT))
         _stage(service,parent_id,"list" if list_pending else "content" if pending else "done")
         reason = "page_budget_reached" if list_pending else job["mode"] + ("_partial" if pending else "_complete")

@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from .validation import AdapterFailure, HistoryAdapter, Page
 from .metrics import migrate, read_metrics, read_snapshots, save_observation
+from .folders import load_folders, mirror_author_to_obsidian, obsidian_author_dir
 
 
 PLATFORMS = {"wechat", "xiaohongshu"}
@@ -139,6 +140,9 @@ class ArchiveWorkflow:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self.archive_root, self.obsidian_root = load_folders(self.root)
+        if (self.root / "folders.json").exists() and not self.archive_root.is_dir():
+            raise ValueError("已配置归档目录不可访问；原数据库未改动。请恢复该目录，或停机后核对folders.json及备份。")
         self.db_path = self.root / "archive.sqlite3"
         existing_database = self.db_path.is_file()
         with self.connect() as db:
@@ -429,13 +433,13 @@ class ArchiveWorkflow:
             raise KeyError((platform, item_id))
         suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4"}[mime]
         relative = Path(platform) / _id(row[0]) / _id(item_id) / "assets" / f"{_id(asset_id)}{suffix}"
-        target, size, digest = _managed_copy(self.root / "archive" / relative, Path(source), mime)
+        target, size, digest = _managed_copy(self.archive_root / relative, Path(source), mime)
         with self.connect() as db:
             db.execute("""INSERT INTO assets VALUES(?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(platform,item_id,asset_id) DO UPDATE SET
                 position=excluded.position,kind=excluded.kind,relative_path=excluded.relative_path,
                 bytes=excluded.bytes,sha256=excluded.sha256,mime=excluded.mime""",
-                (platform, item_id, asset_id, position, kind, str(target.relative_to(self.root / "archive")),
+                (platform, item_id, asset_id, position, kind, str(target.relative_to(self.archive_root)),
                  size, digest, mime))
         return target
 
@@ -450,7 +454,7 @@ class ArchiveWorkflow:
             row = db.execute("SELECT relative_path,bytes,sha256 FROM assets WHERE platform=? AND item_id=? AND asset_id=?", (platform,item_id,asset_id)).fetchone()
         if not row:
             return False
-        path = self.root / "archive" / row["relative_path"]
+        path = self.archive_root / row["relative_path"]
         return path.is_file() and path.stat().st_size == row["bytes"] and _file_sha256(path) == row["sha256"]
 
     def archive_asset_valid(self, relative_path: str) -> bool | None:
@@ -492,7 +496,7 @@ class ArchiveWorkflow:
             result = []
             for author in scope:
                 platform, author_id = author["platform"], author["author_id"]
-                base = self.root / "archive" / platform / _id(author_id)
+                base = self.archive_root / platform / _id(author_id)
                 items = [dict(r) for r in db.execute("SELECT * FROM items WHERE platform=? AND author_id=? ORDER BY published_at,item_id",
                                                    (platform, author_id))]
                 manifest_items = []
@@ -507,7 +511,7 @@ class ArchiveWorkflow:
                     media_md = []
                     media_html = []
                     for asset in assets:
-                        local = self.root / "archive" / asset["relative_path"]
+                        local = self.archive_root / asset["relative_path"]
                         asset["state"] = ("complete" if local.is_file() and local.stat().st_size == asset["bytes"]
                                           and _file_sha256(local) == asset["sha256"] else "missing")
                         asset["relative_path"] = Path(asset["relative_path"]).as_posix()
@@ -576,7 +580,7 @@ class ArchiveWorkflow:
                     for asset in item["assets"]:
                         if asset["state"] != "complete":
                             continue
-                        local = self.root / "archive" / asset["relative_path"]
+                        local = self.archive_root / asset["relative_path"]
                         href = escape(quote(local.relative_to(base).as_posix(), safe="/"), quote=True)
                         asset_label = "图片" if asset["kind"] == "image" else "视频"
                         entry += f' · <a href="{href}">{asset_label} {escape(asset["asset_id"])}</a>'
@@ -610,7 +614,11 @@ class ArchiveWorkflow:
                                "media_coverage": "unknown_expected_count"})
                 if scan_path is not None:
                     result[-1]["scan_manifest"] = str(scan_path)
-        return {"authors": result, "archive_root": str(self.root / "archive")}
+                if self.obsidian_root and self.obsidian_root != self.archive_root:
+                    result[-1]["obsidian_copied_files"] = mirror_author_to_obsidian(
+                        base, obsidian_author_dir(self.obsidian_root, platform, _id(author_id)))
+        return {"authors": result, "archive_root": str(self.archive_root),
+                "obsidian_root": str(self.obsidian_root) if self.obsidian_root else None}
 
     def _author_scan_manifest(self, db, run: dict, library_items: list[dict]) -> dict | None:
         """Describe one durable author scan without changing the all-library schema-2 export."""

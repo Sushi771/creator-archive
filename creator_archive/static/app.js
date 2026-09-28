@@ -224,6 +224,7 @@ async function refresh(forceItems = false, background = false) {
       }
       $("data-dir").textContent = w.data_dir || "未提供目录";
       $("archive-dir").textContent = w.archive_dir || "首次归档后生成";
+      $("obsidian-dir").textContent = w.obsidian_dir || "未设置";
       $("connection").textContent = "本机服务已连接 · 数据已持久保存";
       $("connection-dot").classList.remove("offline");
       $("updated").textContent = `更新 ${new Date().toLocaleTimeString("zh-CN", {hour12:false})}`;
