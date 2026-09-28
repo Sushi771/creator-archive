@@ -108,6 +108,39 @@ class TransportTests(unittest.TestCase):
             transport.page(AUTHOR, CURSOR)
         self.assertEqual(transport._detail_links, {})
 
+    def test_replay_deadline_tracks_validated_page_progress(self):
+        # A deep checkpoint can take longer than one idle timeout to rejoin.
+        # Each distinct validated response is progress, not terminal evidence.
+        first, second = "1" * 24, "2" * 24
+        responses = [
+            Response("", payload(True, first)),
+            Response(first, payload(True, second)),
+            Response(second, payload(True, CURSOR)),
+            Response(CURSOR, payload(False, "")),
+        ]
+        transport = self.make(responses=responses)
+        transport.timeout = 10
+        clock = [0.0]
+        transport._page.wait_for_timeout = lambda _ms: clock.__setitem__(0, clock[0] + 4.0)
+        with patch("creator_archive.adapters.xhs_transport.time.monotonic", side_effect=lambda: clock[0]):
+            result = transport._fetch(AUTHOR, CURSOR)
+        self.assertEqual(transport._page.scrolls, 4)
+        self.assertEqual(result["data"]["notes"][0]["note_id"], NOTE)
+        self.assertGreater(clock[0], transport.timeout)
+
+    def test_replay_duplicate_response_does_not_extend_idle_timeout(self):
+        previous = Response("", payload(True, CURSOR))
+        transport = self.make(responses=[previous, previous, previous, previous])
+        transport.timeout = 10
+        clock = [0.0]
+        transport._page.wait_for_timeout = lambda _ms: clock.__setitem__(0, clock[0] + 4.0)
+        with patch("creator_archive.adapters.xhs_transport.time.monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaises(TransportFailure) as error:
+                transport._fetch(AUTHOR, CURSOR)
+        self.assertEqual(error.exception.category, "timeout")
+        self.assertEqual(transport._page.scrolls, 4)
+        self.assertEqual(set(transport._responses), {(AUTHOR, "")})
+
     def test_restart_replays_until_exact_checkpoint_without_delivering_prior_page(self):
         transport = self.make(responses=[Response("", payload(True, CURSOR)), Response(CURSOR)])
         result = transport.page(AUTHOR, CURSOR)

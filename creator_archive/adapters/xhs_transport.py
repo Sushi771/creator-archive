@@ -482,10 +482,20 @@ class XhsBrowserTransport:
                 # when goto already delivered the requested API response.
                 replay_seed = bool(cursor)
             deadline = time.monotonic() + self.timeout
+            response_count = len(self._responses)
             scroll_attempted = False
-            while time.monotonic() < deadline:
+            while True:
                 if self._failure:
                     raise self._failure
+                now = time.monotonic()
+                observed_count = len(self._responses)
+                # Deep checkpoint replay may span several valid earlier pages.
+                # Only a new validated response resets the idle timeout.
+                if observed_count > response_count:
+                    response_count = observed_count
+                    deadline = now + self.timeout
+                if now >= deadline:
+                    break
                 self._check_wall()
                 if not replay_seed and (author, cursor) in self._responses:
                     return self._responses[(author, cursor)]
