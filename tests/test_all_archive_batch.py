@@ -58,6 +58,140 @@ class AllArchiveBatchTests(unittest.TestCase):
     def batch(self, service=None):
         return (service or self.service).workspace()["archive_batches"][0]
 
+    def test_selected_scope_preview_fixed_members_and_interleaved_repeat(self):
+        """Trigger: the global button has no multi-author scope; filters cannot define a batch."""
+        selected = [{"platform": "xiaohongshu", "author_id": self.second},
+                    {"platform": "xiaohongshu", "author_id": self.first}]
+        self.service._spawn = lambda _: None
+        with self.service.workflow.connect() as db:
+            before = {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY 1")]
+                      for table in ("jobs", "runs", "pages", "items", "archive_batch_members")}
+        preview = self.service.archive_batch_preview(selected)
+        self.assertEqual([(m["author_id"], m["paused"]) for m in preview["members"]],
+                         [(self.first, False), (self.second, True)])
+        with self.service.workflow.connect() as db:
+            self.assertEqual(before, {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY 1")]
+                                      for table in before})
+        first = self.service.start("selected_archive", selected_authors=selected)
+        first_id = first["batch_id"]
+        self.assertEqual({m["author_id"] for m in self.batch()["members"]}, {self.first, self.second})
+        self.assertEqual(self.batch()["mode"], "selected_archive")
+        self.assertEqual(self.service.start("selected_archive", selected_authors=list(reversed(selected)))["batch_id"], first_id)
+        wechat = [{"platform": "wechat", "author_id": self.wechat}]
+        other = self.service.start("selected_archive", selected_authors=wechat)
+        self.assertNotEqual(other["batch_id"], first_id)
+        self.assertEqual(self.service.start("selected_archive", selected_authors=selected)["batch_id"], first_id)
+        self.assertEqual(self.service.start("selected_archive", selected_authors=wechat)["batch_id"], other["batch_id"])
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM archive_batch_members WHERE batch_id=?", (first_id,)).fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT count(*) FROM archive_batch_members WHERE batch_id=?", (other["batch_id"],)).fetchone()[0], 1)
+        self.assertEqual(self.source.events, [], "Preview and queued batch creation must not fetch platform data")
+
+    def test_selected_scope_rejects_ineligible_and_preserves_existing_progress(self):
+        selected = [{"platform": "xiaohongshu", "author_id": self.first},
+                    {"platform": "xiaohongshu", "author_id": self.second}]
+        self.service._spawn = lambda _: None
+        manual = self.root / "archive" / "xiaohongshu" / self.first / "manual-note.md"
+        manual.parent.mkdir(parents=True)
+        manual.write_text("human note", encoding="utf-8")
+        batch_id = self.service.start("selected_archive", selected_authors=selected)["batch_id"]
+        fixed = [(m["platform"], m["author_id"], m["job_id"]) for m in self.batch()["members"]]
+        with self.service.workflow.connect() as db:
+            before = {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY 1")]
+                      for table in ("jobs", "runs", "pages", "items", "archive_batch_members")}
+        bad = ([{"platform": "xiaohongshu", "author_id": self.pending}],
+               [{"platform": "xiaohongshu", "author_id": "z" * 24}],
+               selected * 2, [])
+        for authors in bad:
+            with self.subTest(authors=authors), self.assertRaises(ValueError):
+                self.service.archive_batch_preview(authors)
+        self.service.cancel_subscription("xiaohongshu", self.second)
+        with self.assertRaisesRegex(ValueError, "所选作者不在"):
+            self.service.archive_batch_preview(selected)
+        self.assertEqual(self.service.start("selected_archive", selected_authors=selected)["batch_id"], batch_id,
+                         "Existing fixed batch survives later cancellation")
+        self.service.close()
+        restarted = WorkspaceService(self.root, adapter_factory=lambda _: self.source)
+        self.addCleanup(restarted.close)
+        self.assertEqual(restarted.start("selected_archive", selected_authors=selected)["batch_id"], batch_id)
+        self.assertEqual([(m["platform"], m["author_id"], m["job_id"]) for m in restarted.workspace()["archive_batches"][0]["members"]], fixed)
+        with restarted.workflow.connect() as db:
+            for table, rows in before.items():
+                if table == "jobs":
+                    self.assertEqual([tuple(row)[:3] for row in db.execute("SELECT * FROM jobs ORDER BY 1")],
+                                     [row[:3] for row in rows])
+                else:
+                    self.assertEqual([tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY 1")], rows)
+        restarted._spawn = lambda _: None
+        self.assertEqual(set(restarted.resume_archive_batch(batch_id)["resumed_job_ids"]),
+                         {job_id for _, _, job_id in fixed})
+        self.assertEqual([(m["platform"], m["author_id"], m["job_id"]) for m in restarted.workspace()["archive_batches"][0]["members"]], fixed)
+        self.assertEqual(manual.read_text(encoding="utf-8"), "human note")
+
+    def test_selected_scope_http_preview_and_fixed_wechat_member(self):
+        app = create_app(self.root)
+        headers = {"X-Creator-Archive": "local-validation"}
+        selected = [{"platform": "wechat", "author_id": self.wechat}]
+        with TestClient(app) as client:
+            preview = client.post("/api/archive-batches/preview", json={"selected_authors": selected}, headers=headers)
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["members"][0]["platform_available"], False)
+            self.assertEqual(client.post("/api/jobs", json={"mode": "selected_archive"}, headers=headers).status_code, 422)
+            self.assertEqual(client.post("/api/archive-batches/preview", json={"selected_authors": [
+                {"platform": "xiaohongshu", "author_id": self.pending}]}, headers=headers).status_code, 422)
+            started = client.post("/api/jobs", json={"mode": "selected_archive", "selected_authors": selected}, headers=headers)
+            self.assertEqual(started.status_code, 200)
+            self.assertEqual(client.post("/api/jobs", json={"mode": "selected_archive", "selected_authors": selected}, headers=headers).json()["batch_id"], started.json()["batch_id"])
+            batch = client.get("/api/workspace").json()["archive_batches"][0]
+            self.assertEqual((batch["mode"], batch["members"][0]["author_id"], batch["members"][0]["job_id"]),
+                             ("selected_archive", self.wechat, None))
+            self.assertEqual(client.post(f"/api/archive-batches/{batch['id']}/resume", headers=headers).status_code, 200)
+        self.assertEqual(self.source.events, [], "Wechat preview and fixed blocked member never invoke a platform")
+
+    def test_selected_scope_partial_failure_resumes_only_fixed_authors(self):
+        self.source.author_pages = {self.first: [ids(1, 2)], self.second: [ids(101, 2)]}
+        self.source.failures[ids(1, 1)[0]] = "item_unavailable"
+        selected = [{"platform": "xiaohongshu", "author_id": self.first},
+                    {"platform": "xiaohongshu", "author_id": self.second}]
+        batch_id = self.service.start("selected_archive", selected_authors=selected)["batch_id"]
+        self.service.wait()
+        members = {m["author_id"]: m for m in self.batch()["members"]}
+        self.assertEqual(set(members), {self.first, self.second})
+        self.assertEqual((members[self.first]["state"], members[self.second]["state"]), ("partial", "succeeded"))
+        manual = self.root / "archive" / "xiaohongshu" / self.second / "manual-note.md"
+        manual.write_text("human note", encoding="utf-8")
+        saved = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                 for p in (self.root / "archive" / "xiaohongshu" / self.second).rglob("*") if p.is_file()}
+        fixed = {(m["platform"], m["author_id"], m["job_id"]) for m in self.batch()["members"]}
+        self.service.close()
+        fresh = DemoSource()
+        fresh.author_pages = self.source.author_pages
+        restarted = WorkspaceService(self.root, adapter_factory=lambda _: fresh)
+        self.addCleanup(restarted.close)
+        self.assertEqual(restarted.start("selected_archive", selected_authors=selected)["batch_id"], batch_id)
+        self.assertEqual(restarted.resume_archive_batch(batch_id)["resumed_job_ids"], [members[self.first]["job_id"]])
+        restarted.wait()
+        final = restarted.workspace()["archive_batches"][0]
+        self.assertEqual(final["state"], "succeeded")
+        self.assertEqual({(m["platform"], m["author_id"], m["job_id"]) for m in final["members"]}, fixed)
+        self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in saved}, saved)
+        self.assertFalse(any(event == "author_page" and value == self.second for event, value in fresh.events),
+                         "Successful author must not rescan on selected batch resume")
+
+    def test_selected_scope_uses_platform_and_author_id_together(self):
+        self.service.workflow.subscribe("wechat", self.first, "Same ID other platform", verified=True,
+                                        evidence="synthetic fixture")
+        selected = [{"platform": "wechat", "author_id": self.first},
+                    {"platform": "xiaohongshu", "author_id": self.first}]
+        preview = self.service.archive_batch_preview(selected)
+        self.assertEqual({(m["platform"], m["author_id"]) for m in preview["members"]},
+                         {("wechat", self.first), ("xiaohongshu", self.first)})
+        self.service._spawn = lambda _: None
+        batch_id = self.service.start("selected_archive", selected_authors=selected)["batch_id"]
+        self.assertEqual({(m["platform"], m["author_id"]) for m in self.batch()["members"]},
+                         {("wechat", self.first), ("xiaohongshu", self.first)})
+        self.assertEqual(self.service.start("selected_archive", selected_authors=list(reversed(selected)))["batch_id"], batch_id)
+
     def test_batch_adopts_latest_unfinished_author_checkpoints_without_restarting_them(self):
         self.source.author_pages = {self.first: [ids(1, 2)], self.second: [ids(101, 2)]}
         self.source.failures[ids(1, 1)[0]] = "item_unavailable"

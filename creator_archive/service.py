@@ -497,7 +497,7 @@ class WorkspaceService:
     def _archive_batches(self, db, jobs):
         by_id = {job["id"]: job for job in jobs}
         result = []
-        for batch in db.execute("SELECT id,created_at FROM batches WHERE mode='all_archive' ORDER BY id DESC"):
+        for batch in db.execute("SELECT id,mode,created_at FROM batches WHERE mode IN ('all_archive','selected_archive') ORDER BY id DESC"):
             members = []
             for row in db.execute("SELECT * FROM archive_batch_members WHERE batch_id=? ORDER BY platform,author_id", (batch["id"],)):
                 job = by_id.get(row["job_id"])
@@ -525,7 +525,7 @@ class WorkspaceService:
             running = any(m["state"] in {"queued", "running"} for m in members)
             complete = sum(m["state"] == "succeeded" for m in members)
             blocked = sum(m["job_id"] is None for m in members)
-            result.append({"id": batch["id"], "created_at": batch["created_at"],
+            result.append({"id": batch["id"], "mode": batch["mode"], "created_at": batch["created_at"],
                            "state": "running" if running else "succeeded" if complete == len(members) else "partial",
                            "total": len(members), "complete": complete, "blocked": blocked,
                            "unfinished": len(members) - complete - blocked,
@@ -639,11 +639,15 @@ class WorkspaceService:
             raise ValueError("原文链接的作品ID与当前作品不匹配")
         return source_url
 
-    def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None, item_ids=None) -> dict:
-        if mode == "all_archive":
-            if any(value is not None for value in (platform, author_id, item_id, source_url, item_ids)):
+    def start(self, mode, platform=None, author_id=None, item_id=None, source_url=None, item_ids=None, selected_authors=None) -> dict:
+        if mode in {"all_archive", "selected_archive"}:
+            if any(value is not None for value in (platform, author_id, item_id, source_url, item_ids)) or (mode == "all_archive" and selected_authors is not None):
                 raise ValueError("全订阅归档只接受固定的当前订阅范围，不接受单作者或作品参数")
-            return self.start_archive_batch()
+            if mode == "selected_archive" and selected_authors is None:
+                raise ValueError("所选作者归档需要明确的作者范围；未创建任务")
+            return self.start_archive_batch(selected_authors)
+        if selected_authors is not None:
+            raise ValueError("所选作者范围仅用于手动逐作者全量归档")
         if mode not in {"full", "latest", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
         if mode in {"page_archive", "author_archive"} and (platform != "xiaohongshu" or not author_id):
@@ -698,27 +702,71 @@ class WorkspaceService:
             self._spawn(job_id)
         return {"job_id": ids[0], "job_ids": ids, "state": "queued", "includes_paused": True}
 
-    def start_archive_batch(self):
+    @staticmethod
+    def _selected_author_keys(selected_authors):
+        if selected_authors is None:
+            return None
+        if not isinstance(selected_authors, list) or not selected_authors:
+            raise ValueError("请先选择至少一位作者；未创建任务，旧资料与进度保留")
+        keys = []
+        for author in selected_authors:
+            if not isinstance(author, dict) or set(author) != {"platform", "author_id"} or not all(isinstance(author[k], str) and author[k] for k in ("platform", "author_id")):
+                raise ValueError("所选作者须提供稳定的平台和作者ID；未创建任务")
+            keys.append((author["platform"], author["author_id"]))
+        if len(set(keys)) != len(keys):
+            raise ValueError("所选作者有重复项；请检查后重试，未创建任务")
+        return set(keys)
+
+    def archive_batch_preview(self, selected_authors):
+        """Resolve the exact manual scope without creating jobs or calling a platform."""
+        keys = self._selected_author_keys(selected_authors)
+        with self.workflow.connect() as db:
+            scope = self._archive_batch_scope(db, keys)
+        return {"mode": "selected_archive", "total": len(scope),
+                "members": [{"platform": s["platform"], "author_id": s["author_id"],
+                             "display_name": s["display_name"], "paused": not bool(s["enabled"]),
+                             "platform_available": s["platform"] == "xiaohongshu"} for s in scope],
+                "message": "预览仅核对当前可选择作者；执行时会再次核对并固定范围。公众号采集仍未接入。"}
+
+    def _archive_batch_scope(self, db, selected_keys):
+        eligible = {(row["platform"], row["author_id"]): dict(row)
+                    for row in db.execute("SELECT * FROM subscriptions ORDER BY platform,author_id")
+                    if not self._is_cancelled(db, row["platform"], row["author_id"])
+                    and not self._confirmation_required(row, db)}
+        if selected_keys is not None:
+            missing = selected_keys - eligible.keys()
+            if missing:
+                label = ", ".join(f"{platform}/{author_id}" for platform, author_id in sorted(missing))
+                raise ValueError(f"所选作者不在已核验、已确认且仍订阅范围：{label}；请刷新选择。旧资料和任务进度保留")
+            return [eligible[key] for key in sorted(selected_keys)]
+        if not eligible:
+            raise ValueError("没有已核验并确认且仍订阅的作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和检查点保留")
+        return [eligible[key] for key in sorted(eligible)]
+
+    def start_archive_batch(self, selected_authors=None):
         """Snapshot subscriptions, retaining each author's latest unfinished checkpoint."""
+        selected_keys = self._selected_author_keys(selected_authors)
+        batch_mode = "selected_archive" if selected_keys is not None else "all_archive"
         with self.workflow.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            latest = db.execute("SELECT id FROM batches WHERE mode='all_archive' ORDER BY id DESC LIMIT 1").fetchone()
-            if latest:
-                unfinished = db.execute("""SELECT 1 FROM archive_batch_members m JOIN jobs j ON j.id=m.job_id
-                    WHERE m.batch_id=? AND j.state!='succeeded' LIMIT 1""", (latest[0],)).fetchone()
+            prior_batches = db.execute("SELECT id FROM batches WHERE mode=? ORDER BY id DESC", (batch_mode,)).fetchall()
+            for prior in prior_batches[:1] if selected_keys is None else prior_batches:
+                if selected_keys is not None and {
+                        (row["platform"], row["author_id"]) for row in db.execute(
+                            "SELECT platform,author_id FROM archive_batch_members WHERE batch_id=?", (prior[0],))} != selected_keys:
+                    continue
+                unfinished = db.execute("""SELECT 1 FROM archive_batch_members m LEFT JOIN jobs j ON j.id=m.job_id
+                    WHERE m.batch_id=? AND (j.state!='succeeded' OR (?='selected_archive' AND m.job_id IS NULL)) LIMIT 1""",
+                    (prior[0], batch_mode)).fetchone()
                 if unfinished:
-                    return {"batch_id": latest[0], "reused": True,
-                            "message": f"已复用全订阅归档批次 #{latest[0]} 的固定作者范围；从历史与任务恢复未完成作者，成功资源保持。"}
-            scope = [dict(row) for row in db.execute("SELECT * FROM subscriptions ORDER BY platform,author_id")
-                     if not self._is_cancelled(db, row["platform"], row["author_id"])
-                     and not self._confirmation_required(row, db)]
-            if not scope:
-                raise ValueError("没有已核验并确认且仍订阅的作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和检查点保留")
+                    return {"batch_id": prior[0], "reused": True,
+                            "message": f"已复用逐作者归档批次 #{prior[0]} 的固定作者范围；从历史与任务恢复未完成作者，成功资源保持。"}
+            scope = self._archive_batch_scope(db, selected_keys)
             for sub in scope:
                 if sub["platform"] == "xiaohongshu" and db.execute("""SELECT 1 FROM jobs WHERE platform=? AND author_id=?
                     AND state IN ('queued','running') LIMIT 1""", (sub["platform"],sub["author_id"])).fetchone():
-                    raise ValueError(f"作者 {sub['display_name']} 已有任务排队或运行，请等待完成后创建全订阅批次")
-            batch_id = db.execute("INSERT INTO batches(mode,created_at) VALUES('all_archive',?)", (time.time(),)).lastrowid
+                    raise ValueError(f"作者 {sub['display_name']} 已有任务排队或运行，请等待完成后创建逐作者归档批次；已有进度保留")
+            batch_id = db.execute("INSERT INTO batches(mode,created_at) VALUES(?,?)", (batch_mode,time.time())).lastrowid
             ids = []
             reused_ids = []
             for sub in scope:
@@ -746,7 +794,7 @@ class WorkspaceService:
             self._spawn(job_id)
         return {"batch_id": batch_id, "job_ids": ids, "reused_job_ids": reused_ids,
                 "reused": False, "includes_paused": True,
-                "message": f"已建立全订阅归档批次 #{batch_id}；接入 {len(reused_ids)} 个已有检查点，新建 {len(ids)} 个作者任务。已有未完成任务不会自动重试；请在历史与任务查看原因后恢复。公众号暂不可采集并在批次中标明。"}
+                "message": f"已建立{'所选作者' if selected_keys is not None else '全订阅'}归档批次 #{batch_id}；接入 {len(reused_ids)} 个已有检查点，新建 {len(ids)} 个作者任务。已有未完成任务不会自动重试；请在历史与任务查看原因后恢复。公众号暂不可采集并在批次中标明。"}
 
     def resume_archive_batch(self, batch_id):
         with self.workflow.connect() as db:

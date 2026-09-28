@@ -48,6 +48,11 @@ class JobInput(BaseModel):
     item_id: str | None = None
     source_url: str | None = Field(default=None,max_length=4096)
     item_ids: list[str] | None = Field(default=None,max_length=200)
+    selected_authors: list[AuthorInput] | None = None
+
+
+class SelectedArchiveInput(BaseModel):
+    selected_authors: list[AuthorInput] = Field(min_length=1)
 
 
 class ResumeInput(BaseModel):
@@ -157,7 +162,13 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/jobs")
     def start_job(body: JobInput):
-        return service.start(body.mode, body.platform, body.author_id, body.item_id, body.source_url, body.item_ids)
+        return service.start(body.mode, body.platform, body.author_id, body.item_id, body.source_url,
+                             body.item_ids, [author.model_dump() for author in body.selected_authors]
+                             if body.selected_authors is not None else None)
+
+    @app.post("/api/archive-batches/preview")
+    def preview_archive_batch(body: SelectedArchiveInput):
+        return service.archive_batch_preview([author.model_dump() for author in body.selected_authors])
 
     @app.post("/api/jobs/{job_id}/resume")
     def resume(job_id: int, body: ResumeInput | None = None):

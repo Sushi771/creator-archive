@@ -242,6 +242,7 @@ const batchAdvanced=html.match(/<details class="archive-experiments">[\s\S]*?<\/
 assert.ok(batchAdvanced);
 assert.match(batchAdvanced,/data-job="full"/);
 assert.match(batchAdvanced,/data-job="all_archive"/);
+assert.match(batchAdvanced,/id="preview-selected-archive"/);
 assert.match(batchAdvanced,/data-job="content"/);
 assert.doesNotMatch(batchAdvanced,/data-job="demo_archive"/);
 assert.match(html.replace(batchAdvanced,''),/data-job="demo_archive"[^>]*>测试各作者前10篇/);
@@ -249,6 +250,36 @@ assert.doesNotMatch(html.replace(batchAdvanced,''),/data-job="(?:full|content|me
 run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 await run('startJob("all_archive")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
+const selectable=[
+  {platform:'xiaohongshu',author_id:'first',display_name:'First',tags:['A'],identity_verified:true,subscribed:true,enabled:true},
+  {platform:'xiaohongshu',author_id:'second',display_name:'Second',tags:['B'],identity_verified:true,subscribed:true,enabled:false},
+  {platform:'wechat',author_id:'cancelled',display_name:'Cancelled',identity_verified:true,subscribed:false,enabled:true},
+  {platform:'xiaohongshu',author_id:'pending',display_name:'Pending',identity_verified:true,subscribed:true,subscription_confirmation_required:true,enabled:true}
+];
+run(`ui.workspace={subscriptions:${JSON.stringify(selectable)}};renderSubscriptionTags(ui.workspace.subscriptions);renderSubscriptions(ui.workspace.subscriptions)`);
+let checks=walk(elements['subscription-list']).filter(x=>x.tagName==='input'&&x.type==='checkbox');
+assert.equal(checks.length,2,'Cancelled and pending authors cannot enter a selected batch');
+checks[0].checked=true;checks[0].handlers.change();
+elements['subscription-tag'].value='B';elements['subscription-tag'].onchange();
+checks=walk(elements['subscription-list']).filter(x=>x.tagName==='input'&&x.type==='checkbox');
+assert.equal(checks.length,1);
+checks[0].checked=true;checks[0].handlers.change();
+assert.match(elements['selected-archive-count'].textContent,/已选 2 位/);
+elements['subscription-tag'].value='A';elements['subscription-tag'].onchange();
+assert.equal(run('ui.selectedAuthors.size'),2,'Filtering never replaces explicit selection');
+run('globalThis.selectedCalls=[];api=async(path,body)=>{selectedCalls.push({path,body});return path.endsWith("preview")?{members:body.selected_authors.map(x=>({...x,display_name:x.author_id,paused:x.author_id==="second",platform_available:true}))}:{batch_id:42,message:"所选范围已固定"};};refresh=async()=>{}');
+await run('previewSelectedArchive()');
+assert.equal(elements['selected-archive-dialog'].open,true);
+assert.match(flattenText(elements['selected-archive-members']),/first.*second.*已暂停/);
+assert.deepEqual(JSON.parse(run('JSON.stringify(selectedCalls[0].body.selected_authors)')),
+  [{platform:'xiaohongshu',author_id:'first'},{platform:'xiaohongshu',author_id:'second'}]);
+await run('startSelectedArchive()');
+assert.deepEqual(JSON.parse(run('JSON.stringify(selectedCalls[1].body)')),
+  {mode:'selected_archive',selected_authors:[{platform:'xiaohongshu',author_id:'first'},{platform:'xiaohongshu',author_id:'second'}]});
+assert.equal(elements['selected-archive-dialog'].open,false);
+elements['subscription-tag'].value='';
+console.log('Selected archive UI checks passed: stable IDs, cross-filter selection, paused author, preview and fixed submit payload.');
+run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 run('renderArchiveBatches([{id:7,state:"partial",total:2,complete:0,unfinished:1,blocked:1,members:[{platform:"wechat",author_id:"wx",job_id:null,reason:"wechat_blocked",pages:0,item_count:0,target_count:0},{platform:"xiaohongshu",author_id:"author",job_id:8,state:"partial",reason:"item_unavailable",reused_existing_job:true,pages:3,item_count:2,target_count:3,can_resume:true,scan_url:"/api/jobs/8/scan",scan_manifest_url:"/archive/xiaohongshu/author/scan-run-1.json"}]}])');
 assert.match(flattenText(elements['archive-batch-list']),/固定作者 2 位.*公众号未接入 1.*任务 #8 · 沿用已有检查点（未自动重试）.*正文媒体 2 \/ 3 篇.*继续批次未完成作者/);
 assert.match(flattenText(elements['archive-batch-list']),/查看当前扫描范围.*查看本轮扫描清单/);
