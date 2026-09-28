@@ -1,9 +1,7 @@
-param([int]$Port = 8765, [string]$RuntimeDir)
+param([int]$Port = 8765, [string]$RuntimeDir, [string]$ProfileDir)
 $ErrorActionPreference = 'Stop'
-$launcherConfig = Join-Path $PSScriptRoot '.venv/creator-archive-launcher.json'
-if (-not $RuntimeDir -and (Test-Path -LiteralPath $launcherConfig)) {
-    $RuntimeDir = (Get-Content -LiteralPath $launcherConfig -Raw | ConvertFrom-Json).runtime_dir
-}
+. (Join-Path $PSScriptRoot 'launcher-profile.ps1')
+if (-not $RuntimeDir) { $config = Get-LauncherSettings $PSScriptRoot $ProfileDir; if ($config) { $RuntimeDir = $config.runtime_dir } }
 if (-not $RuntimeDir) { $RuntimeDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/runtime' }
 $stateFile = Join-Path $RuntimeDir "server-$Port.json"
 if (-not (Test-Path -LiteralPath $stateFile)) { Write-Host 'No managed server is recorded.'; return }

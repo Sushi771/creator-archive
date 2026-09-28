@@ -1,3 +1,5 @@
 @echo off
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop.ps1" %*
-if errorlevel 1 pause
+set "result=%errorlevel%"
+if not "%result%"=="0" pause
+exit /b %result%

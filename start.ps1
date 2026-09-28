@@ -3,18 +3,23 @@ param(
     [switch]$NoBrowser,
     [switch]$Foreground,
     [string]$DataDir,
-    [string]$RuntimeDir
+    [string]$RuntimeDir,
+    [string]$ProfileDir
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-$launcherConfig = Join-Path $PSScriptRoot '.venv/creator-archive-launcher.json'
-if (Test-Path -LiteralPath $launcherConfig) {
-    $config = Get-Content -LiteralPath $launcherConfig -Raw | ConvertFrom-Json
+. (Join-Path $PSScriptRoot 'launcher-profile.ps1')
+$config = Get-LauncherSettings $PSScriptRoot $ProfileDir
+$explicitDataDir = $PSBoundParameters.ContainsKey('DataDir')
+if ($config) {
     if (-not $DataDir) { $DataDir = $config.data_dir }
     if (-not $RuntimeDir) { $RuntimeDir = $config.runtime_dir }
 }
 if (-not $DataDir) { $DataDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/workspace' }
 if (-not $RuntimeDir) { $RuntimeDir = Join-Path $env:LOCALAPPDATA 'CreatorArchive/runtime' }
+if ($config -and -not $explicitDataDir -and -not (Test-Path -LiteralPath $DataDir -PathType Container)) {
+    throw "Saved workspace is unavailable: $DataDir. Restore it or explicitly select a workspace; no new database was created."
+}
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
 $stateFile = Join-Path $runtimeDir "server-$Port.json"
 $pythonExe = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
@@ -64,8 +69,10 @@ try {
         & $pythonExe -X utf8 -m creator_archive --port $Port --data-dir $DataDir
         return
     }
-    $serverArgs = @('-X', 'utf8', '-m', 'creator_archive', '--port', $Port, '--data-dir', ('"' + $DataDir + '"'))
-    $server = Start-Process -FilePath $pythonExe -ArgumentList $serverArgs -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runtimeDir "server-$Port.stdout.log") -RedirectStandardError (Join-Path $runtimeDir "server-$Port.stderr.log")
+    # Windows PowerShell 5 Start-Process can fail when inherited Path/PATH keys collide.
+    $serverPid = & $pythonExe -m creator_archive.launcher_spawn $Port $DataDir $PSScriptRoot (Join-Path $runtimeDir "server-$Port.stdout.log") (Join-Path $runtimeDir "server-$Port.stderr.log")
+    if ($LASTEXITCODE -ne 0 -or -not $serverPid) { throw 'Could not launch the server. Saved data was not removed.' }
+    $server = Get-Process -Id ([int]$serverPid) -ErrorAction Stop
     $server.Refresh()
     @{ pid = $server.Id; executable = $pythonExe; start_ticks = $server.StartTime.ToUniversalTime().Ticks.ToString(); workspace = $PSScriptRoot; url = $url; data_dir = $DataDir } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8
     $ready = $false
@@ -81,7 +88,7 @@ try {
     $DataDir = $workspace.data_dir
     $canonicalRuntime = & $pythonExe -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' $runtimeDir
     if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the runtime directory.' }
-    @{ data_dir = $DataDir; runtime_dir = $canonicalRuntime.Trim() } | ConvertTo-Json | Set-Content -LiteralPath $launcherConfig -Encoding utf8
+    Save-LauncherSettings $PSScriptRoot $ProfileDir $DataDir $canonicalRuntime.Trim() | Out-Null
     @{ pid = $server.Id; executable = $pythonExe; start_ticks = $server.StartTime.ToUniversalTime().Ticks.ToString(); workspace = $PSScriptRoot; url = $url; data_dir = $DataDir } | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding utf8
     Write-Host "Creator Archive is ready: $url"
     Write-Host "Data: $DataDir"
