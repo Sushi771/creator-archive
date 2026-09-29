@@ -107,6 +107,10 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
             raise AdapterFailure("rate_limited", retry_after=60)
         if response.status in {403, 406, 461, 471}:
             raise AdapterFailure("verification_required")
+        if host == _WEB_HOST and response.status in {404, 410}:
+            # A missing note is an item-level gap. Keep the API's own 404/410
+            # as a source failure so a broken author listing cannot pass.
+            raise AdapterFailure("item_unavailable")
         if response.status != 200:
             raise AdapterFailure("unavailable")
         length = response.getheader("Content-Length")

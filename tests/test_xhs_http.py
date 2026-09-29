@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from creator_archive.adapters.xhs_http import (
-    XhsHttpTransport, _json_state, _read_cookies, _replace_javascript_literals,
+    XhsHttpTransport, _http_get, _json_state, _read_cookies, _replace_javascript_literals,
     authorize_session,
 )
 from creator_archive.validation import AdapterFailure
@@ -183,6 +183,50 @@ class XhsHttpTransportTests(unittest.TestCase):
         self.transport.close()
         with self.assertRaises(AdapterFailure):
             self.transport._gate()
+
+    def test_detail_http_status_is_item_gap_without_weakening_access_stops(self):
+        cases = [
+            ("www.xiaohongshu.com", 404, None, "item_unavailable"),
+            ("www.xiaohongshu.com", 410, None, "item_unavailable"),
+            ("edith.xiaohongshu.com", 404, None, "unavailable"),
+            ("www.xiaohongshu.com", 401, None, "needs_login"),
+            ("www.xiaohongshu.com", 302, "/login", "needs_login"),
+            ("www.xiaohongshu.com", 403, None, "verification_required"),
+            ("www.xiaohongshu.com", 406, None, "verification_required"),
+            ("www.xiaohongshu.com", 429, None, "rate_limited"),
+            ("www.xiaohongshu.com", 503, None, "unavailable"),
+        ]
+        for host, status, location, category in cases:
+            with self.subTest(host=host, status=status):
+                response = SimpleNamespace(
+                    status=status,
+                    getheader=lambda name, default=None: location if name == "Location" else default,
+                )
+
+                class Connection:
+                    sock = None
+                    closed = False
+
+                    def request(self, method, path, headers):
+                        self.requested = (method, path, headers)
+
+                    def getresponse(self):
+                        return response
+
+                    def close(self):
+                        self.closed = True
+
+                connection = Connection()
+                context = SimpleNamespace(wrap_socket=lambda sock, server_hostname: object())
+                with patch("creator_archive.adapters.xhs_http._public_addresses", return_value=["203.0.113.1"]), \
+                     patch("creator_archive.adapters.xhs_http.http.client.HTTPSConnection", return_value=connection), \
+                     patch("creator_archive.adapters.xhs_http.socket.create_connection", return_value=object()), \
+                     patch("creator_archive.adapters.xhs_http.ssl.create_default_context", return_value=context):
+                    with self.assertRaises(AdapterFailure) as caught:
+                        _http_get(host, "/explore/" + NOTE_ONE, {"Cookie": "private-test-cookie"}, max_bytes=1024)
+                self.assertEqual(caught.exception.category, category)
+                self.assertTrue(connection.closed)
+                self.assertNotIn("private-test-cookie", str(caught.exception))
 
     def test_signed_api_request_uses_fixed_platform_host_and_maps_refusal(self):
         sent = []
