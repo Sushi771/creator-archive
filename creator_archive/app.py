@@ -50,6 +50,11 @@ class DemoInput(BaseModel):
 class SubscriptionInput(LinkInput):
     display_name: str | None = Field(default=None, max_length=160)
 
+class SourceInput(BaseModel):
+    platform: str
+    author_id: str
+    url: str = Field(min_length=1, max_length=4096)
+
 
 class AuthorInput(BaseModel):
     platform: str
@@ -124,18 +129,19 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/status")
     def status():
+        configured = service.workspace()["subscriptions"]
         return {"version": __version__, "commit": source_commit(), "mode": "local_mvp", "g1_passed": False,
                 "platforms": [
-                    {"platform": "wechat", "implementation": {"creator_resolution": False,
-                        "latest": False, "history_pagination": False, "detail": False, "media": False},
-                     "configuration": "no_authorized_history_source", "runtime": "not_connected",
+                    {"platform": "wechat", "implementation": {"creator_resolution": True,
+                        "latest": True, "history_pagination": False, "detail": True, "media": True},
+                     "configuration": "feed_http_optional", "configured_authors": sum(s["platform"] == "wechat" and s["source_connected"] for s in configured), "runtime": "not_checked_by_health",
                      "validation": "not_passed", "experimental": False,
-                     "known_limits": "尚无可用的公众号历史来源或接入适配器；本机旧资料可浏览和导出。"},
+                     "known_limits": "Feed 可用于近期增量；订阅前完整历史仍需已授权且有可信末页的来源。"},
                     {"platform": "xiaohongshu", "implementation": {"creator_resolution": True,
-                        "latest": True, "history_pagination": True, "detail": True, "media": True},
-                     "configuration": "dedicated_browser_login_required", "runtime": "not_checked_by_health",
-                     "validation": "partial_live_samples", "experimental": True,
-                     "known_limits": "已有有限真实列表、正文与媒体样本；登录状态和精确游标恢复须按任务现场核对，G1未通过。"}
+                        "latest": True, "history_pagination": False, "detail": True, "media": True},
+                     "configuration": "feed_http_optional", "configured_authors": sum(s["platform"] == "xiaohongshu" and s["source_connected"] for s in configured), "runtime": "not_checked_by_health",
+                     "validation": "prior_browser_samples_only", "experimental": True,
+                     "known_limits": "旧浏览器采集默认停用；后台 Feed 与 JSON 分页须逐源核验。既有真实样本不能证明全历史。"}
                 ], "runs": store.all()}
 
     @app.exception_handler(ValueError)
@@ -163,6 +169,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/subscriptions")
     def subscribe(body: SubscriptionInput):
         return service.subscribe(body.text, body.display_name)
+
+    @app.post("/api/sources")
+    def configure_source(body: SourceInput):
+        return service.set_source(body.platform, body.author_id, body.url)
 
     @app.post("/api/subscriptions/toggle")
     def toggle(body: ToggleInput):
@@ -213,6 +223,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/jobs/{job_id}/resume")
     def resume(job_id: int, body: ResumeInput | None = None):
         return service.resume(job_id,body.source_url if body else None,body.source_urls if body else None)
+
+    @app.post("/api/jobs/{job_id}/pause")
+    def pause(job_id: int):
+        return service.pause(job_id)
 
     @app.post("/api/archive-batches/{batch_id}/resume")
     def resume_archive_batch(batch_id: int):

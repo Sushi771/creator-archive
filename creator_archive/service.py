@@ -11,6 +11,7 @@ from contextlib import closing
 from datetime import date, timedelta
 import os
 import re
+import shutil
 from pathlib import Path
 import sqlite3
 from threading import Event, Lock, RLock, Thread
@@ -30,38 +31,43 @@ def default_workspace() -> Path:
 
 
 MESSAGES = {
+    "user_paused": ("已按请求暂停，列表检查点、正文和已成功媒体保持。", "从原任务继续，系统只处理尚未完成的范围。"),
+    "source_refresh_unchanged": ("后台来源没有新增、变化或待补内容；本次仅核对当前 Feed 所列范围。", "需要全历史时启动带可信分页的作者历史任务；本次不证明历史末页。"),
+    "source_refresh_complete": ("当前 Feed 列出的待处理作品已保存；历史覆盖仍须另行核验。", "可本机导出；如需全历史，请使用支持可信分页的来源。"),
+    "source_refresh_partial": ("当前 Feed 有正文或媒体缺口；已保存成功内容。", "查看失败作品和来源状态后恢复本任务。"),
     "demo_archive_complete": ("该作者本轮前10篇范围的可获取正文、媒体和已观察数据已归档；不足10篇时以可信末页为准。", "打开作者归档查看结果。已有成功资源已复用，本轮完成不代表全历史完成。"),
     "demo_archive_partial": ("该作者本轮前10篇范围内仍有未完成作品；固定目标和成功资源已保留，失败项不会被后续作品替换。", "查看未完成清单并处理具体原因，再恢复本父任务；只重试原范围内未完成作品。"),
     "author_archive_complete": ("该作者本次列表已到可信末页，所列作品正文和当前可获取媒体已归档。", "打开作者归档；此结果仅对应本次观察到的可获取范围，不代表双平台G1通过。"),
     "author_archive_partial": ("该作者本次列表已到可信末页，部分正文媒体仍未完成；成功资源与固定子任务已保留。", "查看未完成清单并处理具体原因，再恢复本父任务；只重试未完成作品。"),
     "repeated_cursor": ("作者列表返回了重复游标，无法确认后续页链；成功页面和资源已保留，未判定末页。", "恢复原父任务重试当前页；若仍重复，请保留检查点排查页链变化。"),
-    "missing_cursor": ("作者列表仍有后续页面但缺少有效游标；已保存先前进度，未判定末页。", "查看专用浏览器状态后恢复原任务，系统会重试当前页。"),
-    "empty_nonterminal_page": ("作者列表返回空页但未明确结束；先前页面和资源已保留，未判定末页。", "查看专用浏览器状态后恢复原任务，系统会重试当前页。"),
-    "missing_terminal_evidence": ("作者列表缺少可信末页证据；先前页面和资源已保留，未判定完成。", "查看专用浏览器状态后恢复原任务，系统会重试当前页。"),
+    "missing_cursor": ("作者列表仍有后续页面但缺少有效游标；已保存先前进度，未判定末页。", "核对后台来源页链后恢复原任务，系统会重试当前页。"),
+    "empty_nonterminal_page": ("作者列表返回空页但未明确结束；先前页面和资源已保留，未判定末页。", "核对后台来源后恢复原任务，系统会重试当前页。"),
+    "missing_terminal_evidence": ("作者列表缺少可信末页证据；先前页面和资源已保留，未判定完成。", "需要来源提供明确的历史结束证据；已有资料仍可导出。"),
     "invalid_page": ("作者列表返回的分页状态无效；先前页面和资源已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查平台响应。"),
-    "identity_mismatch": ("当前页的作品作者身份与任务不符；该页未提交，旧资料及先前进度已保留。", "在专用浏览器核对作者后恢复原任务；若持续不符，请保留资料排查。"),
+    "identity_mismatch": ("当前页的作品作者身份与任务不符；该页未提交，旧资料及先前进度已保留。", "核对来源中每篇作品的稳定作者身份；修正来源后恢复原任务。"),
     "stale_checkpoint": ("当前页面未能匹配已保存的检查点；旧资料及先前进度已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查。"),
     "invalid_stable_id": ("当前页包含无效作品标识；该页未提交，旧资料及先前进度已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查。"),
     "invalid_response": ("当前页未通过数据校验，原因尚未确定；该页未提交，先前进度已保留。", "恢复原任务重试当前页；若持续发生，请保留资料排查。"),
     "adapter_version_changed": ("采集组件版本与原任务不一致，原页面及资源已保留。", "恢复至原组件版本后重试该任务；确认兼容前不会自动推进检查点。"),
     "page_archive_complete": ("本次最多两页的正文媒体闭环已归档；两页预算不代表全历史完成。", "打开作者归档；列表覆盖与正文媒体状态分别查看。"),
     "page_archive_partial": ("本次两页实验已归档现有资料，部分正文媒体未完成；原页与固定子任务已保留。", "查看未完成条目并处理具体原因，再恢复本父任务；成功作品和资源不会重做。"),
-    "transport_unavailable": ("小红书自运行采集通道尚未配置；已保留作品及分页检查点。", "配置并登录独立采集浏览器后重试；现有作品可直接归档。"),
+    "transport_unavailable": ("后台采集来源尚未配置；已保留作品及分页检查点。", "为作者配置本人授权的后台来源；现有作品可直接导出。"),
+    "source_unconfigured": ("作者尚未配置后台来源，未启动历史采集；已有资料保持。", "在作者卡片配置并核验来源后再启动历史同步。"),
     "wechat_blocked": ("公众号历史来源未验证，当前无后台权限且站点访问受限；未发起网络采集。", "待提供经授权且可验证的全历史来源；已有资料仍可浏览和归档。"),
     "identity_unverified": ("已保存订阅意图，作者身份尚未经过平台核验。", "等待可用的平台核验通道；不要把链接中的候选ID当作已核验身份。"),
     "process_interrupted": ("上次进程退出，成功页面和作品已保留。", "点击恢复，从有效检查点继续；归档可安全重试。"),
-    "needs_login": ("采集登录已失效或需要验证；已保存进度。", "在独立采集浏览器完成登录后点击恢复。"),
-    "verification_required": ("平台要求验证；本批成功项和待处理进度已保留。", "在独立采集浏览器完成平台提示的验证后恢复原任务。"),
+    "needs_login": ("后台来源登录已失效或需要验证；已保存进度。", "在来源自身的本人授权入口完成登录后点击恢复。"),
+    "verification_required": ("来源要求验证；本批成功项和待处理进度已保留。", "在来源自身的本人授权入口完成验证后恢复原任务。"),
     "rate_limited": ("平台要求冷却；已保存进度。", "等待冷却时间结束后点击恢复，不切换账号或IP。"),
-    "adapter_unavailable": ("当前平台没有可用采集适配器；已有资料保留。", "待平台接入后恢复；也可先归档已有资料。"),
+    "adapter_unavailable": ("当前作者没有可用后台来源；已有资料保留。", "配置来源后再恢复；也可先导出已有资料。"),
     "page_budget_reached": ("本轮达到安全页数预算，尚未观察到末页；检查点已保存。", "点击恢复继续下一批页面。"),
     "unexpected_error": ("任务出现未分类错误，原因尚未确定；成功页面和已有文件保留。", "重试一次；若仍失败，请保留工作目录供排查，无需删库。"),
     "export_failed": ("该作者导出文件失败，具体文件或目录原因尚未确定；列表、正文进度和已成功文件保留。", "检查该作者归档目录的写入权限、同名文件和剩余空间后恢复原任务；系统重试导出，不重采成功作品。"),
     "archive_complete": ("现有资料已按作者导出；缺失正文与媒体在清单中明确标记。", "打开归档清单查看结果；列表完整不代表正文或媒体完整。"),
     "validation_import": ("已导入先前真实验证的历史列表；本次没有发起在线采集。", "可浏览和归档已有作品；正文及媒体缺失仍需后续补齐。"),
-    "timeout": ("作者列表等待超时，原因尚未确认；已保存成功页面。", "查看独立浏览器的登录或验证提示，处理后恢复。"),
-    "unavailable": ("平台页面暂不可用，具体原因未知；已保存进度和旧指标。", "查看独立浏览器提示；作品任务可在详情粘贴该作品的完整原文链接后重试。重启后需重新粘贴，成功媒体和检查点保留。"),
-    "invalid_cursor": ("当前页面未能衔接保存的游标；旧记录未细分具体原因，没有跳过未知页面。", "先核对专用浏览器和页链，再恢复原任务一次；若持续发生，请保留检查点排查。"),
+    "timeout": ("作者来源请求超时，原因尚未确认；已保存成功页面。", "核对后台来源状态后恢复。"),
+    "unavailable": ("后台来源暂不可用，具体原因未知；已保存进度和旧指标。", "核对来源状态后恢复原任务；成功媒体和检查点保留。"),
+    "invalid_cursor": ("当前页面未能衔接保存的游标；旧记录未细分具体原因，没有跳过未知页面。", "先核对后台来源页链，再恢复原任务一次；若持续发生，请保留检查点排查。"),
     "cursor_response_conflict": ("同一请求游标观察到不同列表页；先前页面和资源已保留，未判定末页。", "核对该作者专用浏览器中的列表状态；页面稳定后恢复原任务一次，若再冲突请保留检查点排查。"),
     "requested_response_missing": ("浏览器显示末页，但没有观察到检查点所需游标的列表响应；先前进度已保留，未判定末页。", "核对该作者页面和登录状态；确认可访问后恢复原任务一次，若仍缺响应请保留检查点排查。"),
     "content_partial": ("部分作品正文或媒体尚未保存，成功资源与指标已保留。", "查看任务未完成清单中的具体原因，处理后恢复原任务；成功媒体不会重复下载。"),
@@ -95,8 +101,11 @@ class WorkspaceService:
         self._transport_lock = Lock()
         self._network_lock = RLock()
         self._transport = None
+        self._source_transports = {}
         self._threads: set[Thread] = set()
         self._stopping = Event()
+        self._pause_lock = Lock()
+        self._pause_requests: set[int] = set()
         self._job_sources = {} # Temporary navigation parameters never enter SQLite or exports.
         with self.workflow.connect() as db:
             db.executescript("""
@@ -166,11 +175,72 @@ class WorkspaceService:
                 if self.adapter_factory:
                     self._transport = self.adapter_factory(self.root)
                 else:
-                    from .adapters.xhs_transport import XhsBrowserTransport
-                    self._transport = XhsBrowserTransport(self.root.parent / "browser-profile-xhs")
+                    raise AdapterFailure("unavailable")
             return self._transport
 
+    def source_config(self, platform, author_id):
+        path = self.root / "sources.json"
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise ValueError("私有来源配置无法读取；原文件未改动，请检查 sources.json") from error
+        if not isinstance(data, dict):
+            raise ValueError("私有来源配置格式错误；原文件未改动")
+        return data.get(f"{platform}/{author_id}")
+
+    def set_source(self, platform, author_id, url):
+        from .adapters.feed_http import validate_source_url
+        if platform not in {"xiaohongshu", "wechat"}:
+            raise ValueError("仅支持公众号和小红书来源")
+        _id(author_id)
+        url = validate_source_url(url)
+        with self.workflow.connect() as db:
+            if not db.execute("""SELECT 1 FROM subscriptions WHERE platform=? AND author_id=?
+                UNION ALL SELECT 1 FROM subscription_intents WHERE platform=? AND author_id=? LIMIT 1""",
+                (platform, author_id, platform, author_id)).fetchone():
+                raise KeyError("subscription_not_found")
+        path = self.root / "sources.json"
+        with self._lock:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError("私有来源配置格式错误；未覆盖原文件")
+            else:
+                data = {}
+            data[f"{platform}/{author_id}"] = {"url": url, "format": "auto"}
+            temporary = path.with_name(f".sources-{time.time_ns()}.tmp")
+            try:
+                temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                if path.exists():
+                    backup = self.root / "backups" / f"sources-before-change-{time.time_ns()}.json"
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, backup)
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            with self._transport_lock:
+                self._source_transports.pop((platform, author_id), None)
+        return {"platform": platform, "author_id": author_id, "source_configured": True,
+                "message": "后台来源已保存于本机私有配置；尚未请求上游或证明作者身份与历史范围。"}
+
+    def transport_for(self, platform, author_id):
+        config = self.source_config(platform, author_id)
+        if self.adapter_factory and config is None and platform == "xiaohongshu":
+            return self.transport()
+        if config is None:
+            raise AdapterFailure("unavailable")
+        key = (platform, author_id)
+        with self._transport_lock:
+            if key not in self._source_transports:
+                from .adapters.feed_http import FeedHttpTransport
+                self._source_transports[key] = FeedHttpTransport(config, platform, author_id)
+            return self._source_transports[key]
+
     def open_login(self):
+        if not self.adapter_factory:
+            raise ValueError("正式采集已停用旧浏览器传输。请为作者配置本人授权的后台来源；必要登录请在来源自身入口完成。")
         with self._network_lock:
             self._check_cooldown("xiaohongshu")
             with self.workflow.connect() as db:
@@ -186,8 +256,8 @@ class WorkspaceService:
                 raise ValueError(getattr(error, "reason", "采集浏览器未就绪，请检查启动自检并重试")) from None
 
     def verify(self, platform, author_id):
-        if platform != "xiaohongshu":
-            raise ValueError(MESSAGES["wechat_blocked"][0])
+        if platform not in {"xiaohongshu", "wechat"}:
+            raise ValueError("不支持的平台")
         with self.workflow.connect() as db:
             intent = db.execute("SELECT * FROM subscription_intents WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
             existing = db.execute("SELECT * FROM subscriptions WHERE platform=? AND author_id=?", (platform, author_id)).fetchone()
@@ -196,7 +266,7 @@ class WorkspaceService:
         with self._network_lock:
             self._check_cooldown(platform)
             try:
-                observed = self.transport().verify_author(author_id)
+                observed = self.transport_for(platform, author_id).verify_author(author_id)
             except AdapterFailure as error:
                 if error.category == "rate_limited":
                     self._record_cooldown(platform, retry_after=error.retry_after)
@@ -206,15 +276,35 @@ class WorkspaceService:
         saved_name = (existing or intent)["display_name"]
         observed_name = observed.get("display_name")
         name = observed_name if saved_name.startswith("待核验作者 · ") and observed_name and observed_name != author_id else saved_name
-        self.workflow.subscribe(platform, author_id, name, verified=True, evidence="observed_browser_author_listing")
+        evidence = "observed_browser_author_listing" if self.adapter_factory else "observed_http_author_feed"
+        self.workflow.subscribe(platform, author_id, name, verified=True, evidence=evidence)
         if intent:
             self.workflow.set_enabled(platform, author_id, bool(intent["enabled"]))
-        return {"platform": platform, "author_id": author_id, "identity_verified": True, "message": "作者身份已通过当前浏览器页面核验；历史完整性须另行采集验证。"}
+        return {"platform": platform, "author_id": author_id, "identity_verified": True, "message": "作者身份已通过后台来源的作者范围核验；历史完整性须另行采集验证。"}
 
     def close(self):
         self._stopping.set()
         if self._transport is not None and hasattr(self._transport, "close"):
             self._transport.close()
+        for source in self._source_transports.values():
+            if hasattr(source, "close"):
+                source.close()
+
+    def _pause_requested(self, job_id):
+        with self._pause_lock:
+            return job_id in self._pause_requests
+
+    def pause(self, job_id):
+        with self.workflow.connect() as db:
+            row = db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError("job_not_found")
+            if row["state"] not in {"queued", "running"}:
+                raise ValueError("任务不在运行或排队状态，现有进度未改动")
+        with self._pause_lock:
+            self._pause_requests.add(job_id)
+        return {"job_id": job_id, "state": "pausing",
+                "message": "已请求在当前作品或页面边界暂停；已保存进度与文件保持。"}
 
     def subscribe(self, text: str, display_name: str | None = None) -> dict:
         result = classify(text)
@@ -417,7 +507,7 @@ class WorkspaceService:
         result.update(pages=run["pages"] if run else 0, item_count=item_count, library_item_count=count,
                       coverage=run["coverage"] if run else "unknown", retry_at=cooldown,
                       can_resume=row["state"] not in {"succeeded", "running", "queued"} and cooldown <= time.time())
-        if row["mode"] in {"content", "metrics"}:
+        if row["mode"] in {"content", "metrics", "source_refresh"}:
             progress = db.execute("SELECT count(*),coalesce(sum(state='succeeded'),0),coalesce(sum(state='partial'),0) FROM job_items WHERE job_id=?", (row["id"],)).fetchone()
             result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],pending_count=progress[0]-progress[1]-progress[2],coverage="not_applicable")
             result["failed_items"] = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT 20", (row["id"],))]
@@ -439,7 +529,7 @@ class WorkspaceService:
             if row["mode"] == "author_archive":
                 result["scan_url"] = f"/api/jobs/{row['id']}/scan"
         message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
-        if row["mode"] in {"content", "metrics"} and row["reason"] in {"unavailable", "timeout"}:
+        if row["mode"] in {"content", "metrics", "source_refresh"} and row["reason"] in {"unavailable", "timeout"}:
             message = "作品详情或媒体暂未能获取，具体原因尚未确认；已有正文、成功媒体及指标原值与时间保留。"
             next_step = "查看专用浏览器的提示；可在对应作品详情补充完整原文链接后重试，成功媒体会复用。"
         if row["mode"] in page_pipeline.MODES and row["reason"] in {"reference_missing","item_unavailable","unavailable","timeout"}:
@@ -471,6 +561,8 @@ class WorkspaceService:
             archive_batches = self._archive_batches(db, jobs)
             for sub in subscriptions:
                 args = (sub["platform"], sub["author_id"])
+                sub["source_connected"] = self.source_config(*args) is not None
+                sub["source_kind"] = "feed_http" if sub["source_connected"] else None
                 sub["tags"] = author_tags.get(args, [])
                 sub["enabled"] = bool(sub["enabled"])
                 sub["subscribed"] = not self._is_cancelled(db, *args)
@@ -490,8 +582,8 @@ class WorkspaceService:
                         j["display_name"] = sub["display_name"]
             stats = {"subscriptions": len(subscriptions), "items": db.execute("SELECT count(*) FROM items").fetchone()[0], "details": db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], "running": sum(j["state"] in {"queued", "running"} for j in jobs)}
         return {"subscriptions": subscriptions, "runs": jobs, "archive_batches": archive_batches, "stats": stats,
-                "platforms": [{"platform": "wechat", "available": False, "status": "blocked", "message": MESSAGES["wechat_blocked"][0]},
-                              {"platform": "xiaohongshu", "available": True, "status": "experimental", "message": "列表、内容保存和互动指标为实验接入；旧作品可能需补充有效完整链接。样本通过不代表全库正文媒体已保存，长期登录与双平台G1仍未通过。"}],
+                "platforms": [{"platform": "wechat", "available": any(s["platform"] == "wechat" and s["source_connected"] for s in subscriptions), "status": "configured_source_only", "message": "可配置本人授权的后台 Feed 来源；真实身份、历史与媒体仍须逐项验证。"},
+                              {"platform": "xiaohongshu", "available": any(s["platform"] == "xiaohongshu" and s["source_connected"] for s in subscriptions), "status": "configured_source_only", "message": "旧浏览器采集已停用为默认来源；后台 Feed 可保存近期内容，完整历史需要可信分页来源和末页证据。"}],
                 "data_dir": str(self.root), "archive_dir": str(self.workflow.archive_root),
                 "obsidian_dir": str(self.workflow.obsidian_root) if self.workflow.obsidian_root else None,
                 "g1_passed": False}
@@ -691,15 +783,18 @@ class WorkspaceService:
             if mode == "selected_archive" and selected_authors is None:
                 raise ValueError("所选作者归档需要明确的作者范围；未创建任务")
             return self.start_archive_batch(selected_authors)
-        if selected_authors is not None and mode != "archive":
-            raise ValueError("所选作者范围仅用于逐作者全量归档或本机已有资料导出")
+        if mode == "latest" and not self.adapter_factory:
+            mode = "source_refresh"
+        if selected_authors is not None and mode not in {"archive", "source_refresh"}:
+            raise ValueError("所选作者范围仅用于后台来源刷新或本机已有资料导出")
         selected_export = self._selected_author_keys(selected_authors) if selected_authors is not None else None
         if selected_export is not None and any(value is not None for value in (platform, author_id, item_id, source_url, item_ids)):
             raise ValueError("所选作者本机导出只接受作者选择范围")
-        if mode not in {"full", "latest", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
+        if mode not in {"full", "latest", "source_refresh", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
-        if mode in {"page_archive", "author_archive"} and (platform != "xiaohongshu" or not author_id):
-            raise ValueError("按页归档实验仅限一位已确认订阅的小红书作者；两页与至末页范围由所选模式决定")
+        if mode in {"page_archive", "author_archive"} and (not author_id or
+                (platform != "xiaohongshu" and not self.source_config(platform, author_id))):
+            raise ValueError("完整历史任务须指定已配置的作者来源")
         if mode == "demo_archive" and author_id and platform != "xiaohongshu":
             raise ValueError("前10篇Demo仅支持已核验并已确认订阅的小红书作者")
         if item_id and (not author_id or mode not in {"content","metrics"}):
@@ -716,6 +811,10 @@ class WorkspaceService:
                      and s["identity_verified"]]
             if {(s["platform"], s["author_id"]) for s in scope} != selected_export:
                 raise ValueError("所选作者须已核验、确认且仍订阅；请刷新选择。旧资料保持不变")
+        if mode == "source_refresh":
+            scope = [s for s in scope if s["identity_verified"] and self.source_config(s["platform"], s["author_id"])]
+            if selected_export is not None and {(s["platform"], s["author_id"]) for s in scope} != selected_export:
+                raise ValueError("所选作者必须已核验并配置后台来源")
         if author_id and scope and not scope[0]["subscribed"] and mode != "archive":
             raise ValueError("该作者已取消订阅；请先重新订阅。原归档和任务检查点保留；已有任务可从历史与任务恢复")
         if mode == "demo_archive" and not author_id:
@@ -723,7 +822,7 @@ class WorkspaceService:
                      and not s["subscription_confirmation_required"]]
         if not scope:
             raise ValueError("没有可处理的订阅作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和任务检查点保留")
-        if mode in {"full", "latest", *page_pipeline.MODES} and any(s["subscription_confirmation_required"] for s in scope):
+        if mode in {"full", "latest", "source_refresh", *page_pipeline.MODES} and any(s["subscription_confirmation_required"] for s in scope):
             raise ValueError("该作品作者尚未确认订阅；请先在作者卡片确认，原历史和作品保持不变")
         if mode in page_pipeline.MODES and any(not s["identity_verified"] for s in scope):
             raise ValueError("按页闭环实验需要已核验的订阅作者")
@@ -778,8 +877,8 @@ class WorkspaceService:
         return {"mode": "selected_archive", "total": len(scope),
                 "members": [{"platform": s["platform"], "author_id": s["author_id"],
                              "display_name": s["display_name"], "paused": not bool(s["enabled"]),
-                             "platform_available": s["platform"] == "xiaohongshu"} for s in scope],
-                "message": "预览仅核对当前可选择作者；执行时会再次核对并固定范围。公众号采集仍未接入。"}
+                             "platform_available": self.source_config(s["platform"], s["author_id"]) is not None} for s in scope],
+                "message": "预览仅核对当前可选择作者；执行时会再次核对并固定范围。未配置历史来源的作者保留明确缺口。"}
 
     def _archive_batch_scope(self, db, selected_keys):
         eligible = {(row["platform"], row["author_id"]): dict(row)
@@ -796,6 +895,20 @@ class WorkspaceService:
             raise ValueError("没有已核验并确认且仍订阅的作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和检查点保留")
         return [eligible[key] for key in sorted(eligible)]
 
+    def _archive_job_compatible(self, db, job_id, platform, author_id):
+        """A saved page cursor belongs to the adapter that produced it."""
+        config = self.source_config(platform, author_id)
+        if config is not None:
+            from .adapters.feed_http import FeedHttpTransport
+            version = FeedHttpTransport.version
+        elif platform == "xiaohongshu" and self.adapter_factory:
+            version = self.transport().version
+        else:
+            return False
+        row = db.execute("""SELECT r.adapter_version FROM jobs j LEFT JOIN runs r ON r.id=j.run_id
+            WHERE j.id=?""", (job_id,)).fetchone()
+        return bool(row) and row[0] in {None, "pending", version}
+
     def start_archive_batch(self, selected_authors=None):
         """Snapshot subscriptions, retaining each author's latest unfinished checkpoint."""
         selected_keys = self._selected_author_keys(selected_authors)
@@ -804,9 +917,16 @@ class WorkspaceService:
             db.execute("BEGIN IMMEDIATE")
             prior_batches = db.execute("SELECT id FROM batches WHERE mode=? ORDER BY id DESC", (batch_mode,)).fetchall()
             for prior in prior_batches[:1] if selected_keys is None else prior_batches:
+                prior_members = [dict(row) for row in db.execute(
+                    "SELECT platform,author_id,job_id FROM archive_batch_members WHERE batch_id=?", (prior[0],))]
                 if selected_keys is not None and {
-                        (row["platform"], row["author_id"]) for row in db.execute(
-                            "SELECT platform,author_id FROM archive_batch_members WHERE batch_id=?", (prior[0],))} != selected_keys:
+                        (row["platform"], row["author_id"]) for row in prior_members} != selected_keys:
+                    continue
+                if any(row["job_id"] is not None and not self._archive_job_compatible(
+                        db, row["job_id"], row["platform"], row["author_id"]) for row in prior_members):
+                    continue
+                if any(row["job_id"] is None and self.source_config(row["platform"], row["author_id"])
+                       for row in prior_members):
                     continue
                 unfinished = db.execute("""SELECT 1 FROM archive_batch_members m LEFT JOIN jobs j ON j.id=m.job_id
                     WHERE m.batch_id=? AND (j.state!='succeeded' OR (?='selected_archive' AND m.job_id IS NULL)) LIMIT 1""",
@@ -824,13 +944,16 @@ class WorkspaceService:
             reused_ids = []
             for sub in scope:
                 job_id = None
-                reason = "wechat_blocked" if sub["platform"] == "wechat" else None
-                if sub["platform"] == "xiaohongshu":
+                reason = ("wechat_blocked" if sub["platform"] == "wechat" else "source_unconfigured") if (
+                    not self.source_config(sub["platform"], sub["author_id"]) and
+                    not (sub["platform"] == "xiaohongshu" and self.adapter_factory)) else None
+                if reason is None:
                     latest = db.execute("""SELECT j.id,j.state,m.batch_id FROM jobs j
                         LEFT JOIN archive_batch_members m ON m.job_id=j.id
                         WHERE j.platform=? AND j.author_id=? AND j.mode='author_archive'
                         ORDER BY j.id DESC LIMIT 1""", (sub["platform"],sub["author_id"])).fetchone()
-                    if latest and latest["state"] != "succeeded":
+                    if latest and latest["state"] != "succeeded" and self._archive_job_compatible(
+                            db, latest["id"], sub["platform"], sub["author_id"]):
                         if latest["batch_id"] is not None:
                             raise ValueError(f"作者 {sub['display_name']} 的未完成历史任务已属于批次 #{latest['batch_id']}；请恢复原批次")
                         job_id = latest["id"]
@@ -847,7 +970,7 @@ class WorkspaceService:
             self._spawn(job_id)
         return {"batch_id": batch_id, "job_ids": ids, "reused_job_ids": reused_ids,
                 "reused": False, "includes_paused": True,
-                "message": f"已建立{'所选作者' if selected_keys is not None else '全订阅'}归档批次 #{batch_id}；接入 {len(reused_ids)} 个已有检查点，新建 {len(ids)} 个作者任务。已有未完成任务不会自动重试；请在历史与任务查看原因后恢复。公众号暂不可采集并在批次中标明。"}
+                "message": f"已建立{'所选作者' if selected_keys is not None else '全订阅'}归档批次 #{batch_id}；接入 {len(reused_ids)} 个已有检查点，新建 {len(ids)} 个作者任务。已有未完成任务不会自动重试；未配置来源的成员保留缺口。"}
 
     def resume_archive_batch(self, batch_id):
         with self.workflow.connect() as db:
@@ -938,6 +1061,8 @@ class WorkspaceService:
             self._job_sources[job_id] = source_url
         elif sources:
             self._job_sources[job_id] = {**(self._job_sources.get(job_id) if isinstance(self._job_sources.get(job_id),dict) else {}), **sources}
+        with self._pause_lock:
+            self._pause_requests.discard(job_id)
         self._spawn(job_id)
         return {"job_id": job_id, "state": "queued"}
 
@@ -972,9 +1097,15 @@ class WorkspaceService:
                         updated_at=? WHERE id=?""", (state,reason,time.time(),job["run_id"]))
         if state == "succeeded":
             self._job_sources.pop(job_id,None)
+        if state not in {"queued", "running"}:
+            with self._pause_lock:
+                self._pause_requests.discard(job_id)
 
     def _execute(self, job_id):
         with self._lock:
+            if self._pause_requested(job_id):
+                self._finish(job_id, "interrupted", "user_paused")
+                return
             if self._stopping.is_set():
                 self._finish(job_id,"interrupted","process_interrupted")
                 return
@@ -986,11 +1117,14 @@ class WorkspaceService:
                 if job["mode"] != "archive":
                     self._check_cooldown(job["platform"])
                 if not verified:
-                    if job["platform"] == "xiaohongshu" and job["mode"] != "archive":
+                    if job["mode"] != "archive" and (self.adapter_factory or self.source_config(job["platform"], job["author_id"])):
                         self.verify(job["platform"], job["author_id"])
                     else:
                         self._finish(job_id, "blocked", "wechat_blocked" if job["platform"] == "wechat" else "identity_unverified")
                         return
+                if job["mode"] == "source_refresh":
+                    self._execute_source_refresh(job)
+                    return
                 if job["mode"] in {"content","metrics"}:
                     self._execute_content(job)
                     return
@@ -1016,12 +1150,12 @@ class WorkspaceService:
                             author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.workflow.archive_root).as_posix(), safe="/")
                     self._finish(job_id, "succeeded", "archive_complete", exported)
                     return
-                if job["platform"] == "wechat":
+                if not self.source_config(job["platform"], job["author_id"]) and (job["platform"] == "wechat" or not self.adapter_factory):
                     self._finish(job_id, "blocked", "wechat_blocked")
                     return
                 with self._network_lock:
                     self._check_cooldown(job["platform"])
-                    adapter = self.transport()
+                    adapter = self.transport_for(job["platform"], job["author_id"])
                     result = self.workflow.run_all({job["platform"]: adapter}, mode=job["mode"], batch_id=batch, login_confirmed=True)
                     run = result["runs"][0]
                     if run["state"] == "rate_limited":
@@ -1042,9 +1176,54 @@ class WorkspaceService:
             except Exception:
                 self._finish(job_id, "failed", "unexpected_error")
 
-    def _execute_content(self, job, *, page_scoped=False):
+    def _execute_source_refresh(self, job):
+        """Poll only a configured author feed. Absence of pagination is not history completion."""
+        with self.workflow.connect() as db:
+            existing = db.execute("SELECT count(*) FROM job_items WHERE job_id=?", (job["id"],)).fetchone()[0]
+        if not existing:
+            if self._pause_requested(job["id"]):
+                self._finish(job["id"], "interrupted", "user_paused")
+                return
+            with self._network_lock:
+                adapter = self.transport_for(job["platform"], job["author_id"])
+                entries = adapter.poll_latest()
+            if not entries:
+                self._finish(job["id"], "partial", "invalid_response")
+                return
+            seen = set()
+            for entry in entries:
+                item_id = entry.get("item_id")
+                if (entry.get("author_id") != job["author_id"] or not isinstance(item_id, str)
+                        or item_id in seen):
+                    raise AdapterFailure("identity_mismatch")
+                _id(item_id)
+                seen.add(item_id)
+            with self.workflow.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                for entry in entries:
+                    item_id = entry["item_id"]
+                    previous = db.execute("SELECT author_id,detail_text,detail_state,media_state,title FROM items WHERE platform=? AND item_id=?",
+                                          (job["platform"], item_id)).fetchone()
+                    if previous and previous[0] != job["author_id"]:
+                        raise AdapterFailure("identity_mismatch")
+                    db.execute("""INSERT OR IGNORE INTO items(platform,item_id,author_id,published_at,source_url,title,content_type)
+                        VALUES(?,?,?,?,?,?,?)""",
+                        (job["platform"], item_id, job["author_id"], entry.get("published_at") or "",
+                         entry.get("source_url") or "", entry.get("title") or "",
+                         entry.get("content_type") or "unknown"))
+                    if not previous or previous["detail_state"] != "complete" or previous["media_state"] != "complete_for_observed_detail" or previous["detail_text"] != entry.get("text") or previous["title"] != (entry.get("title") or previous["title"]):
+                        db.execute("INSERT OR IGNORE INTO job_items(job_id,platform,item_id) VALUES(?,?,?)",
+                                   (job["id"], job["platform"], item_id))
+        with self.workflow.connect() as db:
+            pending = db.execute("SELECT count(*) FROM job_items WHERE job_id=?", (job["id"],)).fetchone()[0]
+        if not pending:
+            self._finish(job["id"], "succeeded", "source_refresh_unchanged")
+            return
+        self._execute_content(job)
+
+    def _execute_content(self, job, *, page_scoped=False, parent_id=None):
         """Run a fixed local item snapshot, independent of history pagination."""
-        if job["platform"] != "xiaohongshu":
+        if job["platform"] != "xiaohongshu" and not self.source_config(job["platform"], job["author_id"]):
             self._finish(job["id"], "blocked", "wechat_blocked")
             return
         with self.workflow.connect() as db:
@@ -1058,12 +1237,15 @@ class WorkspaceService:
         # changing membership, replaying successful items or advancing pages.
         with self._network_lock:
             self._check_cooldown(job["platform"])
-            transport = self.transport()
+            transport = self.transport_for(job["platform"], job["author_id"])
             if page_scoped:
                 transport.prepare_page_details(job["author_id"], [i["item_id"] for i in targets])
             elif hasattr(transport, "prepare_details") and not isinstance(sources,str):
                 transport.prepare_details(job["author_id"], [i["item_id"] for i in targets if i["item_id"] not in sources])
         for item in targets:
+            if self._pause_requested(job["id"]) or (parent_id is not None and self._pause_requested(parent_id)):
+                self._finish(job["id"], "interrupted", "user_paused")
+                return
             if self._stopping.is_set():
                 self._finish(job["id"],"interrupted","process_interrupted")
                 return
@@ -1071,7 +1253,7 @@ class WorkspaceService:
             try:
                 with self._network_lock:
                     self._check_cooldown(job["platform"])
-                    transport = self.transport()
+                    transport = self.transport_for(job["platform"], job["author_id"])
                     source = sources if isinstance(sources,str) else sources.get(item["item_id"],item["source_url"] or "")
                     detail = transport.detail(job["author_id"], item["item_id"], source_url=source)
                     if detail.get("item_id") != item["item_id"] or detail.get("author_id") != job["author_id"]:
@@ -1085,13 +1267,16 @@ class WorkspaceService:
                                    (detail.get("title"),detail.get("content_type"),detail.get("content_type"),detail.get("published_at") or "",detail.get("published_at") or "",job["platform"],item["item_id"]))
                     complete = True
                     incomplete_reason = "content_partial"
-                    if job["mode"] == "content":
+                    if job["mode"] in {"content", "source_refresh"}:
                         if detail.get("text","").strip() and not (page_scoped and item["detail_state"] == "complete"):
                             self.workflow.save_detail(job["platform"],item["item_id"],job["author_id"],detail["text"],detail["source_url"])
                         else:
                             complete = item["detail_state"] == "complete"
                         media_failed = False
                         for candidate in detail.get("media",[]):
+                            if self._pause_requested(job["id"]) or (parent_id is not None and self._pause_requested(parent_id)):
+                                self._finish(job["id"], "interrupted", "user_paused")
+                                return
                             if self._stopping.is_set():
                                 self._finish(job["id"],"interrupted","process_interrupted")
                                 return

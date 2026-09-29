@@ -98,7 +98,7 @@ try {
         }
     } finally { $listener.Dispose() }
     if ($backupMade) {
-        foreach ($name in @('archive.sqlite3','state.sqlite3','folders.json')) {
+        foreach ($name in @('archive.sqlite3','state.sqlite3','folders.json','sources.json')) {
             $source = Join-Path $backupDir $name
             if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $saved.data_dir $name) -Force }
         }

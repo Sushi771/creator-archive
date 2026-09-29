@@ -94,7 +94,7 @@ def execute(service, job):
             run_id = job["run_id"]
         checkpoint = dict(db.execute("SELECT * FROM page_pipelines WHERE parent_job_id=?", (parent_id,)).fetchone())
     with service._network_lock:
-        transport = service.transport()
+        transport = service.transport_for(job["platform"], job["author_id"])
         with workflow.connect() as db:
             run = dict(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
             if run["adapter_version"] not in {"pending",transport.version}:
@@ -107,6 +107,9 @@ def execute(service, job):
                 JOIN jobs j ON j.id=q.child_job_id JOIN pages p ON p.run_id=? AND p.page_number=q.page_number
                 WHERE q.parent_job_id=? AND j.state!='succeeded' ORDER BY q.page_number""", (run_id,parent_id))]
         for child in unfinished:
+            if service._pause_requested(parent_id):
+                service._finish(parent_id,"interrupted","user_paused")
+                return
             if service._stopping.is_set():
                 service._finish(parent_id,"interrupted","process_interrupted")
                 return
@@ -121,6 +124,9 @@ def execute(service, job):
                 return
         new_pages = 0
         while True:
+            if service._pause_requested(parent_id):
+                service._finish(parent_id,"interrupted","user_paused")
+                return
             if service._stopping.is_set():
                 service._finish(parent_id,"interrupted","process_interrupted")
                 return
@@ -194,7 +200,7 @@ def _consume(service, parent_id, child):
         db.execute("UPDATE jobs SET state='running',reason=NULL,updated_at=? WHERE id=?", (time.time(),child["id"]))
     if pending:
         try:
-            service._execute_content(child,page_scoped=True)
+            service._execute_content(child,page_scoped=True,parent_id=parent_id)
         except Exception as error:
             category = error.category if isinstance(error,AdapterFailure) else "unexpected_error"
             service._finish(child["id"],category if category in {"needs_login","rate_limited"} else "blocked",category)

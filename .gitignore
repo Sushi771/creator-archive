@@ -21,6 +21,7 @@ corpus/
 vault/
 Obsidian*/
 folders.json
+sources.json
 backups/
 data/
 logs/

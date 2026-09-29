@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from threading import Event
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -91,6 +92,33 @@ class AuthorPipelineTests(unittest.TestCase):
         with (service or self.service).workflow.connect() as db:
             paths = [self.root / "archive" / row[0] for row in db.execute("SELECT relative_path FROM assets")]
         return {str(path): (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
+
+    def test_user_pause_keeps_page_checkpoint_and_resume_processes_remaining_items(self):
+        entered, release = Event(), Event()
+        original_page = self.source.page
+
+        def held_page(author, cursor):
+            if cursor is None and not entered.is_set():
+                entered.set()
+                self.assertTrue(release.wait(5))
+            return original_page(author, cursor)
+
+        self.source.page = held_page
+        job_id = self.service.start("author_archive", "xiaohongshu", AUTHOR)["job_id"]
+        self.assertTrue(entered.wait(5))
+        self.assertEqual(self.service.pause(job_id)["state"], "pausing")
+        release.set()
+        self.service.wait(30)
+        paused = self.job(job_id)
+        self.assertEqual((paused["state"], paused["reason"], paused["pages"]),
+                         ("interrupted", "user_paused", 1))
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 0)
+        self.service.resume(job_id)
+        self.service.wait(30)
+        completed = self.job(job_id)
+        self.assertEqual((completed["state"], completed["listed_count"], completed["item_count"]),
+                         ("succeeded", 6, 6))
 
     def test_author_reaches_empty_terminal_and_reuses_fixed_two_page_success_without_changing_old_scope(self):
         old = self.start("page_archive")

@@ -27,10 +27,11 @@ def backup_workspace(data_dir: Path, backup_dir: Path) -> dict:
                 if copy.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise RuntimeError(f"Backup integrity check failed: {name}")
         backed_up.append(name)
-    folders = data_dir / "folders.json"
-    if folders.is_file():
-        shutil.copy2(folders, backup_dir / folders.name)
-        backed_up.append(folders.name)
+    for name in ("folders.json", "sources.json"):
+        config = data_dir / name
+        if config.is_file():
+            shutil.copy2(config, backup_dir / name)
+            backed_up.append(name)
     (backup_dir / "backup-info.json").write_text(
         json.dumps({"source": str(data_dir), "files": backed_up}, ensure_ascii=False, indent=2),
         encoding="utf-8",
