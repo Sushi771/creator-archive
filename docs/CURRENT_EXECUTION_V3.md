@@ -1,6 +1,6 @@
 # 小红书 v3 总控记录（2026-09-30）
 
-追加独立缺陷复核：本机 rc5 页面“从检查点继续”曾在点击时无请求，集成 B 在隔离临时 SQLite、模拟 HTTP 与无账号浏览器中证明，后台刷新夹在按下/释放之间会替换按钮并丢失点击。`814d825` 前端补丁在按下期间暂缓任务卡片刷新、点击或取消后补刷新；普通及交错点击均发出一次恢复 POST 并显示反馈，取消和失焦不会永久停刷新。此复核没有访问平台或生产资料；rc6 实际升级和正式包验证另记。
+追加独立缺陷复核：本机 rc5 页面“从检查点继续”曾在点击时无请求，集成 B 在隔离临时 SQLite、模拟 HTTP 与无账号浏览器中证明，后台刷新夹在按下/释放之间会替换按钮并丢失点击。`814d825` 前端补丁在按下期间暂缓任务卡片刷新、点击或取消后补刷新；普通及交错点击均发出一次恢复 POST 并显示反馈，取消和失焦不会永久停刷新。此复核没有访问平台或生产资料。rc6 已从 rc5 升级到 `%LOCALAPPDATA%\Programs\CreatorArchive\CreatorArchive-0.6.0rc6-windows`，源码提交 `26f9b83ba3bd8fba3859f606b1d5542f21aa0655`；升级前备份 `backups/before-release-20260930-015819-3a3ca871` 与当前两库 `quick_check=ok`、所有业务表逐行摘要一致，私有来源与目录配置哈希一致。ZIP SHA-256 为 `6e54463f93eecf93c009b2bd671b0c37e05df81afedf4979a5ad02afa3830079`。未在生产再次点击恢复，以免未知来源码条件下重复请求。
 
 本轮用户请求优先于冲突的 v2 约定：只交付小红书真实后台来源、博主链接订阅、全部可获取历史、正文与图片视频、增量刷新、恢复和按博主离线导出。公众号保留入口和数据，开发与验收暂缓。五篇是正常同步结果的原文匹配抽查，不是采集限额；五篇匹配和历史末页分别验收。
 
@@ -8,11 +8,11 @@
 
 | 负责人 | 真实任务 ID | 工作树 / 分支 | 文件所有权 | 当前交付 |
 | --- | --- | --- | --- | --- |
-| 总控 | `01a0edcf-8801-7161-8a1d-a5c105d1c850` | `C:\Users\ss\OneDrive\Desktop\creator-archive` / `codex/first-release` | `AGENTS.md`、`PROJECT_STATUS.md`、`CHANGELOG.md`、本记录、共享审查、发布脚本与本机部署 | 已安装 rc5、真实任务 #72 与导出 #73；来源返回业务码 -100 后停止新请求 |
+| 总控 | `01a0edcf-8801-7161-8a1d-a5c105d1c850` | `C:\Users\ss\OneDrive\Desktop\creator-archive` / `codex/first-release` | `AGENTS.md`、`PROJECT_STATUS.md`、`CHANGELOG.md`、本记录、共享审查、发布脚本与本机部署 | 已安装 rc6、保留真实任务 #72 与导出 #73；来源返回业务码 -100 后停止新请求 |
 | 来源 A（原任务复用） | `01a0eb2d-e0bc-7c00-8ee6-94445e1f5c0f` | `C:\Users\ss\.codex\worktrees\xhs-source\creator-archive` / `codex/xhs-source` | `creator_archive/adapters/xhs_http.py`、专用测试、来源研究记录 | 来源 `a6d606b` 与单篇 404/410 分流 `0a6192a` 已整合；原任务空闲，真实请求权已交总控 |
-| 集成 B（本任务子 agent） | `/root/xhs_integration` | `C:\Users\ss\.codex\worktrees\xhs-integration\creator-archive` / `codex/xhs-integration` | `creator_archive/service.py`、`app.py`、`static/`、专用测试 | 初版 `94eb593` 与恢复修复 `2edcf6b` 已整合；任务结束，未访问真实平台或生产资料 |
+| 集成 B（本任务子 agent） | `/root/xhs_integration` | `C:\Users\ss\.codex\worktrees\xhs-integration\creator-archive` / `codex/xhs-integration` | `creator_archive/service.py`、`app.py`、`static/`、专用测试 | 初版 `94eb593`、恢复修复 `2edcf6b` 与按钮稳定性 `814d825` 已整合；任务结束，未访问真实平台或生产资料 |
 
-两名执行者未写生产资料、未部署、未推送。真实平台连接最初仅由来源 A 做一次列表健康检查；A 已停止，总控接管后续唯一连接。总控在旧服务停止时备份实际工作区 SQLite 与配置，核验并复用已授权会话于仓库外私有目录，未输出 Cookie；已配置新来源并升级 rc5。现有独立 WeWe 项目不在本轮范围。
+两名执行者未写生产资料、未部署、未推送。真实平台连接最初仅由来源 A 做一次列表健康检查；A 已停止，总控接管后续唯一连接。总控在旧服务停止时备份实际工作区 SQLite 与配置，核验并复用已授权会话于仓库外私有目录，未输出 Cookie；已配置新来源并升级 rc6。现有独立 WeWe 项目不在本轮范围。
 
 ## 冻结的最小接口
 

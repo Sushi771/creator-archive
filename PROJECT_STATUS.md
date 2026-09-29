@@ -2,9 +2,11 @@
 
 ## 当前执行：v3 小红书优先
 
-`0.6.0rc6` 候选已修复任务卡片刷新打断“从检查点继续”按钮点击的前端缺陷；隔离模拟浏览器已复现修复前后差异，Node 前端合同通过。以下实际本机安装与真实平台数字仍属于正在运行的 `0.6.0rc5`，待 rc6 打包升级后另记；未知业务码条件未变化，未再向平台请求。
+`0.6.0rc6` 已修复任务卡片刷新打断“从检查点继续”按钮点击的前端缺陷；隔离模拟浏览器已复现修复前后差异，Node 前端合同通过。本机从 rc5 升级并运行源码提交 `26f9b83ba3bd8fba3859f606b1d5542f21aa0655`，安装在 `%LOCALAPPDATA%\Programs\CreatorArchive\CreatorArchive-0.6.0rc6-windows`，只监听 `127.0.0.1:8765`，定时刷新关闭。ZIP SHA-256 为 `6e54463f93eecf93c009b2bd671b0c37e05df81afedf4979a5ad02afa3830079`；预发布与远端 CI 待核。未知业务码条件未变化，未再向平台请求。
 
-本轮按用户最新 v3 请求只交付小红书，公众号保留入口和旧资料但暂缓开发与验收；双平台总项目仍未完成。来源 A 与集成 B 的隔离提交已整合，任务 ID、文件所有权及现场记录见 [小红书 v3 总控记录](docs/CURRENT_EXECUTION_V3.md)。本机已安装并运行 `0.6.0rc5`，源码提交 `c2b0f65bc933c8b3b0f2371a8ec4adfc526e36b9`，仅监听 `127.0.0.1:8765`；实际工作区为 `C:\Users\ss\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\CreatorArchive\workspace`，定时刷新关闭。
+rc6 升级备份位于实际工作区 `backups/before-release-20260930-015819-3a3ca871`，备份与运行中的 `archive.sqlite3`、`state.sqlite3` 均 `quick_check=ok`，所有业务表逐行摘要相同；`sources.json` 与 `folders.json` 哈希也相同。应用仍有 3 位订阅、1409 条作品、431 条正文，任务 #72 的 7 页检查点和 #73 导出记录保持。下面的 rc5 现场进展是升级前形成的真实平台证据，不能当作 rc6 又向平台发起了同步。
+
+本轮按用户最新 v3 请求只交付小红书，公众号保留入口和旧资料但暂缓开发与验收；双平台总项目仍未完成。来源 A 与集成 B 的隔离提交已整合，任务 ID、文件所有权及现场记录见 [小红书 v3 总控记录](docs/CURRENT_EXECUTION_V3.md)。实际工作区为 `C:\Users\ss\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\CreatorArchive\workspace`。
 
 [0.6.0rc5 预发布页](https://github.com/Sushi771/creator-archive/releases/tag/v0.6.0-rc.5)含 Windows ZIP 与校验文件；ZIP SHA-256 为 `9856deb42c3b0bf4cfd0e578752c6044f5c2297c07694c2d61dfe0d5a33005ad`，远端附件 digest 已核对。标签指向打包源码提交；[Windows CI #24](https://github.com/Sushi771/creator-archive/actions/runs/36605642901) 的后端、前端与无凭据打包检查通过。面向 `main` 的[草稿 PR #1](https://github.com/Sushi771/creator-archive/pull/1) 保持未合并；详细安装、启动和停止方法见[发布说明](RELEASE_README.md)。
 
