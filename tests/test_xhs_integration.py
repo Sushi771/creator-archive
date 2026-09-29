@@ -30,6 +30,7 @@ class FakeXhsHttpTransport:
     downloads = []
     fail_media_once = False
     unavailable_items = set()
+    item_unavailable_items = set()
     missing_reference_items = set()
     edited_text = {}
 
@@ -46,6 +47,7 @@ class FakeXhsHttpTransport:
         cls.downloads = []
         cls.fail_media_once = False
         cls.unavailable_items = set()
+        cls.item_unavailable_items = set()
         cls.missing_reference_items = set()
         cls.edited_text = {}
 
@@ -84,6 +86,8 @@ class FakeXhsHttpTransport:
             raise AdapterFailure("reference_missing")
         if item_id in type(self).unavailable_items:
             raise AdapterFailure("unavailable")
+        if item_id in type(self).item_unavailable_items:
+            raise AdapterFailure("item_unavailable")
         media = [MediaCandidate("image", 0, f"memory://{item_id}/image")]
         if item_id == IDS[0]:
             media.append(MediaCandidate("video", 1, f"memory://{item_id}/video"))
@@ -158,6 +162,21 @@ class XhsIntegrationTests(unittest.TestCase):
 
     def _author_job(self, job_id):
         return next(j for j in self.service.workspace()["runs"] if j["id"] == job_id)
+
+    def test_native_source_does_not_relabel_legacy_list_only_run(self):
+        self.service.subscribe(PROFILE)
+        now = time.time()
+        with self.service.workflow.connect() as db:
+            batch = db.execute("INSERT INTO batches(mode,created_at) VALUES('full',?)", (now,)).lastrowid
+            run = db.execute("""INSERT INTO runs(batch_id,platform,author_id,mode,adapter_version,state,updated_at)
+                VALUES(?,'xiaohongshu',?,'full','xhs-normal-browser-experimental-v1','succeeded',?)""",
+                (batch, AUTHOR, now)).lastrowid
+            job = db.execute("""INSERT INTO jobs(platform,author_id,mode,state,run_id,created_at,updated_at)
+                VALUES('xiaohongshu',?,'full','succeeded',?,?,?)""",
+                (AUTHOR, run, now, now)).lastrowid
+        status = self._author_job(job)
+        self.assertNotIn("target_count", status)
+        self.assertEqual(status["mode"], "full")
 
     def test_profile_link_to_full_history_content_media_export_and_refresh(self):
         subscribed = self.service.subscribe(PROFILE)
@@ -247,9 +266,9 @@ class XhsIntegrationTests(unittest.TestCase):
             run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job["run_id"],)).fetchone()
             self.assertEqual((run["pages"], run["cursor"]), (3, None))
 
-    def test_permanently_unavailable_note_does_not_stop_history_or_repeat_in_one_run(self):
+    def test_missing_note_does_not_stop_history_or_repeat_in_one_run(self):
         self.service.subscribe(PROFILE)
-        FakeXhsHttpTransport.unavailable_items.add(IDS[0])
+        FakeXhsHttpTransport.item_unavailable_items.add(IDS[0])
         started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
         self.service.wait(30)
         job = self._author_job(started["job_id"])
@@ -265,10 +284,10 @@ class XhsIntegrationTests(unittest.TestCase):
             self.assertTrue(run["terminal_evidence"])
             failure = db.execute("SELECT state,reason FROM job_items WHERE job_id=? AND item_id=?",
                                  (started["job_id"], IDS[0])).fetchone()
-            self.assertEqual(tuple(failure), ("partial", "unavailable"))
+            self.assertEqual(tuple(failure), ("partial", "item_unavailable"))
             observation = db.execute("SELECT source,status,reason FROM metric_snapshots WHERE platform='xiaohongshu' AND item_id=? ORDER BY id DESC LIMIT 1",
                                      (IDS[0],)).fetchone()
-            self.assertEqual(tuple(observation), ("xhs_http_detail_attempt", "failed", "unavailable"))
+            self.assertEqual(tuple(observation), ("xhs_http_detail_attempt", "failed", "item_unavailable"))
             self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 5)
         self.assertTrue(Path(job["export"]["authors"][0]["manifest"]).is_file())
         self.assertTrue(Path(job["export"]["authors"][0]["failures"]).is_file())
@@ -281,6 +300,19 @@ class XhsIntegrationTests(unittest.TestCase):
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3", None])
         self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 2)
         self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 7)
+
+    def test_unknown_source_failure_stops_before_requesting_next_page(self):
+        self.service.subscribe(PROFILE)
+        FakeXhsHttpTransport.unavailable_items.add(IDS[0])
+        started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
+        self.service.wait(30)
+        job = self._author_job(started["job_id"])
+        self.assertEqual((job["state"], job["reason"]), ("blocked", "unavailable"), job)
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
+        self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 1)
+        with self.service.workflow.connect() as db:
+            run = db.execute("SELECT pages,cursor,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            self.assertEqual(tuple(run), (1, "page-2", "partial"))
 
     def test_missing_one_detail_reference_keeps_other_pages_and_failure_record(self):
         self.service.subscribe(PROFILE)

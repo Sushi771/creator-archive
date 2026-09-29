@@ -694,8 +694,10 @@ class WorkspaceService:
                       coverage=run["coverage"] if run else "unknown", retry_at=cooldown,
                       can_resume=row["state"] not in {"succeeded", "running", "queued"} and cooldown <= time.time()
                       and (row["mode"] == "archive" or not self._platform_access_reason(row["platform"], db)))
+        # A current source selector does not rewrite the meaning of an older
+        # list-only run. Use the adapter version captured by this run instead.
         native_full = (row["mode"] == "full" and
-                       (self._source_kind(row["platform"], row["author_id"]) == "xhs_http" or
+                       (bool(run and run["adapter_version"] == "xhs-author-http-v1") or
                         bool(db.execute("SELECT 1 FROM job_items WHERE job_id=? LIMIT 1", (row["id"],)).fetchone())))
         if row["mode"] in {"content", "metrics", "source_refresh"} or native_full:
             progress = db.execute("SELECT count(*),coalesce(sum(state='succeeded'),0),coalesce(sum(state='partial'),0) FROM job_items WHERE job_id=?", (row["id"],)).fetchone()
@@ -847,10 +849,10 @@ class WorkspaceService:
                                 "reused_existing_job": row["reason"] == "existing_checkpoint",
                                 "pages": job["pages"] if job else 0,
                                 "list_finished": job.get("list_finished", False) if job else False,
-                                "target_count": job["target_count"] if job else 0,
-                                "item_count": job["item_count"] if job else 0,
-                                "failed_count": job["failed_count"] if job else 0,
-                                "pending_count": job["pending_count"] if job else 0,
+                                "target_count": job.get("target_count", 0) if job else 0,
+                                "item_count": job.get("item_count", 0) if job else 0,
+                                "failed_count": job.get("failed_count", 0) if job else 0,
+                                "pending_count": job.get("pending_count", 0) if job else 0,
                                 "message": job["message"] if job else MESSAGES["wechat_blocked"][0],
                                 "next_step": job["next_step"] if job else MESSAGES["wechat_blocked"][1],
                                 "can_resume": job["can_resume"] if job else False})
@@ -1772,8 +1774,7 @@ class WorkspaceService:
                         observation_key=f"job:{job['id']}:{item['item_id']}:failed:{time.time_ns()}",status="failed",reason=category)
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
-                if category in {"rate_limited","needs_login","verification_required"} or (
-                        category == "unavailable" and job["mode"] != "full"):
+                if category in {"rate_limited","needs_login","verification_required","unavailable"}:
                     if category in {"needs_login","verification_required"}:
                         self._job_sources.clear()
                     if category == "rate_limited":
