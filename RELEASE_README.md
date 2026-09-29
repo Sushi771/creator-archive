@@ -4,7 +4,7 @@
 
 下载：[Windows 预览 ZIP](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.2/CreatorArchive-0.6.0rc2-windows.zip) · [SHA-256 校验值](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.2/CreatorArchive-0.6.0rc2-windows.zip.sha256)。ZIP 内 `release-info.json` 写有打包源码提交，运行后 `/api/status` 应显示同一版本与提交；实际本机安装与数据状态见 [当前状态](PROJECT_STATUS.md)。这是本机 Python 源码包，首次启动需要可用的锁定依赖；人工双击快捷方式和另一台电脑首次安装仍须分别验证。
 
-当前电脑已从 `0.5.0rc1` 升级到 `%LOCALAPPDATA%\Programs\CreatorArchive\CreatorArchive-0.6.0rc1-windows`，本机访问 `http://127.0.0.1:8765/`。运行提交为 `c827a2c8bdd25ebe63274eecaf7e382bef3de5ca`，ZIP SHA-256 为 `fa37f96a64f9ec411eeb84bc30f3f69cfb3324932081ef2255af89675c025c65`。升级备份在实际工作区 `backups/before-release-20260929-124224-9384e03a`，旧程序目录保留。新版实际页面本机导出和停服务离线阅读已通过；两平台真实后台来源仍未配置。
+当前电脑已从 `0.6.0rc1` 升级到 `%LOCALAPPDATA%\Programs\CreatorArchive\CreatorArchive-0.6.0rc2-windows`，本机访问 `http://127.0.0.1:8765/`。运行提交为 `cf1a95f548e3030eab6aba4c972126eac60d7c2e`，ZIP SHA-256 为 `e4c4a1a3c8225e51b81865827e808be1c55a4e3d2b360cd00a65bf0f25867301`。升级备份在实际工作区 `backups/before-release-20260929-130743-30f533e9`，旧程序目录保留。上一版实际页面本机导出和停服务离线阅读通过；本版实际页面及版本核对通过。两平台真实后台来源仍未配置。
 
 1. 安装 Python 3.11 或更新版本；将 ZIP 解压到固定程序目录，例如 `%LOCALAPPDATA%\Programs\CreatorArchive\preview`，不要放在 Codex 临时 worktree。进入解压后的 `CreatorArchive-*-windows` 目录，双击 `install.cmd`。安装只创建桌面 Start / Stop / Files 快捷方式，第一次 Start 会联网安装 `requirements.lock` 中的固定版本。
 2. 双击 **Creator Archive - Start**。浏览器打开 `http://127.0.0.1:8765/`。页面顶部显示版本和提交短 SHA；`/api/status` 提供完整 SHA 与分别列出的实现、配置、运行检查、真实验收状态。默认只监听本机回环地址。
