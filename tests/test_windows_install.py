@@ -37,7 +37,7 @@ class WindowsInstallTests(unittest.TestCase):
             native_unicode_paths = False
         prefix = "Creator Archive 启停 " if native_unicode_paths else "Creator Archive lifecycle "
         with tempfile.TemporaryDirectory(prefix=prefix) as temporary:
-            base = Path(temporary)
+            base = Path(temporary).resolve()
             data = base / ("资料 工作区" if native_unicode_paths else "data workspace")
             archive = base / ("外置 归档" if native_unicode_paths else "archive folder")
             runtime = base / ("运行 日志" if native_unicode_paths else "runtime logs")

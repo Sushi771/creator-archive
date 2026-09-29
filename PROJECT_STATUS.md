@@ -7,7 +7,7 @@
 - 实际 Windows 电脑：从固定程序目录 `C:\Users\ss\AppData\Local\Programs\CreatorArchive\CreatorArchive-0.5.0rc1-windows` 升级安装，三枚桌面 Start/Stop/Files 快捷方式已改指固定目录；旧 `codex/runnable-mvp` worktree 原样保留。以脚本实际启动、停止、重启服务，`http://127.0.0.1:8765/` 页面可操作，网络仅监听 `127.0.0.1:8765`。`/api/status` 返回版本和完整源码提交，`g1_passed=false`。快捷方式目标已检查；真实人工双击尚未验证。
 - 升级前备份位于实际工作区 `backups/before-release-20260929-014313-0edf0382`。SQLite `quick_check=ok`；实际库升级前后订阅 3、作品 1409、附件 943、分页记录 115、管线页 25，其他主要表计数及行摘要相同。旧作者文件 682 件哈希不变。隔离旧版到新版升级成功、故意版本不符失败回退均通过；旧作者和手工笔记保留。
 - 浏览器实际操作：展示 3 位订阅作者、1409 条作品，打开真实作品详情和本地图片，按稳定作品 ID 全库搜索命中 1 条。页面发起单作者本机导出任务 67：160 条已保存作品、152 条正文，8 条缺口列入 `failures.json`；随后“导出全部已保存”任务 68/69 仅覆盖 2 位已确认订阅小红书作者，共 1407 条已保存作品、421 条正文。第三位待确认作者正确排除。旧文件未覆盖，导出无需平台请求。任务 67 后正常 Stop，使用独立 Edge 离线打开真实导出 `file://` 索引和正文，两张本地图片解码成功；重新 Start 后任务记录和资料仍在。真实内容截图只留私有临时目录，不入 Git。
-- 发布包为 [ZIP](releases/CreatorArchive-0.5.0rc1-windows.zip) 与 [SHA-256](releases/CreatorArchive-0.5.0rc1-windows.zip.sha256)，只含已提交源码和脚本，不含用户数据库、媒体、Cookie、浏览器 profile、私有日志。本机 Python 219 项通过、4 项按环境跳过；Node 前端合同通过；公开 Windows CI 首两次因测试临时目录短/长路径与西文代码页中文路径失败，已针对夹具修正，本机定向 9 项通过，远端新结果待核。临时合成库验证中文/空格路径、移动导出目录、停服务/离线 HTML 和两图，见 [公开合成截图](docs/validation/R08-offline-article-2026-09-29.png)。实际新虚拟环境安装 19 个锁定依赖，但使用本机缓存；干净环境首次联网下载尚未验证。
+- 发布包为 [ZIP](releases/CreatorArchive-0.5.0rc1-windows.zip) 与 [SHA-256](releases/CreatorArchive-0.5.0rc1-windows.zip.sha256)，只含已提交源码和脚本，不含用户数据库、媒体、Cookie、浏览器 profile、私有日志。本机 Python 219 项通过、4 项按环境跳过；Node 前端合同通过。公开 Windows CI 前两次因测试临时路径失败，`28b664c` 缩减至 2 个 CI 环境/短路径断言失败；已让 CI 建仓库 `.venv` 并修正断言，新结果待核。临时合成库验证中文/空格路径、移动导出目录、停服务/离线 HTML 和两图，见 [公开合成截图](docs/validation/R08-offline-article-2026-09-29.png)。实际新虚拟环境安装 19 个锁定依赖，但使用本机缓存；干净环境首次联网下载尚未验证。
 
 ## B · 平台交付与三个关键阻塞
 
