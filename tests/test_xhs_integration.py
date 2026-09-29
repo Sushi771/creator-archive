@@ -29,6 +29,8 @@ class FakeXhsHttpTransport:
     detail_requests = []
     downloads = []
     fail_media_once = False
+    unavailable_items = set()
+    missing_reference_items = set()
     edited_text = {}
 
     @classmethod
@@ -43,6 +45,8 @@ class FakeXhsHttpTransport:
         cls.detail_requests = []
         cls.downloads = []
         cls.fail_media_once = False
+        cls.unavailable_items = set()
+        cls.missing_reference_items = set()
         cls.edited_text = {}
 
     def __init__(self, config, platform, author_id):
@@ -58,7 +62,8 @@ class FakeXhsHttpTransport:
         assert author_id == AUTHOR
         self.page_requests.append(cursor)
         page = self.pages[{None: 0, "page-2": 1, "page-3": 2}[cursor]]
-        self._refs.update(item.item_id for item in page.items)
+        self._refs.update(item.item_id for item in page.items
+                          if item.item_id not in type(self).missing_reference_items)
         return page
 
     def prepare_page_details(self, author_id, item_ids):
@@ -74,9 +79,11 @@ class FakeXhsHttpTransport:
 
     def detail(self, author_id, item_id, source_url=""):
         assert author_id == AUTHOR
+        self.detail_requests.append(item_id)
         if item_id not in self._refs:
             raise AdapterFailure("reference_missing")
-        self.detail_requests.append(item_id)
+        if item_id in type(self).unavailable_items:
+            raise AdapterFailure("unavailable")
         media = [MediaCandidate("image", 0, f"memory://{item_id}/image")]
         if item_id == IDS[0]:
             media.append(MediaCandidate("video", 1, f"memory://{item_id}/video"))
@@ -160,6 +167,7 @@ class XhsIntegrationTests(unittest.TestCase):
         self.service.wait(30)
         job = self._author_job(started["job_ids"][0])
         self.assertEqual((job["mode"], job["state"]), ("full", "succeeded"), job)
+        self.assertEqual(self.service.workspace()["subscriptions"][0]["source_health"], "last_run_succeeded")
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3"])
         self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 6)
         with self.service.workflow.connect() as db:
@@ -184,18 +192,20 @@ class XhsIntegrationTests(unittest.TestCase):
         with self.service.workflow.connect() as db:
             self.assertEqual(db.execute("SELECT detail_text FROM items WHERE platform='xiaohongshu' AND item_id=?", (IDS[0],)).fetchone()[0], "修改后的正文")
 
-    def test_media_failure_preserves_cursor_and_resume_downloads_missing_only(self):
+    def test_media_failure_keeps_history_coverage_and_resume_downloads_missing_only(self):
         self.service.subscribe(PROFILE)
         FakeXhsHttpTransport.fail_media_once = True
         started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
         self.service.wait(30)
         job = self._author_job(started["job_id"])
         self.assertEqual((job["mode"], job["state"]), ("full", "partial"), job)
-        self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3"])
         with self.service.workflow.connect() as db:
-            run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job["run_id"],)).fetchone()
-            self.assertEqual((run["pages"], run["cursor"]), (1, "page-2"))
-            self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 2)
+            run = db.execute("SELECT pages,cursor,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            self.assertEqual((run["pages"], run["cursor"], run["coverage"]),
+                             (3, None, "complete_for_accessible_scope"))
+            self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 6)
+        self.assertTrue(job["export"]["authors"][0]["manifest"])
         self.service.resume(started["job_id"])
         self.service.wait(30)
         done = self._author_job(started["job_id"])
@@ -217,7 +227,7 @@ class XhsIntegrationTests(unittest.TestCase):
         self.service.wait(30)
         done = self._author_job(started["job_id"])
         self.assertEqual(done["state"], "succeeded", done)
-        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, None, "page-2", "page-3"])
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3", None])
         first_image = f"memory://{IDS[0]}/image"
         self.assertEqual(FakeXhsHttpTransport.downloads.count(first_image), 1)
 
@@ -235,7 +245,101 @@ class XhsIntegrationTests(unittest.TestCase):
         self.assertEqual((job["state"], job["reason"]), ("partial", "stale_checkpoint"), job)
         with self.service.workflow.connect() as db:
             run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job["run_id"],)).fetchone()
-            self.assertEqual((run["pages"], run["cursor"]), (1, "page-2"))
+            self.assertEqual((run["pages"], run["cursor"]), (3, None))
+
+    def test_permanently_unavailable_note_does_not_stop_history_or_repeat_in_one_run(self):
+        self.service.subscribe(PROFILE)
+        FakeXhsHttpTransport.unavailable_items.add(IDS[0])
+        started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
+        self.service.wait(30)
+        job = self._author_job(started["job_id"])
+        self.assertEqual((job["state"], job["reason"]), ("partial", "author_archive_partial"), job)
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3"])
+        self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 1)
+        self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 6)
+        with self.service.workflow.connect() as db:
+            run = db.execute("SELECT state,pages,coverage,terminal_evidence FROM runs WHERE id=?",
+                             (job["run_id"],)).fetchone()
+            self.assertEqual((run["state"], run["pages"], run["coverage"]),
+                             ("succeeded", 3, "complete_for_accessible_scope"))
+            self.assertTrue(run["terminal_evidence"])
+            failure = db.execute("SELECT state,reason FROM job_items WHERE job_id=? AND item_id=?",
+                                 (started["job_id"], IDS[0])).fetchone()
+            self.assertEqual(tuple(failure), ("partial", "unavailable"))
+            observation = db.execute("SELECT source,status,reason FROM metric_snapshots WHERE platform='xiaohongshu' AND item_id=? ORDER BY id DESC LIMIT 1",
+                                     (IDS[0],)).fetchone()
+            self.assertEqual(tuple(observation), ("xhs_http_detail_attempt", "failed", "unavailable"))
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 5)
+        self.assertTrue(Path(job["export"]["authors"][0]["manifest"]).is_file())
+        self.assertTrue(Path(job["export"]["authors"][0]["failures"]).is_file())
+        self.service.close()
+        self.service = WorkspaceService(self.root)
+        self.service.resume(started["job_id"])
+        self.service.wait(30)
+        resumed = self._author_job(started["job_id"])
+        self.assertEqual(resumed["state"], "partial", resumed)
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3", None])
+        self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 2)
+        self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 7)
+
+    def test_missing_one_detail_reference_keeps_other_pages_and_failure_record(self):
+        self.service.subscribe(PROFILE)
+        FakeXhsHttpTransport.missing_reference_items.add(IDS[0])
+        started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
+        self.service.wait(30)
+        job = self._author_job(started["job_id"])
+        self.assertEqual((job["state"], job["reason"]), ("partial", "author_archive_partial"), job)
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, None, "page-2", "page-3"])
+        self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 1)
+        with self.service.workflow.connect() as db:
+            run = db.execute("SELECT pages,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            self.assertEqual(tuple(run), (3, "complete_for_accessible_scope"))
+            failure = db.execute("SELECT state,reason FROM job_items WHERE job_id=? AND item_id=?",
+                                 (started["job_id"], IDS[0])).fetchone()
+            self.assertEqual(tuple(failure), ("partial", "reference_missing"))
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 5)
+
+    def test_history_page_budget_preserves_cursor_for_explicit_resume(self):
+        self.service.subscribe(PROFILE)
+        with patch("creator_archive.service.XHS_HISTORY_PAGE_BUDGET", 2):
+            started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
+            self.service.wait(30)
+        job = self._author_job(started["job_id"])
+        self.assertEqual((job["state"], job["reason"]), ("partial", "page_budget_reached"), job)
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2"])
+        with self.service.workflow.connect() as db:
+            run = db.execute("SELECT pages,cursor,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            self.assertEqual(tuple(run), (2, "page-3", "partial"))
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 4)
+        self.service.close()
+        self.service = WorkspaceService(self.root)
+        with patch("creator_archive.service.XHS_HISTORY_PAGE_BUDGET", 2):
+            self.service.resume(started["job_id"])
+            self.service.wait(30)
+        done = self._author_job(started["job_id"])
+        self.assertEqual(done["state"], "succeeded", done)
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3"])
+        with self.service.workflow.connect() as db:
+            run = db.execute("SELECT pages,cursor,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            self.assertEqual(tuple(run), (3, None, "complete_for_accessible_scope"))
+
+    def test_legacy_browser_success_does_not_prove_new_http_source_health(self):
+        self.service.subscribe(PROFILE)
+        with self.service.workflow.connect() as db:
+            batch_id = db.execute("INSERT INTO batches(mode,created_at) VALUES('full',?)", (time.time(),)).lastrowid
+            run_id = db.execute("""INSERT INTO runs(batch_id,platform,author_id,mode,adapter_version,state,coverage,updated_at)
+                VALUES(?,'xiaohongshu',?,'full','xhs-browser-legacy','succeeded','unknown',?)""",
+                (batch_id, AUTHOR, time.time())).lastrowid
+            db.execute("""INSERT INTO jobs(platform,author_id,mode,state,run_id,created_at,updated_at)
+                VALUES('xiaohongshu',?,'full','succeeded',?,?,?)""",
+                (AUTHOR, run_id, time.time(), time.time()))
+            db.execute("""INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at)
+                VALUES('xiaohongshu',?,'content','succeeded',?,?)""",
+                (AUTHOR, time.time(), time.time()))
+        sub = self.service.workspace()["subscriptions"][0]
+        self.assertEqual(sub["source_kind"], "xhs_http")
+        self.assertEqual(sub["source_health"], "not_checked")
+        self.assertIsNone(sub["source_health_checked_at"])
 
     def test_refresh_schedule_defaults_off_and_only_starts_due_native_authors(self):
         self.assertFalse(self.service.refresh_schedule()["enabled"])

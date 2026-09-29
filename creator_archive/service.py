@@ -25,6 +25,8 @@ from .metrics import FIELDS, read_metrics, read_snapshots
 from .adapters.xhs_share import expand_share_link
 from . import page_pipeline
 
+XHS_HISTORY_PAGE_BUDGET = 100
+
 
 def default_workspace() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local/share"))) / "CreatorArchive/workspace"
@@ -61,6 +63,7 @@ MESSAGES = {
     "rate_limited": ("平台要求冷却；已保存进度。", "等待冷却时间结束后点击恢复，不切换账号或IP。"),
     "adapter_unavailable": ("当前作者没有可用后台来源；已有资料保留。", "配置来源后再恢复；也可先导出已有资料。"),
     "page_budget_reached": ("本轮达到安全页数预算，尚未观察到末页；检查点已保存。", "点击恢复继续下一批页面。"),
+    "content_retry_budget_reached": ("历史末页已观察，本轮补取作品访问引用达到页数预算；成功资源和失败清单已保存。", "点击恢复继续补取未处理作品。"),
     "unexpected_error": ("任务出现未分类错误，原因尚未确定；成功页面和已有文件保留。", "重试一次；若仍失败，请保留工作目录供排查，无需删库。"),
     "export_failed": ("该作者导出文件失败，具体文件或目录原因尚未确定；列表、正文进度和已成功文件保留。", "检查该作者归档目录的写入权限、同名文件和剩余空间后恢复原任务；系统重试导出，不重采成功作品。"),
     "archive_complete": ("现有资料已按作者导出；缺失正文与媒体在清单中明确标记。", "打开归档清单查看结果；列表完整不代表正文或媒体完整。"),
@@ -794,14 +797,24 @@ class WorkspaceService:
                 run = db.execute("SELECT coverage FROM runs WHERE platform=? AND author_id=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", args).fetchone()
                 sub["coverage"] = run[0] if run else "unknown"
                 latest = next((j for j in jobs if (j["platform"], j["author_id"]) == args and not j.get("parent_job_id")), None)
+                latest_source_job = next((j for j in jobs if (j["platform"], j["author_id"]) == args
+                                          and j["mode"] in {"full", "source_refresh"}
+                                          and not j.get("parent_job_id")), None)
+                latest_source_version = None
+                if latest_source_job and latest_source_job.get("run_id"):
+                    version_row = db.execute("SELECT adapter_version FROM runs WHERE id=?", (latest_source_job["run_id"],)).fetchone()
+                    latest_source_version = version_row[0] if version_row else None
                 sub.update(latest_state=latest["state"] if latest else "pending", reason=latest["reason"] if latest else "identity_unverified")
                 platform_access = self._platform_access_reason(sub["platform"], db)
                 sub["source_health"] = ("not_configured" if not sub["source_configured"] else
                                         platform_access if platform_access else
                                         "rate_limited" if latest and latest["reason"] == "rate_limited" else
-                                        "last_run_succeeded" if latest and latest["state"] == "succeeded" and latest["mode"] != "archive" else
+                                        "last_run_succeeded" if latest_source_job and latest_source_job["mode"] == "full"
+                                            and latest_source_job["state"] == "succeeded"
+                                            and latest_source_version == source_version else
                                         "not_checked")
-                sub["source_health_checked_at"] = latest["updated_at"] if latest and sub["source_health"] != "not_checked" else None
+                sub["source_health_checked_at"] = (latest_source_job["updated_at"] if latest_source_job
+                                                    and sub["source_health"] == "last_run_succeeded" else None)
                 sub["message"] = (latest["message"] if latest else
                                   "作者身份已核验；尚未开始历史同步。" if sub["identity_verified"] else
                                   MESSAGES["identity_unverified"][0])
@@ -1461,7 +1474,7 @@ class WorkspaceService:
                 self._finish(job_id, "failed", "unexpected_error")
 
     def _execute_xhs_history(self, job, run_id, batch_id):
-        """Complete each persisted XHS page's content before requesting another page."""
+        """Scan the full page chain while recording individual content gaps."""
         with self._network_lock:
             transport = self.transport_for(job["platform"], job["author_id"])
         incompatible = False
@@ -1478,6 +1491,8 @@ class WorkspaceService:
             self._finish(job["id"], "partial", "adapter_version_changed")
             return
         last_staged_page = 0
+        attempted_ids = set()
+        pages_requested = 0
         while True:
             if self._pause_requested(job["id"]) or self._stopping.is_set():
                 self._finish(job["id"], "interrupted", "user_paused" if self._pause_requested(job["id"]) else "process_interrupted")
@@ -1498,11 +1513,17 @@ class WorkspaceService:
                             db.execute("UPDATE job_items SET state='partial' WHERE job_id=? AND platform=? AND item_id=? AND state='succeeded'",
                                        (job["id"], job["platform"], item_id))
                     last_staged_page = page["page_number"]
-                pending = db.execute("SELECT count(*) FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],)).fetchone()[0]
+                pending_ids = [row[0] for row in db.execute(
+                    "SELECT item_id FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],))]
                 run = dict(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
-            if pending:
+            targets = set(pending_ids) - attempted_ids
+            deferred = set()
+            if targets:
                 try:
-                    self._restore_xhs_page_references(job, run_id, transport)
+                    replayed, deferred = self._restore_xhs_page_references(
+                        job, run_id, transport, targets,
+                        max_pages=XHS_HISTORY_PAGE_BUDGET - pages_requested)
+                    pages_requested += replayed
                 except AdapterFailure as error:
                     state = error.category if error.category in {"needs_login", "rate_limited"} else "partial"
                     retry_at = time.time() + max(error.retry_after, 5) if state == "rate_limited" else 0
@@ -1513,29 +1534,37 @@ class WorkspaceService:
                     self._record_platform_access_pause(job["platform"], job["author_id"], error.category)
                     self._finish(job["id"], state, error.category)
                     return
-                self._execute_content(job, finalize=False)
+                ready_targets = targets - deferred
+                if ready_targets:
+                    self._execute_content(job, finalize=False, only_item_ids=ready_targets)
+                    attempted_ids.update(ready_targets)
                 with self.workflow.connect() as db:
                     state = db.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()[0]
-                    pending = db.execute("SELECT count(*) FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],)).fetchone()[0]
                 if state != "running":
                     if run["state"] != "succeeded":
                         with self.workflow.connect() as db:
                             reason = db.execute("SELECT reason FROM jobs WHERE id=?", (job["id"],)).fetchone()[0]
                         self.workflow._stop(run_id, state, reason or "content_partial")
                     return
-                if pending:
-                    self._finish(job["id"], "partial", "content_partial")
-                    return
             if run["state"] == "succeeded":
+                with self.workflow.connect() as db:
+                    pending = db.execute("SELECT count(*) FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],)).fetchone()[0]
                 exported = self.workflow.export_all(batch_id=batch_id)
                 for author in exported["authors"]:
                     for key in ("manifest", "corpus", "index", "failures"):
                         author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.workflow.archive_root).as_posix(), safe="/")
-                self._finish(job["id"], "succeeded", "author_archive_complete", exported)
+                reason = ("content_retry_budget_reached" if deferred
+                          else "author_archive_partial" if pending else "author_archive_complete")
+                self._finish(job["id"], "partial" if pending else "succeeded", reason, exported)
+                return
+            if pages_requested >= XHS_HISTORY_PAGE_BUDGET:
+                self.workflow._stop(run_id, "partial", "page_budget_reached")
+                self._finish(job["id"], "partial", "page_budget_reached")
                 return
             with self._network_lock:
                 self._check_cooldown(job["platform"])
                 try:
+                    pages_requested += 1
                     page = transport.page(job["author_id"], run["cursor"])
                     self.workflow._commit_page(run_id, run["cursor"], page)
                 except AdapterFailure as error:
@@ -1556,21 +1585,28 @@ class WorkspaceService:
                     self._finish(job["id"], "partial", reason)
                     return
 
-    def _restore_xhs_page_references(self, job, run_id, transport):
+    def _restore_xhs_page_references(self, job, run_id, transport, target_ids=None, *, max_pages=XHS_HISTORY_PAGE_BUDGET):
         """Re-read only saved pages containing notes whose detail token was lost."""
         with self.workflow.connect() as db:
             pending_ids = [row[0] for row in db.execute(
-                "SELECT item_id FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],))]
+                "SELECT item_id FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],))
+                if target_ids is None or row[0] in target_ids]
             pages = [dict(row) for row in db.execute(
                 "SELECT page_number,request_cursor,next_cursor,item_ids,terminal_evidence FROM pages WHERE run_id=? ORDER BY page_number", (run_id,))]
         with self._network_lock:
             missing = set(transport.prepare_page_details(job["author_id"], pending_ids))
             if not missing:
-                return
+                return 0, set()
+            pages_requested = 0
+            deferred = set()
             for saved in pages:
                 expected = json.loads(saved["item_ids"])
                 if not missing.intersection(expected):
                     continue
+                if pages_requested >= max_pages:
+                    deferred.update(missing.intersection(expected))
+                    continue
+                pages_requested += 1
                 observed = transport.page(job["author_id"], saved["request_cursor"] or None)
                 actual = [item.item_id for item in observed.items]
                 if any(item.author_id != job["author_id"] for item in observed.items):
@@ -1580,8 +1616,10 @@ class WorkspaceService:
                         or observed.terminal_evidence != saved["terminal_evidence"]):
                     raise AdapterFailure("stale_checkpoint")
                 missing = set(transport.prepare_page_details(job["author_id"], tuple(missing)))
-            if missing:
-                raise AdapterFailure("reference_missing")
+            # A missing token for one saved item is an item-level content gap.
+            # detail() records that failure once; it must not truncate the
+            # otherwise valid history page chain.
+            return pages_requested, deferred
 
     def _execute_source_refresh(self, job):
         """Poll only a configured author feed. Absence of pagination is not history completion."""
@@ -1634,7 +1672,7 @@ class WorkspaceService:
             return
         self._execute_content(job)
 
-    def _execute_content(self, job, *, page_scoped=False, parent_id=None, finalize=True):
+    def _execute_content(self, job, *, page_scoped=False, parent_id=None, finalize=True, only_item_ids=None):
         """Run a fixed local item snapshot, independent of history pagination."""
         if job["platform"] != "xiaohongshu" and not self.source_config(job["platform"], job["author_id"]):
             self._finish(job["id"], "blocked", "wechat_blocked")
@@ -1642,6 +1680,8 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             targets = [dict(r) for r in db.execute("SELECT i.* FROM job_items j JOIN items i USING(platform,item_id) WHERE j.job_id=? AND j.state!='succeeded' ORDER BY i.item_id", (job["id"],))]
             scope_count = db.execute("SELECT count(*) FROM job_items WHERE job_id=?", (job["id"],)).fetchone()[0]
+        if only_item_ids is not None:
+            targets = [item for item in targets if item["item_id"] in only_item_ids]
         if not scope_count:
             self._finish(job["id"],"blocked","no_local_items")
             return
@@ -1726,11 +1766,14 @@ class WorkspaceService:
             except Exception as error:
                 category = error.category if isinstance(error,AdapterFailure) else "unexpected_error"
                 if not observed:
-                    self.workflow.save_metrics(job["platform"],item["item_id"],{},source="xhs_browser_detail_attempt",collected_at=time.time(),
+                    attempt_source = ("xhs_http_detail_attempt" if self._source_kind(job["platform"], job["author_id"]) == "xhs_http"
+                                      else "xhs_browser_detail_attempt")
+                    self.workflow.save_metrics(job["platform"],item["item_id"],{},source=attempt_source,collected_at=time.time(),
                         observation_key=f"job:{job['id']}:{item['item_id']}:failed:{time.time_ns()}",status="failed",reason=category)
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
-                if category in {"rate_limited","needs_login","unavailable","verification_required"}:
+                if category in {"rate_limited","needs_login","verification_required"} or (
+                        category == "unavailable" and job["mode"] != "full"):
                     if category in {"needs_login","verification_required"}:
                         self._job_sources.clear()
                     if category == "rate_limited":
