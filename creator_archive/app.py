@@ -56,6 +56,11 @@ class SourceInput(BaseModel):
     url: str = Field(min_length=1, max_length=4096)
 
 
+class RefreshScheduleInput(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(ge=15, le=10080)
+
+
 class AuthorInput(BaseModel):
     platform: str
     author_id: str
@@ -138,11 +143,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                      "validation": "not_passed", "experimental": False,
                      "known_limits": "Feed 可用于近期增量；订阅前完整历史仍需已授权且有可信末页的来源。"},
                     {"platform": "xiaohongshu", "implementation": {"creator_resolution": True,
-                        "latest": True, "history_pagination": False, "detail": True, "media": True},
-                     "configuration": "feed_http_optional", "configured_authors": sum(s["platform"] == "xiaohongshu" and s["source_connected"] for s in configured), "runtime": "not_checked_by_health",
+                        "latest": True, "history_pagination": True, "detail": True, "media": True},
+                     "configuration": "xhs_http_or_feed_http", "configured_authors": sum(s["platform"] == "xiaohongshu" and s["source_configured"] for s in configured), "runtime": "not_checked_by_health",
                      "validation": "prior_browser_samples_only", "experimental": True,
-                     "known_limits": "旧浏览器采集默认停用；后台 Feed 与 JSON 分页须逐源核验。既有真实样本不能证明全历史。"}
-                ], "runs": store.all()}
+                     "known_limits": "真实小红书来源须独立核验；仅历史页链可信末页可证明来源可获取范围，正文媒体分别计数。"}
+                ], "refresh_schedule": service.refresh_schedule(), "runs": store.all()}
 
     @app.exception_handler(ValueError)
     async def invalid_input(request, error):
@@ -173,6 +178,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/sources")
     def configure_source(body: SourceInput):
         return service.set_source(body.platform, body.author_id, body.url)
+
+    @app.get("/api/refresh-schedule")
+    def refresh_schedule():
+        return service.refresh_schedule()
+
+    @app.post("/api/refresh-schedule")
+    def configure_refresh_schedule(body: RefreshScheduleInput):
+        return service.set_refresh_schedule(body.enabled, body.interval_minutes)
 
     @app.post("/api/subscriptions/toggle")
     def toggle(body: ToggleInput):
