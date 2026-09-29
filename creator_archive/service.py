@@ -510,6 +510,16 @@ class WorkspaceService:
         if row["mode"] in {"content", "metrics", "source_refresh"}:
             progress = db.execute("SELECT count(*),coalesce(sum(state='succeeded'),0),coalesce(sum(state='partial'),0) FROM job_items WHERE job_id=?", (row["id"],)).fetchone()
             result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],pending_count=progress[0]-progress[1]-progress[2],coverage="not_applicable")
+            observed = db.execute("""SELECT coalesce(sum(i.detail_state='complete'),0),
+                coalesce(sum(i.media_state='complete_for_observed_detail'),0),
+                coalesce(sum(i.media_state='partial'),0)
+                FROM job_items j JOIN items i USING(platform,item_id) WHERE j.job_id=?""", (row["id"],)).fetchone()
+            result.update(body_saved_count=observed[0],media_observed_complete_count=observed[1],
+                          media_partial_item_count=observed[2])
+            result["registered_media"] = {kind: number for kind, number in db.execute("""
+                SELECT a.kind,count(*) FROM assets a JOIN job_items j
+                ON a.platform=j.platform AND a.item_id=j.item_id
+                WHERE j.job_id=? GROUP BY a.kind""", (row["id"],))}
             result["failed_items"] = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT 20", (row["id"],))]
         association = db.execute("SELECT parent_job_id FROM pipeline_pages WHERE child_job_id=?", (row["id"],)).fetchone()
         if association:
@@ -531,11 +541,11 @@ class WorkspaceService:
         message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
         if row["mode"] in {"content", "metrics", "source_refresh"} and row["reason"] in {"unavailable", "timeout"}:
             message = "作品详情或媒体暂未能获取，具体原因尚未确认；已有正文、成功媒体及指标原值与时间保留。"
-            next_step = "查看专用浏览器的提示；可在对应作品详情补充完整原文链接后重试，成功媒体会复用。"
+            next_step = "核对该作者的后台来源及访问权限后恢复原任务；成功媒体会复用。"
         if row["mode"] in page_pipeline.MODES and row["reason"] in {"reference_missing","item_unavailable","unavailable","timeout"}:
             if row["reason"] in {"unavailable","timeout"} and checkpoint["stage"] == "content":
                 message = "该作者的作品详情或媒体暂未能获取，具体原因尚未确认；原列表检查点、固定子任务及成功资源已保留。"
-            next_step = "查看专用浏览器提示并确认该作者页面可访问后，恢复本父任务；系统沿用原检查点重新观察所需列表页，只重试未完成作品，成功资源会复用。若仍失败，保留原进度排查，无需新建任务。"
+            next_step = "核对该作者后台来源及页链后恢复本父任务；系统沿用原检查点重新观察所需列表页，只重试未完成作品，成功资源会复用。若仍失败，保留原进度排查，无需新建任务。"
         if row["state"] == "succeeded" and not row["reason"] and run and run["coverage"] == "complete_for_accessible_scope":
             message = "本次列表扫描已到当前可获取范围的明确末页；正文和媒体完整性单独核验。"
             next_step = "查看已保存作品，或按作者归档现有资料。"
@@ -566,8 +576,17 @@ class WorkspaceService:
                 sub["tags"] = author_tags.get(args, [])
                 sub["enabled"] = bool(sub["enabled"])
                 sub["subscribed"] = not self._is_cancelled(db, *args)
-                counts = db.execute("SELECT count(*),coalesce(sum(detail_state='complete'),0) FROM items WHERE platform=? AND author_id=?", args).fetchone()
-                sub.update(item_count=counts[0], detail_count=counts[1])
+                counts = db.execute("""SELECT count(*),coalesce(sum(detail_state='complete'),0),
+                    coalesce(sum(media_state='partial'),0) FROM items WHERE platform=? AND author_id=?""", args).fetchone()
+                sub.update(item_count=counts[0], detail_count=counts[1], media_partial_item_count=counts[2])
+                sub["registered_media"] = {kind: number for kind, number in db.execute("""
+                    SELECT a.kind,count(*) FROM assets a JOIN items i USING(platform,item_id)
+                    WHERE i.platform=? AND i.author_id=? GROUP BY a.kind""", args)}
+                source_run = db.execute("""SELECT coverage,terminal_evidence FROM runs
+                    WHERE platform=? AND author_id=? AND adapter_version='http-feed-v1'
+                    AND mode='author_archive' ORDER BY id DESC LIMIT 1""", args).fetchone()
+                sub["source_history_coverage"] = source_run["coverage"] if source_run else "unknown"
+                sub["source_terminal_observed"] = bool(source_run and source_run["terminal_evidence"])
                 run = db.execute("SELECT coverage FROM runs WHERE platform=? AND author_id=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", args).fetchone()
                 sub["coverage"] = run[0] if run else "unknown"
                 latest = next((j for j in jobs if (j["platform"], j["author_id"]) == args and not j.get("parent_job_id")), None)

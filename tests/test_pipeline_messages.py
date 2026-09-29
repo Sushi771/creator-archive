@@ -42,9 +42,10 @@ class PipelineMessageTests(unittest.TestCase):
                         self.assertIn("作品详情或媒体", job["message"])
                         self.assertNotIn("作者列表等待超时", job["message"])
 
-    def test_standalone_content_recovery_keeps_supplemental_link_advice(self):
+    def test_standalone_content_recovery_points_to_background_source(self):
         job = self.create_failed_job("content", "unavailable")
-        self.assertIn("补充完整原文链接", job["next_step"])
+        self.assertIn("后台来源", job["next_step"])
+        self.assertNotIn("专用浏览器", job["next_step"])
         self.assertNotIn("父任务", job["next_step"])
 
     def test_author_card_keeps_partial_parent_when_newer_child_succeeds(self):

@@ -55,6 +55,14 @@ class BackgroundSourceServiceTests(FeedHttpTests):
             self.assertEqual(job["state"], "succeeded", job)
             self.assertEqual((job["listed_count"], job["item_count"]), (6, 6))
             self.assertTrue(job["list_finished"])
+            author = next(s for s in snapshot["subscriptions"] if s["author_id"] == AUTHOR)
+            self.assertEqual((author["detail_count"], author["registered_media"].get("image"),
+                              author["registered_media"].get("video"), author["media_partial_item_count"]),
+                             (6, 6, None, 0))
+            self.assertTrue(author["source_terminal_observed"])
+            content_jobs = [j for j in snapshot["runs"] if j.get("parent_job_id") == started["job_id"]]
+            self.assertEqual(sum(j["body_saved_count"] for j in content_jobs), 6)
+            self.assertEqual(sum(j["registered_media"].get("image", 0) for j in content_jobs), 6)
             with service.workflow.connect() as db:
                 self.assertEqual(db.execute("SELECT count(*) FROM items WHERE platform='xiaohongshu'").fetchone()[0], 6)
                 self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 6)

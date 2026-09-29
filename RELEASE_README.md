@@ -1,8 +1,8 @@
 # Creator Archive Windows 预览版
 
-本包是可独立放在固定目录的 **Python 源码版**，不是免安装 EXE。版本为 `0.6.0rc1` 预览。公众号和小红书尚无经本机真实验证的全历史后台来源；旧小红书浏览器采集退出默认流程，旧资料与任务仍保留。预览不代表双平台正式完成。
+本包是可独立放在固定目录的 **Python 源码版**，不是免安装 EXE。版本为 `0.6.0rc2` 预览。公众号和小红书尚无经本机真实验证的全历史后台来源；旧小红书浏览器采集退出默认流程，旧资料与任务仍保留。预览不代表双平台正式完成。
 
-下载：[Windows 预览 ZIP](releases/CreatorArchive-0.6.0rc1-windows.zip) · [SHA-256 校验值](releases/CreatorArchive-0.6.0rc1-windows.zip.sha256)。ZIP 内 `release-info.json` 写有打包源码提交，运行后 `/api/status` 应显示同一版本与提交；实际本机安装与数据状态见 [当前状态](PROJECT_STATUS.md)。这是本机 Python 源码包，首次启动需要可用的锁定依赖；人工双击快捷方式和另一台电脑首次安装仍须分别验证。
+下载：[Windows 预览 ZIP](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.2/CreatorArchive-0.6.0rc2-windows.zip) · [SHA-256 校验值](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.2/CreatorArchive-0.6.0rc2-windows.zip.sha256)。ZIP 内 `release-info.json` 写有打包源码提交，运行后 `/api/status` 应显示同一版本与提交；实际本机安装与数据状态见 [当前状态](PROJECT_STATUS.md)。这是本机 Python 源码包，首次启动需要可用的锁定依赖；人工双击快捷方式和另一台电脑首次安装仍须分别验证。
 
 当前电脑已从 `0.5.0rc1` 升级到 `%LOCALAPPDATA%\Programs\CreatorArchive\CreatorArchive-0.6.0rc1-windows`，本机访问 `http://127.0.0.1:8765/`。运行提交为 `c827a2c8bdd25ebe63274eecaf7e382bef3de5ca`，ZIP SHA-256 为 `fa37f96a64f9ec411eeb84bc30f3f69cfb3324932081ef2255af89675c025c65`。升级备份在实际工作区 `backups/before-release-20260929-124224-9384e03a`，旧程序目录保留。新版实际页面本机导出和停服务离线阅读已通过；两平台真实后台来源仍未配置。
 

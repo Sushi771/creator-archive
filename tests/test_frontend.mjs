@@ -177,8 +177,10 @@ assert.match(elements['job-list'].children[0].children[1].textContent,/列表 1 
 console.log('Page archive UI checks passed: explicit two-page scope, separate progress, parent recovery without unsupported links.');
 
 const flattenText=element=>[element.textContent,...(element.children||[]).map(flattenText)].join(' ');
+assert.match(html,/id="resolve-item-form"[^>]*hidden/,'Legacy single-note browser action is not advertised in the default background-source UI');
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"author",identity_verified:true,enabled:true,source_connected:true,source_kind:"feed_http"}])');
 assert.match(flattenText(elements['subscription-list']),/后台 Feed 已配置.*刷新此作者来源.*导出本机已有资料/);
+assert.match(flattenText(elements['subscription-list']),/已登记图片 0 \/ 视频 0.*后台来源历史末页未验证/);
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"pending",identity_verified:true,subscription_confirmation_required:true}])');
 assert.match(flattenText(elements['subscription-list']),/配置后台来源.*确认订阅/,'Pending subscription authors may configure a source before feed verification');
 assert.doesNotMatch(flattenText(elements['subscription-list']),/刷新此作者来源/,'Pending subscription authors cannot refresh all content');
@@ -312,7 +314,8 @@ assert.doesNotMatch(flattenText(elements['subscription-list']),/刷新此作者�
 run('sourceCalls=[]');
 await run('startJob("source_refresh")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(sourceCalls.at(-1).body)')),{mode:'source_refresh'});
-run('renderJobs([{id:51,mode:"source_refresh",state:"partial",item_count:3,message:"failed http://127.0.0.1:18765/feed?token=SYNTHETIC_ONLY",next_step:"token=SYNTHETIC_ONLY"}])');
+run('renderJobs([{id:51,mode:"source_refresh",state:"partial",target_count:4,item_count:3,body_saved_count:3,registered_media:{image:5,video:1},media_partial_item_count:1,message:"failed http://127.0.0.1:18765/feed?token=SYNTHETIC_ONLY",next_step:"token=SYNTHETIC_ONLY"}])');
+assert.match(flattenText(elements['job-list']),/已发现 4 个待处理作品，完成 3 个.*正文 3.*已登记图片 5 \/ 视频 1.*媒体待补作品 1/);
 assert.match(flattenText(elements['job-list']),/后台来源刷新.*Feed 覆盖范围不等于原站全历史/);
 assert.doesNotMatch(flattenText(elements['job-list']),/SYNTHETIC_ONLY|127\.0\.0\.1:18765/,'Source jobs do not render source URLs or credentials');
 console.log('Source UI checks passed: pending configuration, private URL handling, selected/global refresh scope and honest job status.');
