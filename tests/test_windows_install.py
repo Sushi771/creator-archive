@@ -26,11 +26,21 @@ class WindowsInstallTests(unittest.TestCase):
         return result
 
     def test_install_start_stop_uninstall_reinstall_retains_old_files(self):
-        with tempfile.TemporaryDirectory(prefix="Creator Archive 启停 ") as temporary:
+        try:
+            "启停资料归档运行".encode("mbcs")
+            native_unicode_paths = True
+        except UnicodeEncodeError:
+            # Shortcut saving failed on a Western-locale CI runner when its
+            # temporary destination contained CJK characters. Keep the
+            # lifecycle check there; use the CJK path when the local code
+            # page supports these characters.
+            native_unicode_paths = False
+        prefix = "Creator Archive 启停 " if native_unicode_paths else "Creator Archive lifecycle "
+        with tempfile.TemporaryDirectory(prefix=prefix) as temporary:
             base = Path(temporary)
-            data = base / "资料 工作区"
-            archive = base / "外置 归档"
-            runtime = base / "运行 日志"
+            data = base / ("资料 工作区" if native_unicode_paths else "data workspace")
+            archive = base / ("外置 归档" if native_unicode_paths else "archive folder")
+            runtime = base / ("运行 日志" if native_unicode_paths else "runtime logs")
             profiles = base / "profiles"
             desktop = base / "desktop"
             ArchiveWorkflow(data)

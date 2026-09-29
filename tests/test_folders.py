@@ -20,8 +20,10 @@ class FolderSettingsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
-        self.data = self.base / "old-workspace"
+        # Windows runners may return an 8.3 temp alias while the workflow
+        # resolves it to the long path. Use one canonical spelling for both.
+        self.base = Path(self.temp.name).resolve()
+        self.data = (self.base / "old-workspace").resolve()
         self.workflow = ArchiveWorkflow(self.data)
         self.workflow.subscribe("xiaohongshu", "author-a", "作者 A", verified=True,
                                 evidence="disposable synthetic identity")
