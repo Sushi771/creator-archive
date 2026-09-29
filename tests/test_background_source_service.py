@@ -11,6 +11,19 @@ from creator_archive.service import WorkspaceService
 
 
 class BackgroundSourceServiceTests(FeedHttpTests):
+    def test_unobserved_media_is_counted_separately_from_known_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service = WorkspaceService(Path(temporary))
+            service.workflow.subscribe("xiaohongshu", AUTHOR, "Synthetic", verified=True,
+                                       evidence="synthetic fixture")
+            with service.workflow.connect() as db:
+                db.execute("""INSERT INTO items(platform,item_id,author_id,published_at)
+                    VALUES('xiaohongshu',?,?, '')""", ("f" * 24, AUTHOR))
+            author = next(s for s in service.workspace()["subscriptions"] if s["author_id"] == AUTHOR)
+            self.assertEqual((author["media_observed_complete_count"], author["media_partial_item_count"],
+                              author["media_unknown_item_count"]), (0, 0, 1))
+            service.close()
+
     def test_source_added_after_blocked_batch_creates_new_scope_without_rewriting_old_batch(self):
         with tempfile.TemporaryDirectory() as temporary:
             service = WorkspaceService(Path(temporary))
@@ -57,8 +70,9 @@ class BackgroundSourceServiceTests(FeedHttpTests):
             self.assertTrue(job["list_finished"])
             author = next(s for s in snapshot["subscriptions"] if s["author_id"] == AUTHOR)
             self.assertEqual((author["detail_count"], author["registered_media"].get("image"),
-                              author["registered_media"].get("video"), author["media_partial_item_count"]),
-                             (6, 6, None, 0))
+                              author["registered_media"].get("video"), author["media_observed_complete_count"],
+                              author["media_partial_item_count"], author["media_unknown_item_count"]),
+                             (6, 6, None, 6, 0, 0))
             self.assertTrue(author["source_terminal_observed"])
             content_jobs = [j for j in snapshot["runs"] if j.get("parent_job_id") == started["job_id"]]
             self.assertEqual(sum(j["body_saved_count"] for j in content_jobs), 6)

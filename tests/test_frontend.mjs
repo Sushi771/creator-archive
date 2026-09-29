@@ -314,8 +314,8 @@ assert.doesNotMatch(flattenText(elements['subscription-list']),/刷新此作者�
 run('sourceCalls=[]');
 await run('startJob("source_refresh")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(sourceCalls.at(-1).body)')),{mode:'source_refresh'});
-run('renderJobs([{id:51,mode:"source_refresh",state:"partial",target_count:4,item_count:3,body_saved_count:3,registered_media:{image:5,video:1},media_partial_item_count:1,message:"failed http://127.0.0.1:18765/feed?token=SYNTHETIC_ONLY",next_step:"token=SYNTHETIC_ONLY"}])');
-assert.match(flattenText(elements['job-list']),/已发现 4 个待处理作品，完成 3 个.*正文 3.*已登记图片 5 \/ 视频 1.*媒体待补作品 1/);
+run('renderJobs([{id:51,mode:"source_refresh",state:"partial",target_count:4,item_count:3,body_saved_count:3,registered_media:{image:5,video:1},media_observed_complete_count:2,media_partial_item_count:1,media_unknown_item_count:1,message:"failed http://127.0.0.1:18765/feed?token=SYNTHETIC_ONLY",next_step:"token=SYNTHETIC_ONLY"}])');
+assert.match(flattenText(elements['job-list']),/已发现 4 个待处理作品，完成 3 个.*正文 3.*已登记图片 5 \/ 视频 1.*观察范围媒体已完成 2.*待补 1.*范围未知 1/);
 assert.match(flattenText(elements['job-list']),/后台来源刷新.*Feed 覆盖范围不等于原站全历史/);
 assert.doesNotMatch(flattenText(elements['job-list']),/SYNTHETIC_ONLY|127\.0\.0\.1:18765/,'Source jobs do not render source URLs or credentials');
 console.log('Source UI checks passed: pending configuration, private URL handling, selected/global refresh scope and honest job status.');

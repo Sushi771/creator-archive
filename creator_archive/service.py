@@ -512,10 +512,11 @@ class WorkspaceService:
             result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],pending_count=progress[0]-progress[1]-progress[2],coverage="not_applicable")
             observed = db.execute("""SELECT coalesce(sum(i.detail_state='complete'),0),
                 coalesce(sum(i.media_state='complete_for_observed_detail'),0),
-                coalesce(sum(i.media_state='partial'),0)
+                coalesce(sum(i.media_state='partial'),0),
+                coalesce(sum(i.media_state='unknown'),0)
                 FROM job_items j JOIN items i USING(platform,item_id) WHERE j.job_id=?""", (row["id"],)).fetchone()
             result.update(body_saved_count=observed[0],media_observed_complete_count=observed[1],
-                          media_partial_item_count=observed[2])
+                          media_partial_item_count=observed[2],media_unknown_item_count=observed[3])
             result["registered_media"] = {kind: number for kind, number in db.execute("""
                 SELECT a.kind,count(*) FROM assets a JOIN job_items j
                 ON a.platform=j.platform AND a.item_id=j.item_id
@@ -577,8 +578,13 @@ class WorkspaceService:
                 sub["enabled"] = bool(sub["enabled"])
                 sub["subscribed"] = not self._is_cancelled(db, *args)
                 counts = db.execute("""SELECT count(*),coalesce(sum(detail_state='complete'),0),
-                    coalesce(sum(media_state='partial'),0) FROM items WHERE platform=? AND author_id=?""", args).fetchone()
-                sub.update(item_count=counts[0], detail_count=counts[1], media_partial_item_count=counts[2])
+                    coalesce(sum(media_state='complete_for_observed_detail'),0),
+                    coalesce(sum(media_state='partial'),0),
+                    coalesce(sum(media_state='unknown'),0)
+                    FROM items WHERE platform=? AND author_id=?""", args).fetchone()
+                sub.update(item_count=counts[0], detail_count=counts[1],
+                           media_observed_complete_count=counts[2],media_partial_item_count=counts[3],
+                           media_unknown_item_count=counts[4])
                 sub["registered_media"] = {kind: number for kind, number in db.execute("""
                     SELECT a.kind,count(*) FROM assets a JOIN items i USING(platform,item_id)
                     WHERE i.platform=? AND i.author_id=? GROUP BY a.kind""", args)}
