@@ -2,7 +2,7 @@
 
 本包是可独立放在固定目录的 **Python 源码版**，不是免安装 EXE。版本为 `0.6.0rc5` 预览。本轮只推进小红书：应用新增本人授权的后台 HTTP 来源、作者主页链接订阅、逐页正文媒体任务与本机导出；公众号暂缓。旧浏览器滚动采集仍非默认路径，旧资料与任务保留。真实详情、媒体、全历史末页及五篇原文匹配以 [当前状态](PROJECT_STATUS.md) 的运行结果为准；预览不代表小红书或双平台正式完成。
 
-下载地址与 SHA-256 校验值在预览包发布并核对后见 [当前状态](PROJECT_STATUS.md)。ZIP 内 `release-info.json` 写有打包源码提交，运行后 `/api/status` 应显示同一版本与提交。这是本机 Python 源码包，首次启动需要可用的锁定依赖；另一台电脑首次安装仍须单独验证。
+从 [0.6.0rc5 预发布页](https://github.com/Sushi771/creator-archive/releases/tag/v0.6.0-rc.5)下载 [Windows ZIP](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.5/CreatorArchive-0.6.0rc5-windows.zip) 和 [SHA-256 校验文件](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.5/CreatorArchive-0.6.0rc5-windows.zip.sha256)。ZIP 的 SHA-256 为 `9856deb42c3b0bf4cfd0e578752c6044f5c2297c07694c2d61dfe0d5a33005ad`；`release-info.json` 写有打包源码提交，运行后 `/api/status` 应显示同一版本与提交。这是本机 Python 源码包，首次启动需要可用的锁定依赖；另一台电脑首次安装仍须单独验证。
 
 上一版 `0.6.0rc4` 的本机安装、旧资料保护、真实来源同步和本机导出证据保留在 [状态记录](PROJECT_STATUS.md)。本版实际安装路径、运行提交和工作区必须在升级后核对，不能照搬旧路径或提交。
 
