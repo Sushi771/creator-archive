@@ -7,7 +7,7 @@
 - 实际 Windows 电脑：从固定程序目录 `C:\Users\ss\AppData\Local\Programs\CreatorArchive\CreatorArchive-0.5.0rc1-windows` 升级安装，三枚桌面 Start/Stop/Files 快捷方式已改指固定目录；旧 `codex/runnable-mvp` worktree 原样保留。以脚本实际启动、停止、重启服务，`http://127.0.0.1:8765/` 页面可操作，网络仅监听 `127.0.0.1:8765`。`/api/status` 返回版本和完整源码提交，`g1_passed=false`。快捷方式目标已检查；真实人工双击尚未验证。
 - 升级前备份位于实际工作区 `backups/before-release-20260929-014313-0edf0382`。SQLite `quick_check=ok`；实际库升级前后订阅 3、作品 1409、附件 943、分页记录 115、管线页 25，其他主要表计数及行摘要相同。旧作者文件 682 件哈希不变。隔离旧版到新版升级成功、故意版本不符失败回退均通过；旧作者和手工笔记保留。
 - 浏览器实际操作：展示 3 位订阅作者、1409 条作品，打开真实作品详情和本地图片，按稳定作品 ID 全库搜索命中 1 条。页面发起单作者本机导出任务 67：160 条已保存作品、152 条正文，8 条缺口列入 `failures.json`；随后“导出全部已保存”任务 68/69 仅覆盖 2 位已确认订阅小红书作者，共 1407 条已保存作品、421 条正文。第三位待确认作者正确排除。旧文件未覆盖，导出无需平台请求。任务 67 后正常 Stop，使用独立 Edge 离线打开真实导出 `file://` 索引和正文，两张本地图片解码成功；重新 Start 后任务记录和资料仍在。真实内容截图只留私有临时目录，不入 Git。
-- 发布包为 [ZIP](releases/CreatorArchive-0.5.0rc1-windows.zip) 与 [SHA-256](releases/CreatorArchive-0.5.0rc1-windows.zip.sha256)，只含已提交源码和脚本，不含用户数据库、媒体、Cookie、浏览器 profile、私有日志。本机 Python 219 项通过、4 项按环境跳过；Node 前端合同通过。公开 Windows CI 前两次因测试临时路径失败，`28b664c` 缩减至 2 个 CI 环境/短路径断言失败；已让 CI 建仓库 `.venv` 并修正断言，新结果待核。临时合成库验证中文/空格路径、移动导出目录、停服务/离线 HTML 和两图，见 [公开合成截图](docs/validation/R08-offline-article-2026-09-29.png)。实际新虚拟环境安装 19 个锁定依赖，但使用本机缓存；干净环境首次联网下载尚未验证。
+- 发布包为 [ZIP](releases/CreatorArchive-0.5.0rc1-windows.zip) 与 [SHA-256](releases/CreatorArchive-0.5.0rc1-windows.zip.sha256)，只含已提交源码和脚本，不含用户数据库、媒体、Cookie、浏览器 profile、私有日志。本机及[公开 Windows CI 推送运行](https://github.com/Sushi771/creator-archive/actions/runs/36508103228)均完成 Python 219 项（4 跳过）、Node 前端合同和发布包构建；[PR 运行](https://github.com/Sushi771/creator-archive/actions/runs/36508106770)也通过。CI 在干净 Windows Python 3.11 虚拟环境联网下载 19 个锁定依赖，但尚未在另一台干净电脑经 Start 首次安装。临时合成库验证中文/空格路径、移动导出目录、停服务/离线 HTML 和两图，见 [公开合成截图](docs/validation/R08-offline-article-2026-09-29.png)。当前电脑安装使用本机缓存。
 
 ## B · 平台交付与三个关键阻塞
 
@@ -15,6 +15,8 @@
 | --- | --- | --- |
 | 小红书深页恢复：平台响应＋代码流程 | 应用已有自管持久 Playwright 浏览器。历史真实 A55：10 页/300 稳定作品 ID、268 正文成功、8 条缺精确引用、24 待处理；B48：5 页/150 ID、150 正文。A55/B48 精确请求游标响应仍缺，未见可信末页；重启后的旧捕获不能证明恢复。见 [脱敏证据](docs/validation/G1-xhs-a-idle-replay-2026-09-28.json)。 | 只有在专用浏览器能观察新游标响应、用户自行完成必要登录后才沿原检查点恢复。区分登录、游标变化、未发请求、引用缺失和平台限制；保留已成功内容，不循环重试相同缺响应条件。 |
 | 公众号历史来源：账号/平台限制＋适配代码 | 本仓库无已验证的稳定身份、有效历史首屏/下一页/可信末页。某工具访问被拒只证明该工具失败。WeWe 目标接口旧报 `200013`；[we-mp-rss PR #470](https://github.com/rachelos/we-mp-rss/pull/470) 仍未证明本账号目标历史；[exporter 核心接口关闭](https://github.com/wechat-article/wechat-article-exporter/issues/200)。见 [定向复用核查](docs/research/wechat_reuse_report.md)。 | 获得获准且有效的历史来源、账号授权和分页证据后接最小只读来源；保持后台订阅更新→归档→本机导出，不能用最新几篇冒充全历史。 |
-| 发布现场剩余：环境/人工验收 | 本机固定目录升级、服务、页面、真实库离线导出已通过；安装依赖来自本机缓存，快捷方式人工双击未完成。发布包源码标识为 `50d6501`；GitHub PR/标签及公开下载地址以最终交付核对为准。 | 完成非强推同步、版本标签与面向 `main` 的可审阅 PR；有干净 Windows 环境时补首次联网安装及人工快捷方式点击。 |
+| 发布现场剩余：环境/人工验收 | 本机固定目录升级、服务、页面、真实库离线导出已通过。公开 CI 已在干净环境联网装依赖，当前电脑用缓存；人工双击快捷方式和另一台电脑的 Start 首装未验。发布包源码标识为 `50d6501`。 | 在可用的干净 Windows 电脑补 Start 首装与人工快捷方式点击；保持双平台正式发布待真实平台验收。 |
 
 **范围与结论**：A 为已运行的本机预览交付。B 的小红书只有已测范围的真实列表/正文/媒体证据，未有全历史末页与重启精确游标恢复；公众号真实订阅闭环未通过。导出清单的 `complete_for_accessible_scope` 仅反映旧任务记载的观察范围，本轮本机导出没有重扫平台；`media_coverage=unknown_expected_count`，不能称全部媒体完整。ChatGPT/MCP 深度接入、云端、多用户、更多平台、AI 自动分析保留待办。实际应用当前运行于 `http://127.0.0.1:8765/`，操作、目录和恢复方法见 [预览版说明](RELEASE_README.md)。
+
+**发布跟踪**：远端预览标签 [`v0.5.0-rc.1`](https://github.com/Sushi771/creator-archive/tree/v0.5.0-rc.1) 指向含 ZIP 的提交 `5ad1d89336037501f4a81def35a8066e9f990c8d`；面向 `main` 的[草稿 PR #1](https://github.com/Sushi771/creator-archive/pull/1) 保持未合并。CI 修复后的远端分支至少为 `ef2c3dd3c3899d21ed24e5d7efd309c79fae53f5`；本次状态提交推送后以远端实际 SHA 再核。旧工作树不覆盖，不创建后继任务。
