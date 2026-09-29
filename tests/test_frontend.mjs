@@ -8,6 +8,7 @@ class Element {
   append(...children) {this.children.push(...children);}
   replaceChildren(...children) {this.children=children;}
   addEventListener(event,callback) {this.handlers[event]=callback;}
+  closest(selector) {return selector==='button'&&this.tagName==='button'?this:null;}
   setAttribute() {}
   reportValidity() {return true;}
   reset() {}
@@ -19,12 +20,15 @@ class Element {
 const html=readFileSync(new URL('../creator_archive/static/index.html',import.meta.url),'utf8');
 const elements=Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(match=>[match[1],new Element()]));
 elements['filter-sort'].value='published_at';elements['filter-order'].value='desc';
-const document={getElementById:id=>elements[id],createElement:tag=>new Element(tag),createTextNode:text=>({textContent:text}),querySelectorAll:()=>[],documentElement:{dataset:{}}};
-const context=vm.createContext({document,URL,URLSearchParams,Option:class extends Element {constructor(text,value){super('option');this.textContent=text;this.value=value;}},location:{origin:'http://127.0.0.1:8765'},localStorage:{getItem(){},setItem(){}},setInterval(){},fetch(){throw new Error('Unexpected network call');}});
+const document={getElementById:id=>elements[id],createElement:tag=>new Element(tag),createTextNode:text=>({textContent:text}),querySelectorAll:()=>[],documentElement:{dataset:{}},handlers:{},addEventListener(event,callback){this.handlers[event]=callback;}};
+const timers=new Map(),globalHandlers={};let nextTimer=1;
+const flushTimers=()=>{const pending=[...timers.values()];timers.clear();for(const callback of pending)callback();};
+const context=vm.createContext({document,URL,URLSearchParams,Option:class extends Element {constructor(text,value){super('option');this.textContent=text;this.value=value;}},location:{origin:'http://127.0.0.1:8765'},localStorage:{getItem(){},setItem(){}},setInterval(){},setTimeout(callback){const id=nextTimer++;timers.set(id,callback);return id;},clearTimeout(id){timers.delete(id);},addEventListener(event,callback){globalHandlers[event]=callback;},fetch(){throw new Error('Unexpected network call');}});
 let source=readFileSync(new URL('../creator_archive/static/app.js',import.meta.url),'utf8');
 source=source.replace('refresh(true).catch(e=>notify(e.message,true));setInterval','setInterval');
 vm.runInContext(source,context);
 const run=code=>vm.runInContext(code,context);
+run('globalThis.realRefresh=refresh');
 assert.equal(run('metricValue({value:0,quality:"exact"})'),'0');
 assert.equal(run('metricValue({value:null,quality:"unknown"})'),'未知');
 assert.equal(run('metricValue({value:12000,quality:"approximate"})'),'约 12,000');
@@ -339,3 +343,52 @@ await run('$("recovery-resume").onclick()');
 assert.equal(run('pageCalls.at(-1).path'),'/api/jobs/41/resume');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{});
 console.log('Demo UI checks passed: primary fixed-ten scope, filtered-author batch request, collapsed full experiments, resource reuse semantics and original demo recovery.');
+
+// A poll between pointerdown and click must not replace the resume button.
+run(`refresh=realRefresh;ui.refreshPromise=null;ui.runsSignature=null;ui.itemsSignature='';
+  globalThis.resumeCalls=[];globalThis.mockState='partial';globalThis.mockFailures=1;
+  api=async(path,body)=>{
+    if(path==='/api/workspace')return {subscriptions:[],archive_batches:[],platforms:[],
+      stats:{subscriptions:1,items:6,details:5,assets:5,metric_snapshots:0},
+      runs:[{id:72,platform:'xiaohongshu',author_id:'synthetic',display_name:'模拟博主',
+        mode:'full',state:mockState,reason:'author_archive_partial',can_resume:mockState==='partial',
+        pages:3,listed_count:6,target_count:6,item_count:5,failed_count:mockFailures,
+        coverage:'complete_for_accessible_scope'}]};
+    if(path.startsWith('/api/items?'))return {total:0,items:[]};
+    if(path==='/api/jobs/72/resume'){resumeCalls.push({path,body});mockState='queued';return {state:'queued'};}
+    throw new Error('Unexpected mock request: '+path);
+  };`);
+await run('refresh(false,true)');
+let resumeButton=walk(elements['job-list']).find(x=>x.tagName==='button'&&x.textContent==='从检查点继续');
+assert.ok(resumeButton,'A partial native history task exposes the resume action');
+resumeButton.handlers.click();
+await new Promise(setImmediate);
+assert.equal(run('resumeCalls.length'),1,'An ordinary click calls the original job resume API once');
+assert.match(elements.feedback.textContent,/已请求继续任务/);
+
+run("mockState='partial';mockFailures=1");
+await run('refresh(false,true)');
+resumeButton=walk(elements['job-list']).find(x=>x.tagName==='button'&&x.textContent==='从检查点继续');
+elements['job-list'].handlers.pointerdown({target:resumeButton});
+run('mockFailures=2');
+await run('refresh(false,true)');
+assert.ok(walk(elements['job-list']).includes(resumeButton),'The held button survives an intervening poll');
+document.handlers.pointerup({target:null}); // release can occur outside the button
+resumeButton.handlers.click(); // browser click is dispatched before the release timer
+assert.equal(run('resumeCalls.length'),2,'The held button still resumes the job');
+flushTimers();
+await new Promise(setImmediate);
+assert.equal(run('ui.jobPointerActive'),false);
+
+run("mockState='partial';mockFailures=3");
+await run('refresh(false,true)');
+resumeButton=walk(elements['job-list']).find(x=>x.tagName==='button'&&x.textContent==='从检查点继续');
+elements['job-list'].handlers.pointerdown({target:resumeButton});
+document.handlers.pointercancel();
+flushTimers();
+assert.equal(run('ui.jobPointerActive'),false,'Pointer cancellation releases the refresh guard');
+elements['job-list'].handlers.pointerdown({target:resumeButton});
+globalHandlers.blur();
+flushTimers();
+assert.equal(run('ui.jobPointerActive'),false,'Window blur releases the refresh guard');
+console.log('Resume UI checks passed: ordinary click, poll during press, outside release, cancellation and blur.');
