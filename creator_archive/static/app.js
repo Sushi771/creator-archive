@@ -6,7 +6,7 @@ const coverageName = {complete_for_accessible_scope:"已观察到可获取列表
 const modeName = {source_refresh:"后台来源刷新",full:"历史列表诊断",latest:"后台近期刷新",archive:"本地归档",all_archive:"逐作者完整历史同步",page_archive:"两页采集并归档（实验）",author_archive:"作者历史归档",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
 const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
-const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"",itemRequest:0,refreshPromise:null,busy:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,scheduleSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,sourceAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
+const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"",itemRequest:0,refreshPromise:null,busy:false,jobPointerActive:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,scheduleSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,sourceAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
 function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
@@ -230,6 +230,10 @@ function dataSignature(value) {
   return JSON.stringify(value, (key, data) => key === "updated_at" ? undefined : data);
 }
 async function refresh(forceItems = false, background = false) {
+  if (ui.jobPointerActive) {
+    ui.pendingRefresh = true;
+    return;
+  }
   if (ui.refreshPromise) {
     if (background) return ui.refreshPromise;
     // A user action needs a snapshot captured after the mutation, not an older poll.
@@ -244,7 +248,7 @@ async function refresh(forceItems = false, background = false) {
   const request = (async () => {
     try {
       const w = await api("/api/workspace");
-      if (epoch !== ui.mutationEpoch || (background && ui.busy)) {
+      if (epoch !== ui.mutationEpoch || ui.jobPointerActive || (background && ui.busy)) {
         ui.pendingRefresh = true;
         return;
       }
@@ -626,4 +630,27 @@ $("recovery-resume").onclick=()=>perform($("recovery-resume"),async()=>{
     $("recovery-links").value="";$("recovery-dialog").close();notify("原任务已继续，成功项与资源会复用。");await refresh(true);
   } catch(error){$("recovery-error").textContent=error.message;}
 });
+let jobPointerReleaseTimer = null;
+$("job-list").addEventListener("pointerdown",event=>{
+  if(!event.target.closest?.("button"))return;
+  if(jobPointerReleaseTimer!==null)clearTimeout(jobPointerReleaseTimer);
+  jobPointerReleaseTimer=null;
+  ui.jobPointerActive=true;
+});
+function releaseJobPointer() {
+  if(jobPointerReleaseTimer!==null)clearTimeout(jobPointerReleaseTimer);
+  // click follows pointerup in the same browser task. Keep the button in the
+  // DOM until that click has reached its handler, even if a poll is waiting.
+  jobPointerReleaseTimer=setTimeout(()=>{
+    jobPointerReleaseTimer=null;
+    ui.jobPointerActive=false;
+    if(ui.pendingRefresh&&!ui.busy){
+      ui.pendingRefresh=false;
+      refresh(false,true).catch(error=>notify(error.message,true));
+    }
+  },0);
+}
+document.addEventListener("pointerup",releaseJobPointer);
+document.addEventListener("pointercancel",releaseJobPointer);
+globalThis.addEventListener("blur",releaseJobPointer);
 refresh(true).catch(e=>notify(e.message,true));setInterval(()=>{if(!document.hidden&&!ui.busy)refresh(false,true).catch(()=>{});},4000);
