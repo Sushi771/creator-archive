@@ -17,6 +17,7 @@ ROOT_FILES = {
     "uninstall.cmd", "uninstall.ps1", "upgrade.cmd", "upgrade.ps1",
     "install-shortcuts.ps1", "launcher-profile.ps1", "files.ps1",
     "configure-folders.cmd", "configure-folders.ps1",
+    "authorize-xhs.cmd", "authorize-xhs.ps1",
 }
 
 

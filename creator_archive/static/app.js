@@ -80,7 +80,7 @@ function renderSubscriptions(subscriptions) {
                 badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),
                 badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文 · 已登记图片 ${num(sub.registered_media?.image)} / 视频 ${num(sub.registered_media?.video)} · 观察范围媒体已完成 ${num(sub.media_observed_complete_count)} · 待补 ${num(sub.media_partial_item_count)} · 范围未知 ${num(sub.media_unknown_item_count)}`,"neutral"),
                 badge(sub.source_terminal_observed?"后台来源可见范围末页已观察":"后台来源历史末页未验证",sub.source_terminal_observed?"neutral":"warning"),
-                badge((sub.source_configured??sub.source_connected)?`${sub.source_kind==="feed_http"?"后台 Feed":"小红书本机来源"} 已配置${sub.identity_verified?"":"，待核验"}${sub.source_health==="needs_login"?" · 需登录":sub.source_health==="verification_required"?" · 需验证":sub.source_health==="rate_limited"?" · 冷却中":sub.source_health==="last_run_succeeded"?" · 上次任务成功":" · 当前会话未检查"}`:"后台来源未配置",(sub.source_configured??sub.source_connected)?"neutral":"warning"));
+                badge((sub.source_configured??sub.source_connected)?`${sub.source_kind==="feed_http"?"后台 Feed":"小红书本机来源"} 已配置${sub.identity_verified?"":"，待核验"}${sub.source_health==="needs_login"?" · 需登录":sub.source_health==="verification_required"?" · 需验证":sub.source_health==="rate_limited"?(sub.source_kind==="xhs_http"?" · 限流暂停，冷却后核验":" · 冷却中"):sub.source_health==="last_run_succeeded"?" · 上次任务成功":" · 当前会话未检查"}`:"后台来源未配置",(sub.source_configured??sub.source_connected)?"neutral":"warning"));
     for(const tag of sub.tags||[])tags.append(badge(tag,"neutral"));
     text.append(tags);
     if(sub.subscribed===false)text.append(node("p","新批次不再包含这位作者；旧归档、手工资料、任务及固定批次检查点保留。","hint"));

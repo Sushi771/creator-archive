@@ -1450,7 +1450,7 @@ class WorkspaceService:
             except AdapterFailure as error:
                 if error.category == "rate_limited":
                     self._record_cooldown(job["platform"], retry_after=error.retry_after)
-                if error.category in {"needs_login", "verification_required"}:
+                if error.category in {"needs_login", "verification_required", "rate_limited"}:
                     self._job_sources.clear()
                     self._record_platform_access_pause(job["platform"], job["author_id"], error.category)
                 # Preparation can fail before any item is attempted. Preserve

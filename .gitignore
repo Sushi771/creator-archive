@@ -22,6 +22,7 @@ vault/
 Obsidian*/
 folders.json
 sources.json
+refresh-schedule.json
 backups/
 data/
 logs/

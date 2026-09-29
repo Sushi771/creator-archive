@@ -27,7 +27,7 @@ def backup_workspace(data_dir: Path, backup_dir: Path) -> dict:
                 if copy.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise RuntimeError(f"Backup integrity check failed: {name}")
         backed_up.append(name)
-    for name in ("folders.json", "sources.json"):
+    for name in ("folders.json", "sources.json", "refresh-schedule.json"):
         config = data_dir / name
         if config.is_file():
             shutil.copy2(config, backup_dir / name)
