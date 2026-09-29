@@ -23,7 +23,7 @@ class XhsSourceSetupTests(unittest.TestCase):
             configure_native_source(root, cookie)
             configured = json.loads(source.read_text(encoding="utf-8"))
             self.assertEqual(configured["wechat/a"], original["wechat/a"])
-            self.assertEqual(configured["xiaohongshu/*"]["cookie_file"], str(cookie))
+            self.assertEqual(configured["xiaohongshu/*"]["cookie_file"], str(cookie.resolve(strict=True)))
             self.assertEqual(len(list((root / "backups").glob("sources-before-xhs-*.json"))), 1)
             configure_native_source(root, cookie)
             self.assertEqual(len(list((root / "backups").glob("sources-before-xhs-*.json"))), 1)
