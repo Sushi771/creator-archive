@@ -93,6 +93,12 @@ class ResumeInput(BaseModel):
     source_urls: list[str] | None = Field(default=None,max_length=200)
 
 
+class ManualValidationInput(BaseModel):
+    action: str
+    author_id: str = Field(pattern=r"^[0-9a-f]{24}$")
+    confirmed: bool = False
+
+
 def create_app(data_dir: Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
@@ -161,6 +167,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.exception_handler(AdapterFailure)
     async def platform_failure(request, error):
+        if request.url.path == "/api/xhs/manual-validation" and error.category == "needs_login":
+            return JSONResponse({"detail": "需要用户本人完成授权。本次验收已停止，不自动重试，不使用浏览器自动化生成会话。", "reason": error.category}, status_code=409)
         return JSONResponse({"detail": getattr(error, "reason", "平台暂不可用，进度已保留。出现业务失败、验证或访问拒绝须停止；账号安全暂停须按获准方案另行处理。"), "reason": error.category}, status_code=409)
 
     @app.exception_handler(PlatformCooldown)
@@ -171,6 +179,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def workspace():
         snapshot = service.workspace()
         snapshot["build"] = {"version": __version__, "commit": source_commit()}
+        snapshot["manual_validation"] = service.manual_validation.status()
+        manual_job = snapshot["manual_validation"].get("job_id")
+        for job in snapshot["runs"]:
+            if manual_job and job["id"] == manual_job:
+                job["manual_validation_scope"] = "first3"
         return snapshot
 
     @app.post("/api/subscriptions")
@@ -188,6 +201,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/refresh-schedule")
     def configure_refresh_schedule(body: RefreshScheduleInput):
         return service.set_refresh_schedule(body.enabled, body.interval_minutes)
+
+    @app.get("/api/xhs/manual-validation")
+    def manual_validation_status():
+        return service.manual_validation.status()
+
+    @app.post("/api/xhs/manual-validation")
+    def manual_validation_action(body: ManualValidationInput):
+        return service.manual_validation.perform(body.action, body.author_id, body.confirmed)
 
     @app.post("/api/subscriptions/toggle")
     def toggle(body: ToggleInput):

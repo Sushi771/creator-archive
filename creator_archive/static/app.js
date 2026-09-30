@@ -35,6 +35,7 @@ async function perform(button, action) {
     ui.busy = false;
     button.disabled = false;
     button.textContent = original;
+    renderManualValidation(ui.workspace?.manual_validation);
     if (ui.pendingRefresh) {
       ui.pendingRefresh = false;
       refresh(true).catch(error => notify(error.message, true));
@@ -42,6 +43,30 @@ async function perform(button, action) {
   }
 }
 function authorBy(platform,id) {return ui.workspace?.subscriptions.find(x=>x.platform===platform&&x.author_id===id);}
+function renderManualValidation(plan) {
+  $("manual-validation").hidden=!plan?.configured;
+  if(!plan?.configured)return;
+  const sub=authorBy("xiaohongshu",plan.author_id);
+  const descriptions={pending:"待本人点击",running:"进行中",succeeded:"已完成",stopped:"已停止"};
+  $("xhs-safety-notice").textContent="常规小红书联网保持暂停；已配置下方单作者手动验收。只有本人确认并点击对应按钮才会请求，不自动同步。";
+  const state=plan.actions.validate;
+  $("manual-validation-status").textContent=`作者：${sub?.display_name||plan.author_id} · 前三篇验收：${descriptions[state.state]||state.state} · 已计数HTTP ${Object.values(state.counts||{}).reduce((a,b)=>a+b,0)} / 16${plan.media_required?` · 待归档媒体共${plan.media_required}项，剩余${plan.media_remaining}项`:""}${plan.blocked_reason?` · 已停止：${plan.blocked_reason}。请反馈提示，不重复重试。`:""}`;
+  $("manual-validate").disabled=Boolean(plan.active||plan.blocked_reason||state.state!=="pending");
+  $("manual-export").disabled=!sub?.identity_verified||sub.subscribed===false||sub.subscription_confirmation_required;
+}
+async function performManualValidation(action) {
+  const plan=ui.workspace?.manual_validation;
+  if(!plan?.configured||!$("manual-validation-confirm").checked)throw new Error("请先勾选本人确认与本次请求预算。未请求平台。");
+  $("manual-validation-confirm").checked=false;
+  try {
+    const result=await api("/api/xhs/manual-validation",{action,author_id:plan.author_id,confirmed:true});
+    notify(`已创建前三篇手动验收任务 #${result.job_id}，总预算16 HTTP。请查看任务状态并核对原列表前三篇。`);
+  } catch(error) {
+    await refresh(true);
+    throw new Error(`${error.message}。本次验收已停止，请反馈提示，不重复重试。`);
+  }
+  await refresh(true);
+}
 function displayAuthor(platform,id) {return authorBy(platform,id)?.display_name||id||"全部作者";}
 function renderSubscriptionTags(subscriptions) {
   const select=$("subscription-tag"), selected=select.value;
@@ -176,7 +201,7 @@ async function saveTags() {
 }
 function isRecentWindow(run) {return run.mode==="recent_window"||run.sync_scope==="recent_window";}
 function isLegacyHistory(run) {return !isRecentWindow(run)&&["full","all_archive","author_archive","page_archive","demo_archive"].includes(run.mode);}
-function recentWindowProgress(run) {return `最近内容同步 / 当前来源窗口约${num(run.window_size??run.window_limit??30)}篇 · 最新第一页 ${num(run.listed_count??run.window_count??run.target_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count??run.existing_count)} 个 · 已存作品列表差异 ${num(run.listed_difference_count)} 个（正文附件保持，未自动判定内容更新）；两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇`; }
+function recentWindowProgress(run) {if(run.manual_validation_scope==="first3")return `本人手动验收 · 原列表前三篇 · 整次最多16 HTTP · 已保存列表 ${num(run.listed_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count)} 个；本次不是30篇窗口完整验收，不进行第二轮刷新`;return `最近内容同步 / 当前来源窗口约${num(run.window_size??run.window_limit??30)}篇 · 最新第一页 ${num(run.listed_count??run.window_count??run.target_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count??run.existing_count)} 个 · 已存作品列表差异 ${num(run.listed_difference_count)} 个（正文附件保持，未自动判定内容更新）；两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇`; }
 function isPagePipeline(run) {return ["page_archive","author_archive","demo_archive"].includes(run.mode);}
 function renderArchiveBatches(batches) {
   const list=$("archive-batch-list");list.replaceChildren();
@@ -245,6 +270,7 @@ async function refresh(forceItems = false, background = false) {
       w.runs = w.runs || [];
       w.archive_batches = w.archive_batches || [];
       ui.workspace = w;
+      renderManualValidation(w.manual_validation);
       $("stat-subscriptions").textContent = num(w.stats?.subscriptions ?? w.subscriptions.length);
       $("stat-items").textContent = num(w.stats?.items);
       $("stat-details").textContent = num(w.stats?.details);
@@ -564,6 +590,8 @@ $("confirm-subscription").onclick=()=>perform($("confirm-subscription"),confirmS
 $("cancel-subscription").onclick=()=>$("confirm-subscription-dialog").close();
 $("confirm-subscription-dialog").addEventListener("close",()=>{ui.confirmAuthor=null;});
 $("subscription-platform").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
+$("manual-validate").addEventListener("click",()=>perform($("manual-validate"),()=>performManualValidation("validate")));
+$("manual-export").addEventListener("click",()=>perform($("manual-export"),()=>startJob("archive",{platform:"xiaohongshu",author_id:ui.workspace.manual_validation.author_id})));
 $("subscription-tag").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
 if($("preview-selected-archive"))$("preview-selected-archive").onclick=()=>perform($("preview-selected-archive"),previewSelectedArchive);
 $("export-selected-local").onclick=()=>perform($("export-selected-local"),exportSelectedLocal);

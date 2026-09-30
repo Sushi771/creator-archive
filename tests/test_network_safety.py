@@ -286,6 +286,234 @@ print('child guard passed')
             self.assertNotIn("src='https://", rendered)
 
 
+class ManualValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(EgressGuard())
+        self.temp = tempfile.TemporaryDirectory(prefix="creator-manual-validation-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.service = WorkspaceService(self.root)
+        self.addCleanup(self.service.close)
+        self.plan = self.root / "xhs-manual-validation.json"
+        self.plan.write_text(json.dumps({"schema": 1, "author_id": AUTHOR,
+                                        "owner_authorized": True, "account_normal_confirmed": True,
+                                        "actions": {}}))
+        (self.root / "sources.json").write_text(json.dumps({"xiaohongshu/*": {
+            "kind": "xhs_http", "cookie_file": str(self.root / "not-read")}}))
+        self.calls = []
+        outer = self
+
+        class LocalTransport:
+            version = "xhs-author-http-v1"
+            fail = None
+            notes = IDS[:5]
+            media_per_note = 1
+            requested_ids = []
+
+            def recent_page(self, author_id):
+                network_safety.require_xhs_network()
+                network_safety.require_manual_author(author_id)
+                network_safety.consume_manual_request("edith.xiaohongshu.com",
+                    "/api/sns/web/v1/user_posted?user_id=" + author_id + "&cursor=&num=30")
+                outer.calls.append("list")
+                if self.fail == "list":
+                    raise AdapterFailure("unknown_business_error")
+                return Page(tuple(Item(i, AUTHOR, "", "Synthetic") for i in self.notes), None, False)
+
+            def verify_author(self, author_id):
+                self.recent_page(author_id)
+                return {"author_id": author_id, "display_name": "Synthetic"}
+
+            def detail(self, author_id, item_id, source_url=""):
+                network_safety.require_xhs_network()
+                network_safety.consume_manual_request("www.xiaohongshu.com", "/explore/" + item_id)
+                outer.calls.append("detail")
+                self.requested_ids.append(item_id)
+                if self.fail == "detail":
+                    raise AdapterFailure("reference_missing")
+                return {"author_id": author_id, "item_id": item_id, "title": "Synthetic", "text": "Saved synthetic body",
+                        "source_url": "https://www.xiaohongshu.com/explore/" + item_id, "content_type": "image",
+                        "published_at": "", "source": "synthetic", "observed_at": time.time(), "metrics": {},
+                        "missing": [], "media": [MediaCandidate("image", position, CDN + "?item=" + item_id + "&position=" + str(position)) for position in range(self.media_per_note)]}
+
+            def download_media(self, candidate, target_dir):
+                network_safety.require_xhs_network()
+                network_safety.consume_manual_request("ci.xhscdn.com", "/synthetic.png?" + str(len(outer.calls)))
+                outer.calls.append("media")
+                if self.fail == "media":
+                    raise AdapterFailure("media_failed")
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target = target_dir / "saved.png"
+                target.write_bytes(PNG)
+                return {"path": str(target), "mime": "image/png"}
+
+            def export_page_references(self, author_id, ids):
+                return {i: "https://www.xiaohongshu.com/explore/" + i + "?xsec_token=synthetic" for i in ids}
+
+        self.transport = LocalTransport()
+        self.transport.requested_ids = []
+        self.service._source_transports[("xiaohongshu", AUTHOR)] = self.transport
+
+    def act(self, name):
+        return self.service.manual_validation.perform(name, AUTHOR, True)
+
+    def test_only_explicit_confirmed_action_can_request_and_cannot_repeat(self):
+        with self.assertRaises(ValueError):
+            self.service.manual_validation.perform("validate", AUTHOR, False)
+        with self.assertRaises(ValueError):
+            self.service.manual_validation.perform("validate", OTHER, True)
+        with self.assertRaises(PlatformAccessPaused):
+            self.service.verify("xiaohongshu", AUTHOR)
+        self.assertEqual(self.calls, [])
+        self.act("validate")
+        self.service.wait(10)
+        previous = list(self.calls)
+        self.assertEqual(self.calls.count("list"), 1)
+        with self.assertRaises(ValueError):
+            self.act("validate")
+        self.assertEqual(self.calls, previous)
+        self.assertTrue(network_safety.xhs_network_paused())
+        self.assertFalse((self.root / "not-read").exists())
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT reason FROM platform_access_pauses").fetchone()[0], network_safety.SAFETY_REASON)
+
+    def test_one_list_and_original_first_three_only_never_fourth_or_refresh(self):
+        self.transport.notes = [IDS[4], IDS[0], IDS[2], IDS[1], IDS[3]]
+        job = self.act("validate")
+        self.service.wait(10)
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT state FROM jobs WHERE id=?", (job["job_id"],)).fetchone()[0], "succeeded")
+            self.assertEqual(db.execute("SELECT count(*) FROM items").fetchone()[0], 3)
+            self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 3)
+        self.assertEqual(self.transport.requested_ids, self.transport.notes[:3])
+        self.assertFalse((self.root / "private" / "xhs-page-references").exists())
+        self.assertEqual(self.calls.count("list"), 1)
+        self.assertEqual(self.calls.count("detail"), 3)
+        self.assertEqual(self.calls.count("media"), 3)
+        previous = list(self.calls)
+        with self.assertRaises(ValueError):
+            self.act("refresh")
+        self.assertEqual(self.calls, previous)
+        self.assertTrue(network_safety.xhs_network_paused())
+        self.assertIsNone(self.service._scheduler)
+        self.assertEqual(self.service.manual_validation.status()["actions"]["validate"]["state"], "succeeded")
+
+    def _check_failure(self, stage):
+        self.transport.fail = stage
+        before = len(self.calls)
+        if stage == "list":
+            with self.assertRaises(AdapterFailure):
+                self.act("validate")
+        else:
+            self.act("validate")
+        self.service.wait(10)
+        self.assertTrue(self.service.manual_validation.status()["blocked_reason"])
+        after = len(self.calls)
+        with self.assertRaises(ValueError):
+            self.act("validate")
+        self.assertEqual(len(self.calls), after)
+        self.assertLessEqual(after - before, {"list": 1, "detail": 2, "media": 5}[stage])
+
+    def test_list_failure_stops_without_retry(self):
+        self._check_failure("list")
+
+    def test_detail_failure_stops_without_retry(self):
+        self._check_failure("detail")
+
+    def test_media_failure_stops_without_retry(self):
+        self._check_failure("media")
+
+    def test_scope_denies_deep_pages_other_authors_unknown_notes_repeat_and_budget(self):
+        from creator_archive.manual_validation import ManualScope
+        cases = (("edith.xiaohongshu.com", "/api/sns/web/v1/user_posted?user_id=" + OTHER + "&cursor=&num=30"),
+                 ("edith.xiaohongshu.com", "/api/sns/web/v1/user_posted?user_id=" + AUTHOR + "&cursor=deep&num=30"),
+                 ("www.xiaohongshu.com", "/explore/" + IDS[0]), ("evil.invalid", "/media"))
+        for host,path in cases:
+            scope = ManualScope(AUTHOR, "validate", lambda x: None)
+            with self.assertRaises(AdapterFailure):
+                scope.consume(host, path)
+            self.assertTrue(scope.stopped)
+        scope = ManualScope(AUTHOR, "validate", lambda x: None)
+        path = "/api/sns/web/v1/user_posted?user_id=" + AUTHOR + "&cursor=&num=30"
+        scope.consume("edith.xiaohongshu.com", path)
+        with self.assertRaises(AdapterFailure):
+            scope.consume("edith.xiaohongshu.com", path)
+        scope = ManualScope(AUTHOR, "validate", lambda x: None)
+        scope.observe(IDS[:3])
+        scope.budget = 1
+        scope.consume("www.xiaohongshu.com", "/explore/" + IDS[0])
+        with self.assertRaises(AdapterFailure):
+            scope.consume("www.xiaohongshu.com", "/explore/" + IDS[1])
+
+    def test_restart_never_resumes_running_scope_and_browser_remains_disabled(self):
+        scope = self.service.manual_validation.begin("validate", AUTHOR, True)
+        with network_safety.manual_action(scope):
+            with self.assertRaises(AdapterFailure):
+                network_safety.require_browser_disabled()
+            with self.assertRaises(AdapterFailure):
+                network_safety.require_manual_author(OTHER)
+        self.plan.write_text(json.dumps({"schema": 1, "author_id": AUTHOR,
+            "owner_authorized": True, "account_normal_confirmed": True, "actions": {"validate": {"state": "running"}}}))
+        self.service.manual_validation.interrupt_pending()
+        self.assertEqual(self.service.manual_validation.status()["blocked_reason"], "process_interrupted")
+        self.assertTrue(network_safety.xhs_network_paused())
+
+    def test_api_read_is_offline_and_mutation_needs_header_and_confirmation(self):
+        from fastapi.testclient import TestClient
+        from creator_archive.app import create_app
+        with TestClient(create_app(self.root)) as client, patch("creator_archive.adapters.xhs_http._read_cookies") as cookies:
+            self.assertEqual(client.get("/api/xhs/manual-validation").json()["author_id"], AUTHOR)
+            payload = {"action": "validate", "author_id": AUTHOR, "confirmed": True}
+            self.assertEqual(client.post("/api/xhs/manual-validation", json=payload).status_code, 403)
+            payload["confirmed"] = False
+            self.assertEqual(client.post("/api/xhs/manual-validation", json=payload,
+                headers={"X-Creator-Archive": "local-validation"}).status_code, 422)
+            self.assertEqual(client.post("/api/xhs/manual-validation", json=payload,
+                headers={"X-Creator-Archive": "local-validation", "Origin": "https://example.invalid"}).status_code, 403)
+            cookies.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_cdn_redirect_is_rejected_before_dns_or_second_http_request(self):
+        from creator_archive.adapters.xhs_media import _SafeRedirect, MediaFailure
+        from creator_archive.manual_validation import ManualScope
+        scope = ManualScope(AUTHOR, "validate", lambda x: None)
+        with network_safety.manual_action(scope), patch("creator_archive.adapters.xhs_media.socket.getaddrinfo") as dns:
+            with self.assertRaises(MediaFailure):
+                _SafeRedirect().redirect_request(None, None, 302, "redirect", {}, CDN)
+            dns.assert_not_called()
+        self.assertTrue(scope.stopped)
+
+    def test_excess_media_reports_actual_need_without_downloading_or_extra_budget(self):
+        self.transport.media_per_note = 5
+        self.act("validate")
+        self.service.wait(10)
+        state = self.service.manual_validation.status()
+        self.assertEqual(state["blocked_reason"], "manual_media_budget_exceeded")
+        self.assertEqual(state["media_required"], 15)
+        self.assertEqual(state["media_remaining"], 15)
+        self.assertEqual(self.calls, ["list", "detail", "detail", "detail"])
+        with self.assertRaises(ValueError):
+            self.act("validate")
+
+    def test_exact_sixteen_requests_is_the_hard_ceiling(self):
+        self.transport.media_per_note = 4
+        self.act("validate")
+        self.service.wait(10)
+        state = self.service.manual_validation.status()
+        self.assertEqual(state["actions"]["validate"]["state"], "succeeded")
+        self.assertEqual(state["actions"]["validate"]["counts"], {"list": 1, "detail": 3, "media": 12})
+        self.assertEqual(len(self.calls), 16)
+
+    def test_fourth_note_is_denied_even_if_present_in_first_page(self):
+        from creator_archive.manual_validation import ManualScope
+        scope = ManualScope(AUTHOR, "validate", lambda x: None)
+        scope.observe(IDS[:5])
+        self.assertNotIn(IDS[3], scope.ids)
+        with self.assertRaises(AdapterFailure):
+            scope.consume("www.xiaohongshu.com", "/explore/" + IDS[3])
+        self.assertEqual(scope.counts["detail"], 0)
+
+
 class SyntheticUnknownFailureTests(unittest.TestCase):
     """Synthetic HTTP 200/-100 only; never a root-cause platform claim."""
 

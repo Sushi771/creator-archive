@@ -25,6 +25,7 @@ from .metrics import FIELDS, read_metrics, read_snapshots
 from .adapters.xhs_share import expand_share_link
 from . import page_pipeline, network_safety
 from hashlib import sha256
+from contextvars import copy_context
 
 XHS_HISTORY_PAGE_BUDGET = 100
 XHS_RECENT_WINDOW_SIZE = 30
@@ -37,6 +38,7 @@ def default_workspace() -> Path:
 
 
 MESSAGES = {
+    "manual_media_budget_exceeded": ("前三篇待归档媒体超过本次12次媒体请求预算，已停止。", "查看手动验收入口的所需数量；不自行提高预算，不重复重试。"),
     "recent_window_complete": ("最近第一页的新作品正文与当前可获取媒体已归档；已有作品保持。", XHS_RECENT_WINDOW_WARNING),
     "recent_window_unchanged": ("最近第一页没有尚未归档的新作品；已有正文与附件保持。", XHS_RECENT_WINDOW_WARNING),
     "recent_window_partial": ("最近第一页部分新作品正文或媒体仍有缺口；成功资源保持。", "可恢复本窗口未完成作品；不扫描旧历史。" + XHS_RECENT_WINDOW_WARNING),
@@ -130,6 +132,9 @@ class WorkspaceService:
         self._pause_lock = Lock()
         self._pause_requests: set[int] = set()
         self._job_sources = {} # Temporary navigation parameters never enter SQLite or exports.
+        from .manual_validation import ManualValidation
+        self.manual_validation = ManualValidation(self)
+        self.manual_validation.interrupt_pending()
         with self.workflow.connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS subscription_intents (
@@ -347,7 +352,7 @@ class WorkspaceService:
         if platform == "xiaohongshu" and network_safety.xhs_network_paused():
             raise PlatformAccessPaused(network_safety.SAFETY_REASON)
         reason = self._platform_access_reason(platform, db)
-        if reason:
+        if reason and not (reason == network_safety.SAFETY_REASON and network_safety.manual_scope() is not None):
             raise PlatformAccessPaused(reason)
 
     def _record_platform_access_pause(self, platform, author_id, reason):
@@ -362,6 +367,7 @@ class WorkspaceService:
     def _source_call(self, job, operation, *args, **kwargs):
         """Latch an unknown source failure before another author takes the lock."""
         with self._network_lock:
+            network_safety.require_manual_author(job["author_id"])
             self._check_platform_access(job["platform"])
             try:
                 return operation(*args, **kwargs)
@@ -388,6 +394,8 @@ class WorkspaceService:
                         json.dumps(allowed, ensure_ascii=False), time.time()))
 
     def _clear_platform_access_pause(self, platform):
+        if platform == "xiaohongshu" and network_safety.manual_scope() is not None:
+            return  # A manual action never removes the global safety pause.
         if platform == "xiaohongshu" and network_safety.xhs_network_paused():
             raise PlatformAccessPaused(network_safety.SAFETY_REASON)
         with self.workflow.connect() as db:
@@ -466,6 +474,7 @@ class WorkspaceService:
                 "message": "后台来源已保存于本机私有配置；尚未请求上游或证明作者身份与历史范围。"}
 
     def transport_for(self, platform, author_id):
+        network_safety.require_manual_author(author_id)
         self._check_platform_access(platform)
         config = self.source_config(platform, author_id)
         if self.adapter_factory and config is None and platform == "xiaohongshu":
@@ -503,6 +512,7 @@ class WorkspaceService:
                 raise ValueError(getattr(error, "reason", "采集浏览器未就绪，请检查启动自检并重试")) from None
 
     def verify(self, platform, author_id):
+        network_safety.require_manual_author(author_id)
         self._check_platform_access(platform)
         if platform not in {"xiaohongshu", "wechat"}:
             raise ValueError("不支持的平台")
@@ -514,7 +524,12 @@ class WorkspaceService:
         with self._network_lock:
             self._check_cooldown(platform)
             try:
-                observed = self.transport_for(platform, author_id).verify_author(author_id)
+                transport = self.transport_for(platform, author_id)
+                if network_safety.manual_scope() is not None:
+                    page = network_safety.bound_manual_page(author_id, transport.recent_page(author_id))
+                    observed = {"author_id": author_id, "display_name": author_id}
+                else:
+                    observed = transport.verify_author(author_id)
             except AdapterFailure as error:
                 self._record_request_failure({"id": None, "run_id": None, "platform": platform,
                                               "author_id": author_id}, error, "verify_author")
@@ -592,7 +607,7 @@ class WorkspaceService:
         verification_issue = None
         if platform == "xiaohongshu" and self._source_kind(platform, author_id) == "xhs_http":
             verification_issue = self._platform_access_reason(platform)
-            if not verification_issue:
+            if not verification_issue and network_safety.manual_scope() is None:
                 try:
                     self.verify(platform, author_id)
                 except (AdapterFailure, PlatformCooldown) as error:
@@ -1491,7 +1506,9 @@ class WorkspaceService:
         return {"job_id": job_id, "state": "queued"}
 
     def _spawn(self, job_id):
-        thread = Thread(target=self._execute, args=(job_id,), daemon=True)
+        # Only the explicitly submitted job inherits its bounded manual scope.
+        context = copy_context()
+        thread = Thread(target=context.run, args=(self._execute, job_id), daemon=True)
         self._threads.add(thread)
         thread.start()
 
@@ -1502,6 +1519,9 @@ class WorkspaceService:
                 self._threads.discard(thread)
 
     def _finish(self, job_id, state, reason=None, export=None):
+        scope = network_safety.manual_scope()
+        if scope is not None and state not in {"queued", "running"}:
+            self.manual_validation.complete(scope, success=state == "succeeded", reason=reason)
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state=?,reason=?,export_json=?,updated_at=? WHERE id=?", (state, reason, json.dumps(export) if export else None, time.time(), job_id))
             job = db.execute("SELECT mode,run_id FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -1641,7 +1661,12 @@ class WorkspaceService:
                     self._finish(job["id"], "interrupted", "user_paused")
                     return
                 self._check_cooldown(job["platform"])
-                if hasattr(transport, "recent_page"):
+                scope = network_safety.manual_scope()
+                if scope is not None:
+                    if scope.page is None:
+                        raise AdapterFailure("network_paused")
+                    page = scope.page
+                elif hasattr(transport, "recent_page"):
                     page = self._source_call(job, transport.recent_page, job["author_id"])
                 else:
                     page = self._source_call(job, transport.page, job["author_id"], None)
@@ -1683,7 +1708,8 @@ class WorkspaceService:
                     db.execute("UPDATE runs SET adapter_version=?,pages=1,cursor=NULL,state='running',coverage='recent_window_only',terminal_evidence=NULL,updated_at=? WHERE id=?",
                                (transport.version, time.time(), run_id))
                     saved = dict(db.execute("SELECT * FROM pages WHERE run_id=?", (run_id,)).fetchone())
-                    self._save_xhs_page_references(job, run_id, transport, saved)
+                    if network_safety.manual_scope() is None:
+                        self._save_xhs_page_references(job, run_id, transport, saved)
             else:
                 # A retry uses private references from this fixed first-page snapshot.
                 # Missing or expired references remain a gap; no old page is reread.
@@ -1691,6 +1717,27 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             target_count = db.execute("SELECT count(*) FROM job_items WHERE job_id=?", (job["id"],)).fetchone()[0]
         if target_count:
+            scope = network_safety.manual_scope()
+            if scope is not None:
+                # Fetch at most the original three details before any media. This
+                # exposes the full required media count without spending >12.
+                with self.workflow.connect() as db:
+                    targets = {r[0] for r in db.execute("SELECT item_id FROM job_items WHERE job_id=?", (job["id"],))}
+                for item in scope.page.items:
+                    if item.item_id not in targets:
+                        continue
+                    detail = self._source_call(job, transport.detail, job["author_id"], item.item_id)
+                    if detail.get("author_id") != job["author_id"] or detail.get("item_id") != item.item_id:
+                        raise AdapterFailure("identity_mismatch")
+                    scope.details[item.item_id] = detail
+                    if detail.get("text", "").strip():
+                        self.workflow.save_detail(job["platform"], item.item_id, job["author_id"], detail["text"], detail["source_url"])
+                    scope.media_required += sum(not self.workflow.candidate_saved(job["platform"], item.item_id, c) for c in detail.get("media", []))
+                scope.persist(scope)
+                if scope.media_required > 12:
+                    scope.stop("manual_media_budget_exceeded")
+                    self._finish(job["id"], "blocked", "manual_media_budget_exceeded")
+                    return
             pending = self._execute_content(job, finalize=False)
             with self.workflow.connect() as db:
                 current = db.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()[0]
@@ -1998,7 +2045,9 @@ class WorkspaceService:
                     self._check_cooldown(job["platform"])
                     transport = self.transport_for(job["platform"], job["author_id"])
                     source = sources if isinstance(sources,str) else sources.get(item["item_id"],item["source_url"] or "")
-                    detail = self._source_call(job, transport.detail, job["author_id"], item["item_id"], source_url=source)
+                    scope = network_safety.manual_scope()
+                    detail = (scope.details[item["item_id"]] if scope is not None and item["item_id"] in scope.details
+                              else self._source_call(job, transport.detail, job["author_id"], item["item_id"], source_url=source))
                     if detail.get("item_id") != item["item_id"] or detail.get("author_id") != job["author_id"]:
                         raise AdapterFailure("unavailable")
                     self.workflow.save_metrics(job["platform"], item["item_id"], detail.get("metrics",{}),
@@ -2033,16 +2082,20 @@ class WorkspaceService:
                                 self.workflow.attach_media(job["platform"],item["item_id"],candidate.asset_id,Path(fetched["path"]),position=candidate.position,kind=candidate.kind,mime=fetched["mime"])
                             except AdapterFailure as error:
                                 self._record_request_failure(job, error, "media")
-                                if error.category in {"needs_login","rate_limited","unavailable","verification_required","unknown_business_error","network_paused"}:
+                                if network_safety.manual_scope() is not None or error.category in {"needs_login","rate_limited","unavailable","verification_required","unknown_business_error","network_paused"}:
                                     raise
                                 media_failed = True
                                 if error.category == "media_failed":
                                     incomplete_reason = "media_failed"
                             except OSError as error:
+                                if network_safety.manual_scope() is not None:
+                                    raise AdapterFailure("media_failed") from None
                                 media_failed = True
                                 if error.errno in LOCAL_MEDIA_ERRNOS:
                                     incomplete_reason = "media_write_failed"
                             except ValueError:
+                                if network_safety.manual_scope() is not None:
+                                    raise AdapterFailure("media_failed") from None
                                 media_failed = True
                         media_complete = bool(detail.get("media")) and not detail.get("missing") and not media_failed
                         complete = complete and media_complete
@@ -2052,6 +2105,9 @@ class WorkspaceService:
                     db.execute("UPDATE job_items SET state=?,reason=? WHERE job_id=? AND platform=? AND item_id=?", ("succeeded" if complete else "partial",None if complete else incomplete_reason,job["id"],job["platform"],item["item_id"]))
                 if complete and isinstance(sources,dict):
                     sources.pop(item["item_id"],None)
+                if not complete and network_safety.manual_scope() is not None:
+                    self._finish(job["id"], "partial", incomplete_reason)
+                    return
             except PlatformCooldown:
                 raise
             except Exception as error:
@@ -2065,7 +2121,8 @@ class WorkspaceService:
                         observation_key=f"job:{job['id']}:{item['item_id']}:failed:{time.time_ns()}",status="failed",reason=category)
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
-                if (category in {"rate_limited","needs_login","verification_required","unavailable","unknown_business_error","network_paused"}
+                if (network_safety.manual_scope() is not None
+                        or category in {"rate_limited","needs_login","verification_required","unavailable","unknown_business_error","network_paused"}
                         or job["mode"] == "recent_window" and category in {"identity_mismatch", "invalid_response", "timeout", "invalid_stable_id"}):
                     if category in {"needs_login","verification_required"}:
                         self._job_sources.clear()

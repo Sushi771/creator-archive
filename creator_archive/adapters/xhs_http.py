@@ -98,6 +98,7 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
     network_safety.require_xhs_network()
     if host not in {_API_HOST, _WEB_HOST} or not path.startswith("/") or path.startswith("//"):
         raise AdapterFailure("unavailable")
+    network_safety.consume_manual_request(host, path)
     address = _public_addresses(host)[0]
     connection = http.client.HTTPSConnection(host, 443, timeout=20, context=ssl.create_default_context())
     status = None
@@ -358,6 +359,9 @@ class XhsHttpTransport:
 
     def _read_page(self, author_id: str, cursor: str | None, *, recent_window=False) -> Page:
         network_safety.require_xhs_network()
+        network_safety.require_manual_author(author_id)
+        if network_safety.manual_scope() is not None and (not recent_window or cursor is not None):
+            raise AdapterFailure("network_paused")
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         if cursor is not None and (not isinstance(cursor, str) or not cursor or len(cursor) > 1024 or any(not 33 <= ord(c) <= 126 for c in cursor)):
@@ -403,6 +407,7 @@ class XhsHttpTransport:
         if len({item.item_id for item in items}) != len(items):
             raise AdapterFailure("invalid_response")
         if recent_window:
+            network_safety.observe_manual_window(author_id, (item.item_id for item in items))
             page = Page(tuple(items), None, False, None)
         elif more:
             page = Page(tuple(items), next_cursor, True)
