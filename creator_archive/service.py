@@ -164,6 +164,16 @@ class WorkspaceService:
             db.execute("UPDATE jobs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
             db.execute("UPDATE runs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
         self._migrate_product_settings()
+        # Restore only sanitized account errors newer than the last successful identity check.
+        with self.workflow.connect() as db:
+            failed = db.execute("SELECT diagnostic_json,observed_at FROM request_failures WHERE stage='account' ORDER BY id DESC LIMIT 1").fetchone()
+        if failed and failed[1] > (self.account.status().get("checked_at") or 0):
+            diagnostic = json.loads(failed[0])
+            self.account.last_error = diagnostic.get("category", "unavailable")
+            phase = diagnostic.get("phase")
+            self.account.last_failure = {"phase": phase if phase in {"activate", "create_qr", "poll_qr", "identity"} else "unknown",
+                "http_status": diagnostic.get("http_status"), "business_code": diagnostic.get("business_code")}
+
 
     def _migrate_product_settings(self):
         with closing(sqlite3.connect(self.workflow.db_path)) as db:
@@ -395,7 +405,7 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job.get("run_id"),)).fetchone()
             allowed = {key: error.diagnostics.get(key) for key in
-                       ("http_status", "success", "business_code", "message", "message_sha256", "stage", "request_cursor_sha256")}
+                       ("http_status", "success", "business_code", "message", "message_sha256", "stage", "phase", "request_cursor_sha256")}
             allowed["category"] = error.category
             if run and allowed.get("request_cursor_sha256"):
                 for saved in db.execute("SELECT page_number,request_cursor FROM pages WHERE run_id=?", (job.get("run_id"),)):

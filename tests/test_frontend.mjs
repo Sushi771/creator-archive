@@ -425,3 +425,23 @@ run('ui.workspace={subscriptions:[]};renderAccount({state:"connected",nickname:"
 assert.match(elements['account-status'].textContent,/账号已验证.*作者列表.*单独验证/);
 assert.equal(elements['xhs-login-qr'].hidden,true);
 console.log('Normal account UI checks passed: distinct account/list evidence, normal subscribe control and no manual permit.');
+
+// Author-first workspace: navigation only queries local data and keeps platform scopes separate.
+run('ui.workspace={subscriptions:[{platform:"xiaohongshu",author_id:"author-a",display_name:"小红书博主甲",item_count:3,identity_verified:true,subscribed:true,source_connected:true},{platform:"xiaohongshu",author_id:"author-b",display_name:"小红书博主乙",item_count:1},{platform:"wechat",author_id:"wechat-a",display_name:"公众号作者",item_count:7}]};ui.readerSignature=null;globalThis.readerCalls=[];api=async(path,body)=>{readerCalls.push({path,body});return {items:[],total:0};}');
+await run('selectReaderAuthor("xiaohongshu",ui.workspace.subscriptions[0])');
+params=new URL(run('readerCalls.at(-1).path'),'http://local').searchParams;
+assert.equal(params.get('platform'),'xiaohongshu');assert.equal(params.get('author_id'),'author-a');
+assert.equal(elements['reader-title'].textContent,'小红书博主甲');
+assert.ok(!walk(elements['reader-authors']).some(entry=>entry?.textContent==='公众号作者'));
+elements['reader-search'].value='博主乙';run('renderReaderAuthors()');
+assert.ok(walk(elements['reader-authors']).some(entry=>entry?.textContent==='小红书博主乙'));
+assert.ok(!walk(elements['reader-authors']).some(entry=>entry?.textContent==='小红书博主甲'));
+elements['reader-search'].value='';await run('selectReaderAuthor("wechat")');
+params=new URL(run('readerCalls.at(-1).path'),'http://local').searchParams;
+assert.equal(params.get('platform'),'wechat');assert.equal(params.get('author_id'),null);
+assert.ok(walk(elements['reader-authors']).some(entry=>entry?.textContent==='公众号作者'));
+assert.ok(!walk(elements['reader-authors']).some(entry=>entry?.textContent==='小红书博主甲'));
+assert.ok(run('readerCalls.every(call=>call.body===undefined)'), 'Platform/search/author navigation does not log in or sync');
+assert.match(run('accountFailureText({reason:"verification_required",failure:{phase:"create_qr",http_status:471}})'),/生成二维码.*471.*具体原因未知.*无需反复扫码/);
+assert.match(html,/<dialog id="xhs-account"/);assert.match(html,/<dialog id="add-author-dialog"/);
+console.log('Author-first workspace checks passed: platform partitions, local author search, scoped local items, independent account/add dialogs and accurate HTTP471 feedback.');

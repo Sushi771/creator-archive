@@ -155,6 +155,31 @@ class XhsAccountTests(unittest.TestCase):
         self.assertEqual(self.post("/api/platforms/xiaohongshu/login").status_code, 409)
         self.assertEqual(self.service.account.cookie_file.read_bytes(), original)
 
+    def test_http471_reports_account_phase_and_survives_restart_without_retry(self):
+        self.login()
+        before = self.service.account.cookie_file.read_bytes()
+        failure = AdapterFailure("verification_required", diagnostics={"http_status": 471, "stage": "list"})
+        with patch("creator_archive.xhs_account._https_request", side_effect=failure) as request:
+            response = self.post("/api/platforms/xiaohongshu/login")
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["phase"], "activate")
+            self.assertEqual(response.json()["http_status"], 471)
+            self.assertIn("无需反复扫码", response.json()["detail"])
+            self.assertEqual(request.call_count, 1)
+        self.assertEqual(before, self.service.account.cookie_file.read_bytes())
+        self.assertEqual(self.service.account.status()["failure"],
+                         {"phase": "activate", "http_status": 471, "business_code": None})
+        with self.service.workflow.connect() as db:
+            record = json.loads(db.execute("SELECT diagnostic_json FROM request_failures ORDER BY id DESC LIMIT 1").fetchone()[0])
+            self.assertEqual((record["stage"], record["phase"]), ("account", "activate"))
+        calls = len(self.auth_calls)
+        restarted = WorkspaceService(self.root)
+        self.addCleanup(restarted.close)
+        self.assertEqual(restarted.account.status()["failure"]["phase"], "activate")
+        self.assertEqual(restarted.account.status()["reason"], "verification_required")
+        self.assertEqual(len(self.auth_calls), calls)
+        self.assertEqual(self.get_calls, [])
+
     def test_list_minus100_is_not_login_success_or_subscription_success(self):
         self.login()
         self.list_fail = True

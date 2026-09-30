@@ -172,8 +172,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                     "verification_required": "平台要求验证，本次操作已停止。请本人在官方应用处理，再回到本页面更新会话。",
                     "unknown_business_error": "平台返回业务失败，本次操作已停止；原因尚未确认，不自动重试。",
                     "rate_limited": "平台限流，本次操作已停止；请等待冷却，不切换账号或IP。"}
+        if request.url.path in {"/api/xhs/account", "/api/platforms/xiaohongshu/login"} and error.diagnostics.get("http_status") == 471:
+            messages[error.category] = "账号接口被平台拒绝（HTTP 471），应用会话尚未确认有效。具体原因未知；无需反复扫码，旧会话与资料保留。"
         return JSONResponse({"detail": messages.get(error.category, "本次操作未完成，旧资料已保留；请查看账号状态和任务错误。"), "reason": error.category,
-                             "business_code": error.diagnostics.get("business_code")}, status_code=409)
+                             "business_code": error.diagnostics.get("business_code"),
+                             "http_status": error.diagnostics.get("http_status"), "phase": error.diagnostics.get("phase")}, status_code=409)
 
     @app.exception_handler(PlatformCooldown)
     async def platform_cooldown(request, error):

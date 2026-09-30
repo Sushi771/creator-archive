@@ -6,7 +6,7 @@ const coverageName = {complete_for_accessible_scope:"已观察到可获取列表
 const modeName = {source_refresh:"最近内容同步",recent_window:"最近内容同步",full:"旧历史任务（仅保留记录）",latest:"最近内容同步",archive:"本地归档",all_archive:"旧历史批次（仅保留记录）",page_archive:"两页采集并归档（实验）",author_archive:"旧作者历史任务（仅保留记录）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
 const reasonName = {recent_window_complete:"最近第一页的新作品正文与可获取媒体已保存",recent_window_unchanged:"最近第一页无尚未归档的新作品，已有内容保持",recent_window_partial:"最近第一页部分新作品正文或媒体仍有缺口，成功资源已保留",timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台访问受限，真实联网保持暂停",identity_unverified:"作者身份尚待核验",unknown_business_error:"平台业务请求失败；已停止当次任务，请查看错误记录",verification_required:"平台要求验证；已停止当次任务",invalid_response:"平台响应不符合预期；已停止当次任务",media_failed:"媒体保存失败；已停止，正文和成功资源保留",reference_missing:"作品引用缺失；已停止，成功资源保留"};
-const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"",itemRequest:0,refreshPromise:null,busy:false,jobPointerActive:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,scheduleSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,sourceAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
+const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"xiaohongshu",itemRequest:0,refreshPromise:null,busy:false,jobPointerActive:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,scheduleSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,sourceAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
 function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
@@ -60,13 +60,12 @@ async function refreshSelectedSources() {
   catch {throw new Error("所选来源刷新未创建。请查看作者配置及本机服务状态；已有资料保留。");}
   notify(`已为所选 ${selected_authors.length} 位作者请求后台来源刷新；未配置来源的作者会报告缺口。小红书只读取最新第一页，已有稳定作品 ID 跳过下载；两次刷新之间新增超过窗口时可能遗漏。`);
   await refresh(true);
-  $("jobs").scrollIntoView();
+  showReaderView("jobs");$("jobs").scrollIntoView();
 }
 function renderSubscriptions(subscriptions) {
   const eligible=new Set(subscriptions.filter(sub=>sub.identity_verified&&sub.subscribed!==false&&!sub.subscription_confirmation_required).map(authorKey));
   for(const key of ui.selectedAuthors)if(!eligible.has(key))ui.selectedAuthors.delete(key);
   selectedArchiveCount();
-  $("nav-count").textContent=num(subscriptions.length);
   const list=$("subscription-list");list.replaceChildren();
   if(!subscriptions.length){empty(list,"从第一位作者开始","粘贴链接添加订阅，或在「数据与接入」导入已有真实验证资料。");return;}
   const visible=subscriptions.filter(sub=>(!$("subscription-platform").value||sub.platform===$("subscription-platform").value)&&(!$("subscription-tag").value||(sub.tags||[]).includes($("subscription-tag").value)));
@@ -97,7 +96,7 @@ function renderSubscriptions(subscriptions) {
       check.addEventListener("change",()=>{if(check.checked)ui.selectedAuthors.add(authorKey(sub));else ui.selectedAuthors.delete(authorKey(sub));selectedArchiveCount();});
       label.append(check,document.createTextNode("选入操作"));actions.append(label);
     }
-    actions.append(actionButton("查看作品",async()=>{$("library-filters").reset();ui.filters={sort:"published_at",order:"desc"};ui.platform="";ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();$("library").scrollIntoView();}));
+    actions.append(actionButton("查看作品",async()=>{$("library-filters").reset();ui.filters={sort:"published_at",order:"desc"};ui.platform="";ui.filter=`${sub.platform}|${sub.author_id}`;$("filter-author").value=ui.filter;ui.offset=0;await loadItems();showReaderView("library");$("library").scrollIntoView();}));
     actions.append(actionButton("编辑标签",()=>openTagEditor(sub)));
     if(sub.subscribed!==false){
       if(sub.source_kind!=="xhs_http")actions.append(actionButton(sub.platform==="xiaohongshu"?`${sub.source_connected?"更换":"配置"}后台来源（可选 Feed）`:sub.source_connected?"更换后台来源":"配置后台来源",()=>openSourceEditor(sub)));
@@ -247,6 +246,7 @@ async function refresh(forceItems = false, background = false) {
       w.archive_batches = w.archive_batches || [];
       ui.workspace = w;
       renderAccount(w.xhs_account);
+      renderReaderAuthors();
       $("stat-subscriptions").textContent = num(w.stats?.subscriptions ?? w.subscriptions.length);
       $("stat-items").textContent = num(w.stats?.items);
       $("stat-details").textContent = num(w.stats?.details);
@@ -301,7 +301,7 @@ async function refresh(forceItems = false, background = false) {
   try { await request; }
   finally { if (ui.refreshPromise === request) ui.refreshPromise = null; }
 }
-async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();let result;try{result=await api("/api/jobs",body);}catch(error){if(mode==="source_refresh")throw new Error("后台来源刷新未创建。请核对作者配置和本机服务；已有资料保留。");throw error;}notify(mode==="source_refresh"?"已请求最近内容同步。小红书只读取最新第一页，按稳定作品 ID 跳过已有作品；请查看正文和本地图片/视频结果。遇到平台拒绝、验证、限流或业务失败立即停止。":result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:mode==="demo_archive"?"已核验并确认的小红书作者（含暂停项）":"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
+async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();let result;try{result=await api("/api/jobs",body);}catch(error){if(mode==="source_refresh")throw new Error("后台来源刷新未创建。请核对作者配置和本机服务；已有资料保留。");throw error;}notify(mode==="source_refresh"?"已请求最近内容同步。小红书只读取最新第一页，按稳定作品 ID 跳过已有作品；请查看正文和本地图片/视频结果。遇到平台拒绝、验证、限流或业务失败立即停止。":result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:mode==="demo_archive"?"已核验并确认的小红书作者（含暂停项）":"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();showReaderView("jobs");$("jobs").scrollIntoView();}
 async function previewSelectedArchive() {
   const selected_authors=selectedAuthorPayload();
   if(!selected_authors.length)throw new Error("请先在作者卡片勾选至少一位已核验、已确认且仍订阅的作者。未创建任务。");
@@ -317,7 +317,7 @@ async function startSelectedArchive() {
   try {
     const result=await api("/api/jobs",{mode:"selected_archive",selected_authors:ui.previewAuthors});
     $("selected-archive-dialog").close();
-    notify(result.message);await refresh(true);$("jobs").scrollIntoView();
+    notify(result.message);await refresh(true);showReaderView("jobs");$("jobs").scrollIntoView();
   } catch(error) {
     $("selected-archive-error").textContent=`${error.message}；预览后若订阅状态变化，请返回刷新并重新选择。`;
     $("selected-archive-error").hidden=false;
@@ -328,7 +328,7 @@ async function exportSelectedLocal() {
   if(!selected_authors.length)throw new Error("请先在作者卡片勾选至少一位已核验且仍订阅的作者；未创建导出任务。");
   const result=await api("/api/jobs",{mode:"archive",selected_authors});
   notify(`已为 ${result.job_ids?.length||selected_authors.length} 位作者创建本机导出任务。只导出本地已保存内容；最近窗口不代表全部历史。`);
-  await refresh(true);$("jobs").scrollIntoView();
+  await refresh(true);showReaderView("jobs");$("jobs").scrollIntoView();
 }
 function openSubscriptionConfirmation(sub) {
   if(!sub.subscription_confirmation_required)return;
@@ -351,7 +351,7 @@ async function confirmSubscription() {
   notify(result.message);
   try { await refresh(true); }
   catch(error) { notify(`订阅已确认，但页面刷新失败；请刷新工作区核对状态。${error.message}`,true); }
-  $("subscriptions").scrollIntoView();
+  showReaderView("subscriptions");$("subscriptions").scrollIntoView();
 }
 async function resolveAndSaveItem() {
   const input=$("resolve-item-link"),status=$("resolve-item-result");
@@ -377,7 +377,7 @@ async function resolveAndSaveItem() {
     const sub=ui.workspace?.subscriptions.find(s=>s.platform===item.platform&&s.author_id===item.author_id);
     if(sub?.subscription_confirmation_required)openSubscriptionConfirmation(sub);
   }
-  $("jobs").scrollIntoView();
+  showReaderView("jobs");$("jobs").scrollIntoView();
 }
 const metricNames = {likes:"点赞",collects:"收藏",comments:"评论"};
 const contentTypeNames = {image:"图文",video:"视频",unknown:"类型未知"};
@@ -453,6 +453,7 @@ async function loadItems(canApply = () => true) {
   const data=await api(`/api/items?${params}`);
   if(request!==ui.itemRequest||!canApply())return false;
   ui.total=data.total||0;
+  renderReaderAuthors();
   // A background update may reduce the matching set; return to a valid page.
   if(ui.offset && ui.offset>=ui.total) {ui.offset=Math.max(0,Math.ceil(ui.total/ui.limit)-1)*ui.limit;return loadItems(canApply);}
   $("item-count").textContent=`全库匹配 ${num(ui.total)} 个作品`;
@@ -560,7 +561,7 @@ async function openItem(item) {
   if(!$("item-dialog").open)$("item-dialog").showModal();
 }
 
-$("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined,window_limit:Number($("sync-window-limit").value)});$("link-result").textContent=result.message||"订阅已保存，请查看实际任务结果。";notify($("link-result").textContent);await refresh(true);});});
+$("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined,window_limit:Number($("sync-window-limit").value)});$("link-result").textContent=result.message||"订阅已保存，请查看实际任务结果。";notify($("link-result").textContent);$("add-author-dialog").close();await refresh(true);showReaderView("jobs");});});
 $("resolve-item-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,resolveAndSaveItem);});
 $("confirm-subscription").onclick=()=>perform($("confirm-subscription"),confirmSubscription);
 $("cancel-subscription").onclick=()=>$("confirm-subscription-dialog").close();
@@ -583,7 +584,7 @@ $("refresh-selected-sources").onclick=()=>perform($("refresh-selected-sources"),
 $("classify").onclick=()=>perform($("classify"),async()=>{if(!$("link").reportValidity())return;const r=await api("/api/links/classify",{text:$("link").value});$("link-result").textContent=`${nameOf(r.platform)} · ${kindName[r.kind]||r.kind}。${r.message||""}${r.candidate_author_id?` 候选作者 ID：${r.candidate_author_id}`:""}`;});
 for(const b of document.querySelectorAll("[data-job]"))b.onclick=()=>perform(b,()=>startJob(b.dataset.job));
 $("refresh").onclick=()=>perform($("refresh"),async()=>{await refresh(true);notify("已刷新本机持久状态。");});
-$("import-validation").onclick=()=>perform($("import-validation"),async()=>{const r=await api("/api/import/validation",{});notify(r.message||"已有验证资料已导入工作区，原件保留。请查看作者、作品以及正文缺失标记。");await refresh(true);$("subscriptions").scrollIntoView();});
+$("import-validation").onclick=()=>perform($("import-validation"),async()=>{const r=await api("/api/import/validation",{});notify(r.message||"已有验证资料已导入工作区，原件保留。请查看作者、作品以及正文缺失标记。");await refresh(true);showReaderView("subscriptions");$("subscriptions").scrollIntoView();});
 $("library-filters").addEventListener("submit",event=>{event.preventDefault();applyFilters().catch(e=>notify(e.message,true));});
 $("reset-filters").onclick=()=>{$("library-filters").reset();applyFilters().catch(e=>notify(e.message,true));};
 $("prev-page").onclick=()=>{ui.offset=Math.max(0,ui.offset-ui.limit);loadItems().catch(e=>notify(e.message,true));};
@@ -651,7 +652,9 @@ function renderAccount(account) {
   if(!account)return;
   const labels={connected:"账号已验证",not_checked:"已存在本机会话，尚未检查",disconnected:"尚未连接有效账号",waiting_scan:"请扫码",waiting_confirmation:"请在手机确认登录"};
   $("account-status").textContent=`${labels[account.state]||account.state}${account.nickname?` · ${account.nickname}`:""}${account.checked_at?` · 上次检查 ${formatTime(account.checked_at)}`:""}。作者列表是否可用将在同步时单独验证。`;
-  $("account-error").textContent=account.reason?`本次账号操作已停止：${account.reason}；旧资料保留，没有自动重试。`:"";
+  $("reader-account-state").textContent=labels[account.state]||account.state;
+  $("reader-account").textContent=account.state==="connected"?"账号与连接":"连接小红书账号";
+  $("account-error").textContent=account.reason?accountFailureText(account):"";
   $("cancel-xhs-login").hidden=!account.qr_active;
   $("xhs-login-qr").hidden=!account.qr_active;
   if(!account.qr_active) {$("xhs-login-qr").removeAttribute("src");clearTimeout(accountPollTimer);}
@@ -686,3 +689,66 @@ $("check-xhs-account").onclick=()=>perform($("check-xhs-account"),async()=>{
 $("cancel-xhs-login").onclick=()=>perform($("cancel-xhs-login"),async()=>{
   clearTimeout(accountPollTimer);renderAccount(await api("/api/xhs/account",{action:"cancel"}));
 });
+
+
+function showReaderView(view) {
+  $("main").setAttribute("data-view",["library","subscriptions","jobs","sources"].includes(view)?view:"library");
+}
+function selectedReaderAuthor() {
+  return ui.workspace?.subscriptions.find(sub=>`${sub.platform}|${sub.author_id}`===ui.filter);
+}
+function renderReaderAuthors() {
+  const platform=ui.filter?ui.filter.split("|")[0]:ui.platform;
+  $("reader-xhs").setAttribute("aria-pressed",String(platform==="xiaohongshu"));
+  $("reader-wechat").setAttribute("aria-pressed",String(platform==="wechat"));
+  const all=(ui.workspace?.subscriptions||[]).filter(sub=>!platform||sub.platform===platform);
+  const query=$("reader-search").value.trim().toLocaleLowerCase();
+  const matching=all.filter(sub=>`${sub.display_name||""} ${sub.author_id} ${(sub.tags||[]).join(" ")}`.toLocaleLowerCase().includes(query));
+  const signature=dataSignature([platform,ui.filter,query,all]);
+  if(ui.readerSignature===signature)return;
+  ui.readerSignature=signature;
+  const list=$("reader-authors");list.replaceChildren();
+  $("nav-count").textContent=num(all.length);
+  const every=actionButton(`全部${platform?nameOf(platform):""}作品`,()=>selectReaderAuthor(platform));
+  every.className="reader-author reader-author-all";every.setAttribute("aria-current",String(!ui.filter));list.append(every);
+  for(const sub of matching) {
+    const button=actionButton("",()=>selectReaderAuthor(sub.platform,sub));button.className="reader-author";
+    button.setAttribute("aria-current",String(ui.filter===`${platform}|${sub.author_id}`));
+    const name=sub.display_name||`作者 · ${sub.author_id.slice(0,6)}`;
+    button.append(node("span",name.slice(0,1),"reader-avatar"),node("span",name,"reader-author-name"),node("small",`${num(sub.item_count)}篇${sub.identity_verified?"":" · 待核验"}${sub.subscribed===false?" · 已取消":""}`,"reader-author-count"));
+    list.append(button);
+  }
+  if(!matching.length)list.append(node("p",query?"没有匹配的博主":"此分区暂无博主，可点击 ＋ 添加。","hint"));
+  const selected=selectedReaderAuthor();
+  $("reader-title").textContent=selected?.display_name||`全部${platform?nameOf(platform):""}作品`;
+  $("reader-scope").textContent=selected?`${nameOf(platform)} · ${num(selected.item_count)}篇 · 正文 ${num(selected.detail_count)} · 图片 ${num(selected.registered_media?.image)} / 视频 ${num(selected.registered_media?.video)}。${selected.message||"查看本机内容不会请求平台。"}`:platform==="wechat"?"公众号分区保留已有本机资料；接入开发与真实验收暂缓。":"小红书最近窗口最多30篇；查看本机内容不会请求平台。";
+  const actions=$("reader-author-actions");actions.replaceChildren();
+  if(selected) {
+    actions.append(actionButton("管理此博主",()=>showReaderView("subscriptions")));
+    if(selected.identity_verified&&selected.subscribed!==false&&!selected.subscription_confirmation_required) {
+      if(platform==="xiaohongshu"&&selected.source_connected)actions.append(actionButton("同步最近内容",()=>startJob("source_refresh",selected)));
+      actions.append(actionButton("导出本机内容",()=>startJob("archive",selected)));
+    }
+  }
+}
+async function selectReaderAuthor(platform,sub=null) {
+  $("library-filters").reset();ui.filters={sort:"published_at",order:"desc"};ui.platform=platform;
+  ui.filter=sub?`${platform}|${sub.author_id}`:"";ui.offset=0;
+  $("filter-platform").value=platform;$("filter-author").value=ui.filter;
+  showReaderView("library");renderReaderAuthors();await loadItems();
+}
+function accountFailureText(account) {
+  const phases={activate:"初始化登录",create_qr:"生成二维码",poll_qr:"检查扫码确认",identity:"核验账号身份",unknown:"账号接入"};
+  const failure=account.failure||{};
+  if(failure.http_status===471)return `${phases[failure.phase]||"账号接入"}请求被平台拒绝（HTTP 471）。未确认应用会话有效，具体原因未知；无需反复扫码。旧会话和资料保留。`;
+  return `本次账号操作已停止：${phases[failure.phase]||"账号接入"}${failure.http_status?`（HTTP ${failure.http_status}）`:""} · ${reasonName[account.reason]||account.reason}。旧资料保留，没有自动重试。`;
+}
+$("reader-xhs").onclick=()=>selectReaderAuthor("xiaohongshu").catch(e=>notify(e.message,true));
+$("reader-wechat").onclick=()=>selectReaderAuthor("wechat").catch(e=>notify(e.message,true));
+$("reader-search").addEventListener("input",renderReaderAuthors);
+$("reader-account").onclick=()=>$("xhs-account").showModal();
+$("close-account").onclick=()=>$("xhs-account").close();
+$("reader-add").onclick=$("manage-add").onclick=()=>$("add-author-dialog").showModal();
+$("close-add-author").onclick=()=>$("add-author-dialog").close();
+for(const anchor of document.querySelectorAll(".sidebar nav a, .sidebar .brand"))anchor.addEventListener("click",()=>showReaderView(anchor.getAttribute("href").slice(1)));
+$("filter-platform").value=ui.platform;

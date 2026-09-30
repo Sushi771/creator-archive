@@ -49,6 +49,8 @@ class XhsAccount:
         self.pending = None
         self.last_request = 0.0
         self.last_error = None
+        self.last_failure = None
+        self.current_phase = "unknown"
         self.verified_in_process = False
 
     def status(self):
@@ -66,11 +68,19 @@ class XhsAccount:
                              "connected" if self.verified_in_process and saved and self.cookie_file.is_file() and not self.last_error else
                              "not_checked" if self.cookie_file.is_file() and not self.last_error else
                              "disconnected",
-                    "reason": self.last_error, "qr_active": self.pending is not None,
+                    "reason": self.last_error, "failure": self.last_failure, "qr_active": self.pending is not None,
                     "expires_at": self.pending["expires_at"] if self.pending else None,
                     "author_list_verified": False}
 
     def _call(self, cookies, method, uri, values=None):
+        self.current_phase = {_ACTIVATE: "activate", _CREATE: "create_qr", _STATUS: "poll_qr", _ME: "identity"}.get(uri, "unknown")
+        try:
+            return self._request(cookies, method, uri, values)
+        except AdapterFailure as error:
+            error.diagnostics = {**error.diagnostics, "stage": "account", "phase": self.current_phase}
+            raise
+
+    def _request(self, cookies, method, uri, values=None):
         if uri not in {_ME, _ACTIVATE, _CREATE, _STATUS}:
             raise AdapterFailure("invalid_response")
         delay = 1.5 - (time.monotonic() - self.last_request)
@@ -173,6 +183,7 @@ class XhsAccount:
             raise
         self.pending = None
         self.last_error = None
+        self.last_failure = None
         self.verified_in_process = True
         return self.status()
 
@@ -180,6 +191,10 @@ class XhsAccount:
         self.pending = None
         self.last_error = getattr(error, "category", "local_session_write_failed")
         self.verified_in_process = False
+        diagnostic = getattr(error, "diagnostics", {})
+        self.last_failure = {"phase": self.current_phase,
+                             "http_status": diagnostic.get("http_status") if type(diagnostic.get("http_status")) is int else None,
+                             "business_code": diagnostic.get("business_code") if type(diagnostic.get("business_code")) is int else None}
 
     def start(self):
         with self.lock:
