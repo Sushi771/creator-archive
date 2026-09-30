@@ -168,6 +168,24 @@ class XhsHttpTransportTests(unittest.TestCase):
         self.assertEqual(detail["item_id"], NOTE_TWO)
         self.assertEqual(detail["author_id"], AUTHOR)
 
+    def test_reference_snapshot_restores_without_listing_and_validates_before_update(self):
+        self.transport._get_api = lambda cursor: _listing([NOTE_ONE])
+        self.transport.page(AUTHOR, None)
+        references = self.transport.export_page_references(AUTHOR, [NOTE_ONE, NOTE_TWO])
+        self.transport._refs.clear()
+        self.transport._page_cache = None
+        self.transport._get_api = lambda cursor: self.fail("reference restore must not fetch a listing")
+        self.transport.restore_page_references(AUTHOR, references)
+        self.assertEqual(self.transport.prepare_page_details(AUTHOR, [NOTE_ONE]), ())
+        self.transport._get = lambda *args, **kwargs: _html(NOTE_ONE)
+        self.assertEqual(self.transport.detail(AUTHOR, NOTE_ONE)["text"], "A complete body")
+        self.transport._refs.clear()
+        for invalid in ("https://example.org/invalid", 42):
+            with self.assertRaises(AdapterFailure) as caught:
+                self.transport.restore_page_references(AUTHOR, {**references, NOTE_TWO: invalid})
+            self.assertEqual(caught.exception.category, "reference_missing")
+            self.assertEqual(self.transport._refs, {})
+
     def test_embedded_state_is_data_and_undefined_inside_text_is_preserved(self):
         sample = b'<script>window.__INITIAL_STATE__={"text":"undefined in a string","missing":undefined};</script>'
         self.assertEqual(_json_state(sample), {"text": "undefined in a string", "missing": None})

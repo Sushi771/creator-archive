@@ -1635,7 +1635,14 @@ class WorkspaceService:
                 try:
                     pages_requested += 1
                     page = self._source_call(job, transport.page, job["author_id"], run["cursor"])
-                    self.workflow._commit_page(run_id, run["cursor"], page)
+                    # Persist private detail references before the checkpoint
+                    # transaction commits. A failed write rolls back the page;
+                    # an orphan file cannot be used without a matching DB page.
+                    with self.workflow.connect() as db:
+                        db.execute("BEGIN IMMEDIATE")
+                        self.workflow._commit_page_in_db(db, run_id, run["cursor"], page)
+                        saved = dict(db.execute("SELECT * FROM pages WHERE run_id=? ORDER BY page_number DESC LIMIT 1", (run_id,)).fetchone())
+                        self._save_xhs_page_references(job, run_id, transport, saved)
                 except AdapterFailure as error:
                     self._record_request_failure(job, error, "list")
                     state = error.category if error.category in {"needs_login", "rate_limited"} else "partial"
@@ -1655,8 +1662,52 @@ class WorkspaceService:
                     self._finish(job["id"], "partial", reason)
                     return
 
+    def _xhs_reference_record(self, job, run_id, saved):
+        scope = {"run_id": run_id, "author_id": job["author_id"],
+                 "page_number": saved["page_number"], "item_ids": json.loads(saved["item_ids"]),
+                 "request_cursor_sha256": sha256((saved["request_cursor"] or "").encode()).hexdigest(),
+                 "next_cursor_sha256": sha256(saved["next_cursor"].encode()).hexdigest() if saved["next_cursor"] is not None else None,
+                 "terminal_evidence": saved["terminal_evidence"]}
+        path = self.root / "private" / "xhs-page-references" / str(run_id) / (scope["request_cursor_sha256"] + ".json")
+        return path, scope
+
+    def _save_xhs_page_references(self, job, run_id, transport, saved):
+        if not hasattr(transport, "export_page_references"):
+            return
+        path, scope = self._xhs_reference_record(job, run_id, saved)
+        references = transport.export_page_references(job["author_id"], scope["item_ids"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + f".{time.time_ns()}.part")
+        try:
+            with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as output:
+                json.dump({"scope": scope, "references": references}, output)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _load_xhs_page_references(self, job, run_id, transport, saved):
+        if not hasattr(transport, "restore_page_references"):
+            return
+        path, scope = self._xhs_reference_record(job, run_id, saved)
+        if not path.exists():
+            return  # Legacy checkpoints have no saved tokens; do not invent them.
+        try:
+            if path.stat().st_size > 1024 * 1024:
+                raise ValueError()
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict) or record.get("scope") != scope:
+                raise ValueError()
+            references = record["references"]
+            if not isinstance(references, dict) or set(references) - set(scope["item_ids"]):
+                raise ValueError()
+        except (OSError, UnicodeError, ValueError, KeyError):
+            raise AdapterFailure("reference_missing") from None
+        transport.restore_page_references(job["author_id"], references)
+
     def _restore_xhs_page_references(self, job, run_id, transport, target_ids=None, *, max_pages=XHS_HISTORY_PAGE_BUDGET):
-        """Re-read only saved pages containing notes whose detail token was lost."""
+        """Reuse durable references; re-read a legacy page only if tokens are absent."""
         with self.workflow.connect() as db:
             pending_ids = [row[0] for row in db.execute(
                 "SELECT item_id FROM job_items WHERE job_id=? AND state!='succeeded'", (job["id"],))
@@ -1664,6 +1715,9 @@ class WorkspaceService:
             pages = [dict(row) for row in db.execute(
                 "SELECT page_number,request_cursor,next_cursor,item_ids,terminal_evidence FROM pages WHERE run_id=? ORDER BY page_number", (run_id,))]
         with self._network_lock:
+            for saved in pages:
+                if set(pending_ids).intersection(json.loads(saved["item_ids"])):
+                    self._load_xhs_page_references(job, run_id, transport, saved)
             missing = set(transport.prepare_page_details(job["author_id"], pending_ids))
             if not missing:
                 return 0, set()
@@ -1685,6 +1739,7 @@ class WorkspaceService:
                         or observed.has_more != (saved["next_cursor"] is not None)
                         or observed.terminal_evidence != saved["terminal_evidence"]):
                     raise AdapterFailure("stale_checkpoint")
+                self._save_xhs_page_references(job, run_id, transport, saved)
                 missing = set(transport.prepare_page_details(job["author_id"], tuple(missing)))
             # A missing token for one saved item is an item-level content gap.
             # detail() records that failure once; it must not truncate the

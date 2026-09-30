@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -71,6 +72,15 @@ class FakeXhsHttpTransport:
     def prepare_page_details(self, author_id, item_ids):
         assert author_id == AUTHOR
         return tuple(item_id for item_id in item_ids if item_id not in self._refs)
+
+    def export_page_references(self, author_id, item_ids):
+        assert author_id == AUTHOR
+        return {item_id: f"https://www.xiaohongshu.com/explore/{item_id}?xsec_token=synthetic-token"
+                for item_id in item_ids if item_id in self._refs}
+
+    def restore_page_references(self, author_id, references):
+        assert author_id == AUTHOR
+        self._refs.update(references)
 
     def poll_latest(self):
         self._refs.update(IDS[:2])
@@ -233,7 +243,7 @@ class XhsIntegrationTests(unittest.TestCase):
         with self.service.workflow.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 7)
 
-    def test_process_restart_refetches_only_unfinished_saved_page(self):
+    def test_process_restart_reuses_durable_references_without_refetching_page(self):
         self.service.subscribe(PROFILE)
         FakeXhsHttpTransport.fail_media_once = True
         started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
@@ -246,9 +256,51 @@ class XhsIntegrationTests(unittest.TestCase):
         self.service.wait(30)
         done = self._author_job(started["job_id"])
         self.assertEqual(done["state"], "succeeded", done)
-        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3", None])
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3"])
         first_image = f"memory://{IDS[0]}/image"
         self.assertEqual(FakeXhsHttpTransport.downloads.count(first_image), 1)
+        self.assertEqual(len(list((self.root / "private" / "xhs-page-references").rglob("*.json"))), 3)
+        manifest = Path(done["export"]["authors"][0]["manifest"]).read_text(encoding="utf-8")
+        self.assertNotIn("synthetic-token", manifest)
+
+    def test_reference_scope_mismatch_stops_locally_without_list_or_detail_request(self):
+        self.service.subscribe(PROFILE)
+        FakeXhsHttpTransport.fail_media_once = True
+        started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
+        self.service.wait(30)
+        self.service.close()
+        path = next((self.root / "private" / "xhs-page-references").rglob("*.json"))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        # Locate the saved page containing the unfinished video.
+        for candidate in (self.root / "private" / "xhs-page-references").rglob("*.json"):
+            candidate_record = json.loads(candidate.read_text(encoding="utf-8"))
+            if IDS[0] in candidate_record["scope"]["item_ids"]:
+                path, record = candidate, candidate_record
+                break
+        record["scope"]["author_id"] = "b" * 24
+        path.write_text(json.dumps(record), encoding="utf-8")
+        before = (list(FakeXhsHttpTransport.page_requests), list(FakeXhsHttpTransport.detail_requests))
+        self.service = WorkspaceService(self.root)
+        self.service.resume(started["job_id"])
+        self.service.wait(30)
+        job = self._author_job(started["job_id"])
+        self.assertEqual((job["state"], job["reason"]), ("partial", "reference_missing"))
+        self.assertEqual((FakeXhsHttpTransport.page_requests, FakeXhsHttpTransport.detail_requests), before)
+        with self.service.workflow.connect() as db:
+            run = db.execute("SELECT pages,cursor,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+            self.assertEqual(tuple(run), (3, None, "complete_for_accessible_scope"))
+
+    def test_reference_write_failure_rolls_back_page_checkpoint(self):
+        self.service.subscribe(PROFILE)
+        with patch.object(self.service, "_save_xhs_page_references", side_effect=OSError("synthetic disk failure")):
+            started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
+            self.service.wait(30)
+        job = self._author_job(started["job_id"])
+        self.assertEqual(job["state"], "failed")
+        with self.service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM pages WHERE run_id=?", (job["run_id"],)).fetchone()[0], 0)
+            self.assertEqual(tuple(db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job["run_id"],)).fetchone()), (0, None))
+        self.assertEqual(FakeXhsHttpTransport.detail_requests, [])
 
     def test_changed_saved_page_stops_without_moving_cursor(self):
         self.service.subscribe(PROFILE)
@@ -256,6 +308,9 @@ class XhsIntegrationTests(unittest.TestCase):
         started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
         self.service.wait(30)
         self.service.close()
+        # An old checkpoint has no durable references: retain the legacy replay
+        # check, including its strict ordered IDs and cursor comparison.
+        shutil.rmtree(self.root / "private" / "xhs-page-references")
         FakeXhsHttpTransport.pages[0] = Page((Item("f" * 24, AUTHOR, "2026-09-02"),), "page-2", True)
         self.service = WorkspaceService(self.root)
         self.service.resume(started["job_id"])
@@ -297,7 +352,7 @@ class XhsIntegrationTests(unittest.TestCase):
         self.service.wait(30)
         resumed = self._author_job(started["job_id"])
         self.assertEqual(resumed["state"], "partial", resumed)
-        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3", None])
+        self.assertEqual(FakeXhsHttpTransport.page_requests, [None, "page-2", "page-3"])
         self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 2)
         self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 7)
 

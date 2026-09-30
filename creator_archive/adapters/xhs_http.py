@@ -386,6 +386,41 @@ class XhsHttpTransport:
         self._page_cache = (key, time.monotonic(), page)
         return page
 
+    def export_page_references(self, author_id: str, item_ids) -> dict[str, str]:
+        """Local-only snapshot; never include these token URLs in public exports."""
+        if author_id != self.author_id:
+            raise AdapterFailure("identity_mismatch")
+        return {item_id: self._refs[item_id] for item_id in item_ids if item_id in self._refs}
+
+    def restore_page_references(self, author_id: str, references: dict[str, str]) -> None:
+        """Restore observed references without fetching a listing or a detail."""
+        if author_id != self.author_id:
+            raise AdapterFailure("identity_mismatch")
+        validated = {}
+        try:
+            if not isinstance(references, dict):
+                raise ValueError()
+            for item_id, url in references.items():
+                _id(item_id)
+                if not isinstance(url, str):
+                    raise ValueError()
+                canonical = detail_url(item_id, url)
+                parsed = urlsplit(canonical)
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                token = query.get("xsec_token", [])
+                if (parsed.path != f"/explore/{item_id}" or canonical != url
+                        or set(query) - {"xsec_token", "xsec_source"}
+                        or len(token) != 1 or not 0 < len(token[0]) <= 2048
+                        or any(not 33 <= ord(c) <= 126 for c in token[0])):
+                    raise ValueError()
+                source = query.get("xsec_source", [])
+                if source and (len(source) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", source[0])):
+                    raise ValueError()
+                validated[item_id] = canonical
+        except (TypeError, ValueError):
+            raise AdapterFailure("reference_missing") from None
+        self._refs.update(validated)
+
     def prepare_page_details(self, author_id: str, item_ids) -> tuple[str, ...]:
         network_safety.require_xhs_network()
         if author_id != self.author_id:

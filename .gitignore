@@ -48,3 +48,5 @@ Thumbs.db
 
 # Durable private safety latch
 xhs-network-paused.json
+# Private observed detail references (contain platform tokens)
+xhs-page-references/
