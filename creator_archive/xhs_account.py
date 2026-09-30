@@ -5,11 +5,14 @@ No browser/profile access, retries, account rotation or scheduled login.
 """
 from __future__ import annotations
 
-from io import BytesIO
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from http.cookies import SimpleCookie
+from io import BytesIO
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 from threading import RLock
@@ -118,19 +121,43 @@ class XhsAccount:
             raise AdapterFailure("invalid_response")
         # Only exact platform responses can update the in-memory candidate jar.
         for raw_cookie in received:
+            # RFC6265: only the first name/value is a cookie. Unknown response
+            # attributes (e.g. Priority) must not become additional credentials.
+            first, *parts = raw_cookie.split(";")
             jar = SimpleCookie()
             try:
-                jar.load(raw_cookie)
+                jar.load(first)
             except Exception:
                 raise AdapterFailure("invalid_response") from None
+            if len(jar) != 1:
+                raise AdapterFailure("invalid_response")
+            attributes = {}
+            for part in parts:
+                key, separator, value = part.strip().partition("=")
+                if separator:
+                    attributes[key.lower()] = value.strip()
             for name, morsel in jar.items():
-                domain = morsel["domain"].lstrip(".").lower()
+                domain = attributes.get("domain", "").lstrip(".").lower()
                 if domain and domain != "xiaohongshu.com" and not domain.endswith(".xiaohongshu.com"):
                     continue
                 value = morsel.value
                 if not _COOKIE_NAME.fullmatch(name) or any(not 33 <= ord(c) <= 126 or c == ";" for c in value):
                     raise AdapterFailure("invalid_response")
-                if value and morsel["max-age"] != "0":
+                # A valid Max-Age takes precedence over Expires, including when
+                # it revokes a nonempty value. Invalid attributes are ignored.
+                max_age = attributes.get("max-age", "")
+                expired = False
+                if re.fullmatch(r"-?[0-9]+", max_age):
+                    expired = max_age.startswith("-") or not max_age.strip("0")
+                elif "expires" in attributes:
+                    try:
+                        expires = parsedate_to_datetime(attributes["expires"])
+                        if expires.tzinfo is None:
+                            expires = expires.replace(tzinfo=timezone.utc)
+                        expired = expires.timestamp() <= time.time()
+                    except (ValueError, TypeError, OverflowError):
+                        pass
+                if value and not expired:
                     cookies[name] = value
                 else:
                     cookies.pop(name, None)

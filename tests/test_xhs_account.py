@@ -155,6 +155,54 @@ class XhsAccountTests(unittest.TestCase):
         self.assertEqual(self.post("/api/platforms/xiaohongshu/login").status_code, 409)
         self.assertEqual(self.service.account.cookie_file.read_bytes(), original)
 
+    def test_cookie_attributes_are_not_saved_as_credentials(self):
+        cookies = {"a1": "synthetic-a1", "web_session": "previous-session"}
+        response = (b'{"success":true,"code":0,"data":{}}', [
+            'web_session="new-session"; Domain=.xiaohongshu.com; Path=/; Secure; HttpOnly; Priority=High'])
+        with patch("creator_archive.xhs_account._https_request", return_value=response):
+            self.service.account._call(cookies, "GET", "/api/sns/web/v2/user/me")
+        self.assertEqual(cookies, {"a1": "synthetic-a1", "web_session": "new-session"})
+
+    def test_cookie_deletion_and_max_age_precedence(self):
+        for attributes, retained in [
+                ("Max-Age=-1", False), ("Max-Age=0", False),
+                ("Expires=Thu, 01 Jan 1970 00:00:00 GMT", False),
+                ("Max-Age=60; Expires=Thu, 01 Jan 1970 00:00:00 GMT", True),
+                ("Max-Age=invalid; Expires=Thu, 01 Jan 1970 00:00:00 GMT", False)]:
+            with self.subTest(attributes=attributes):
+                cookies = {"a1": "synthetic-a1", "web_session": "previous-session"}
+                response = (b'{"success":true,"code":0,"data":{}}',
+                            [f"web_session=new-session; Domain=.xiaohongshu.com; {attributes}"])
+                with patch("creator_archive.xhs_account._https_request", return_value=response):
+                    self.service.account._call(cookies, "GET", "/api/sns/web/v2/user/me")
+                self.assertEqual("web_session" in cookies, retained)
+
+    def test_account_signing_matches_wire_and_updated_cookie_chain(self):
+        from xhshow import Xhshow
+        signed_content, requests = [], []
+        build = Xhshow._build_content_string
+
+        def capture_content(signer, method, uri, payload=None):
+            content = build(signer, method, uri, payload)
+            signed_content.append(content)
+            return content
+
+        def capture_wire(method, host, path, headers, **kwargs):
+            requests.append((method, path, kwargs.get("body"), headers["Cookie"]))
+            return self.auth(method, host, path, headers, **kwargs)
+
+        with patch.object(Xhshow, "_build_content_string", autospec=True, side_effect=capture_content), \
+                patch("creator_archive.xhs_account._https_request", side_effect=capture_wire):
+            self.login()
+        self.assertEqual(len(requests), 4)
+        for content, (method, path, body, cookie) in zip(signed_content, requests):
+            self.assertEqual(content, path + (body.decode("utf-8") if body else ""))
+        self.assertNotIn("web_session=", requests[0][3])
+        self.assertIn("web_session=synthetic-guest", requests[1][3])
+        self.assertIn("web_session=synthetic-guest", requests[2][3])
+        self.assertIn("web_session=synthetic-user", requests[3][3])
+        self.assertIn(b"web_session=synthetic-user", self.service.account.cookie_file.read_bytes())
+
     def test_http471_reports_account_phase_and_survives_restart_without_retry(self):
         self.login()
         before = self.service.account.cookie_file.read_bytes()
