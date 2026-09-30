@@ -2,6 +2,7 @@
 // The external driver sets page.caExpected from the private pending.json ticket.
 // Existing browser session and author page must already match the checkpoint.
 async (page) => {
+  throw new Error("XHS browser automation disabled by account safety policy 2026-09-30");
   const expected = page.caExpected;
   if (!expected || !/^[0-9a-f]{24}$/.test(expected.authorId) ||
       !/^[0-9a-f]{24}$/.test(expected.requestCursor)) {

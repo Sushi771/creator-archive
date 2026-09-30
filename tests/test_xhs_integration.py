@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from creator_archive.adapters.xhs import MediaCandidate
-from creator_archive.service import WorkspaceService
+from creator_archive.service import WorkspaceService, PlatformAccessPaused
 from creator_archive.validation import AdapterFailure, Item, Page
 
 
@@ -390,7 +390,7 @@ class XhsIntegrationTests(unittest.TestCase):
             self.assertEqual(tuple(db.execute("SELECT mode,state FROM jobs").fetchone()), ("source_refresh", "succeeded"))
         self.assertFalse(self.service.set_refresh_schedule(False, 15)["enabled"])
 
-    def test_login_failure_pauses_all_queued_authors_until_explicit_reverification(self):
+    def test_login_failure_pause_survives_restart_and_verification_cannot_release_it(self):
         second_author = "b" * 24
         TwoAuthorAccessTransport.requests = []
         TwoAuthorAccessTransport.authorized = False
@@ -406,16 +406,17 @@ class XhsIntegrationTests(unittest.TestCase):
         self.assertEqual((jobs[AUTHOR]["state"], jobs[second_author]["reason"]), ("needs_login", "needs_login"))
         self.service.close()
         self.service = WorkspaceService(self.root)
-        with self.assertRaisesRegex(ValueError, "访问已暂停"):
+        with self.assertRaises(PlatformAccessPaused):
             self.service.start("source_refresh", "xiaohongshu", second_author)
         TwoAuthorAccessTransport.authorized = True
-        self.assertTrue(self.service.verify("xiaohongshu", AUTHOR)["identity_verified"])
-        self.service.resume(jobs[second_author]["id"])
-        self.service.wait(30)
-        self.assertEqual(TwoAuthorAccessTransport.requests, [AUTHOR, second_author])
-        self.assertEqual(self._author_job(jobs[second_author]["id"])["state"], "succeeded")
+        with self.assertRaises(PlatformAccessPaused):
+            self.service.verify("xiaohongshu", AUTHOR)
+        with self.assertRaises(PlatformAccessPaused):
+            self.service.resume(jobs[second_author]["id"])
+        self.assertEqual(TwoAuthorAccessTransport.requests, [AUTHOR])
+        self.assertEqual(self._author_job(jobs[second_author]["id"])["reason"], "needs_login")
 
-    def test_rate_limit_stays_paused_after_cooldown_until_explicit_verification(self):
+    def test_rate_limit_pause_cannot_be_released_by_cooldown_or_verification(self):
         second_author = "b" * 24
         TwoAuthorAccessTransport.requests = []
         TwoAuthorAccessTransport.authorized = False
@@ -432,14 +433,15 @@ class XhsIntegrationTests(unittest.TestCase):
         with self.service.workflow.connect() as db:
             db.execute("UPDATE platform_cooldowns SET retry_at=? WHERE platform='xiaohongshu'", (time.time() - 1,))
             db.execute("UPDATE runs SET retry_at=? WHERE platform='xiaohongshu'", (time.time() - 1,))
-        with self.assertRaisesRegex(ValueError, "访问已暂停"):
+        with self.assertRaises(PlatformAccessPaused):
             self.service.start("source_refresh", "xiaohongshu", second_author)
         self.assertEqual(TwoAuthorAccessTransport.requests, [AUTHOR])
         TwoAuthorAccessTransport.authorized = True
-        self.assertTrue(self.service.verify("xiaohongshu", AUTHOR)["identity_verified"])
-        self.service.resume(jobs[second_author]["id"])
-        self.service.wait(30)
-        self.assertEqual(TwoAuthorAccessTransport.requests, [AUTHOR, second_author])
+        with self.assertRaises(PlatformAccessPaused):
+            self.service.verify("xiaohongshu", AUTHOR)
+        with self.assertRaises(PlatformAccessPaused):
+            self.service.resume(jobs[second_author]["id"])
+        self.assertEqual(TwoAuthorAccessTransport.requests, [AUTHOR])
 
 
 if __name__ == "__main__":

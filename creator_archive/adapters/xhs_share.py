@@ -3,6 +3,7 @@ import re
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
+from creator_archive import network_safety
 
 from .xhs_content import detail_url
 from .xhs_transport import TransportFailure
@@ -33,6 +34,7 @@ def expand_share_link(url: str) -> str:
         raise ValueError("请提供 xhslink.com 或 xhslink.cn 官方分享短链")
     seen = set()
     try:
+        network_safety.require_xhs_network()
         with httpx.Client(follow_redirects=False, timeout=10) as client:
             for _ in range(4):
                 parsed = _checked_url(url)

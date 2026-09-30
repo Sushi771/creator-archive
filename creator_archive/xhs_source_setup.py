@@ -6,6 +6,7 @@ only writes a private source selector and never reads or prints cookie bytes.
 from __future__ import annotations
 
 import argparse
+from creator_archive import network_safety
 from contextlib import closing
 import json
 import os
@@ -17,6 +18,7 @@ import time
 
 
 def configure_native_source(data_dir: Path, cookie_file: Path) -> Path:
+    network_safety.require_xhs_network()
     data_dir = Path(data_dir).resolve(strict=True)
     cookie_file = Path(cookie_file).resolve(strict=True)
     if not data_dir.is_dir() or not (data_dir / "archive.sqlite3").is_file():

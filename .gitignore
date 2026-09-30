@@ -45,3 +45,6 @@ build/
 .playwright-cli/
 .DS_Store
 Thumbs.db
+
+# Durable private safety latch
+xhs-network-paused.json

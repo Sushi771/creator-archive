@@ -1,5 +1,7 @@
 param([string]$ProfileDir, [ValidateSet('msedge','chrome')][string]$Channel = 'msedge', [switch]$PreflightOnly)
 $ErrorActionPreference = 'Stop'
+throw 'XHS account safety pause: browser login and session updates are disabled.'
+
 . (Join-Path $PSScriptRoot 'launcher-profile.ps1')
 
 $roots = @()

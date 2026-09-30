@@ -1,6 +1,13 @@
 # Creator Archive 当前状态（2026-09-30）
 
-## 当前执行：v3 小红书优先
+> **2026-09-30 当前有效安全限制（覆盖下方旧授权）：** 用户账号收到 AI 模拟浏览提示，本轮只暂停真实联网、保护数据、离线排查 #72/#74 并核对 #72 作者原保存顺序前三篇。禁止一切小红书浏览器自动化、登录/授权/会话更新、来源探测、作者验证、历史/增量/重试/详情/媒体联网；所有子 agent 和工作树同样遵守。不运行 #72，不重跑 #74，不新建替代全量任务，不操作或部署 WeWe，不发布/重启生产验证。三篇是固定验收样本，非采集上限；旧五篇口径废止。原始列表/详情证据缺失时只报本地一致性，不声称官方匹配。暂停持久化，默认拒绝真实联网；重启、冷却、登录、时间过去均不能解除。下一次真实验证必须具备访问依据与风险边界、账号限制与凭据范围处理、离线回归与数据保护、实质条件变化及具体请求预算/停止条件，且用户明确批准；一次批准不授权继续全历史。详见 [本轮离线记录](docs/validation/XHS-SAFETY-2026-09-30.md)。
+
+
+## 当前执行：安全暂停与离线审计
+
+本机应用停止，现有安装/授权入口已锁；#72/run31仍7页210项、196成功/1partial/13queued、无末页。#74不重跑，触发未知。真实库业务表保持（仅新增暂停行），961附件哈希全部通过。固定第1页前三ID的本地正文/附件核对3/3，原文完整证据0/3。源码新增默认拒绝与结构化错误/检查点关联，最终出口拦截回归292项执行（285通过/7跳过）、20项安全回归与Node合同通过；离线结果见[本轮记录](docs/validation/XHS-SAFETY-2026-09-30.md)。没有本轮平台请求或发布/生产重启；后续真实验证必须另有明确方案和用户批准。
+
+## 历史现场：v3 小红书优先（下文非当前授权）
 
 `0.6.0rc6` 已修复任务卡片刷新打断“从检查点继续”按钮点击的前端缺陷；隔离模拟浏览器已复现修复前后差异，Node 前端合同通过。本机从 rc5 升级并运行源码提交 `26f9b83ba3bd8fba3859f606b1d5542f21aa0655`，安装在 `%LOCALAPPDATA%\Programs\CreatorArchive\CreatorArchive-0.6.0rc6-windows`，只监听 `127.0.0.1:8765`，定时刷新关闭。[rc6 预发布页](https://github.com/Sushi771/creator-archive/releases/tag/v0.6.0-rc.6)提供[Windows ZIP](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.6/CreatorArchive-0.6.0rc6-windows.zip)与[校验文件](https://github.com/Sushi771/creator-archive/releases/download/v0.6.0-rc.6/CreatorArchive-0.6.0rc6-windows.zip.sha256)；ZIP SHA-256 为 `6e54463f93eecf93c009b2bd671b0c37e05df81afedf4979a5ad02afa3830079`，远端 digest 已核对，标签指向打包源码。[Windows CI #29](https://github.com/Sushi771/creator-archive/actions/runs/36609289941) 全部通过。未知业务码条件未变化，未再向平台请求。
 

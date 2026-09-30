@@ -12,6 +12,7 @@ from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from html.parser import HTMLParser
 import http.client
+from creator_archive import network_safety
 import ipaddress
 import json
 import os
@@ -69,6 +70,8 @@ def validate_source_url(url: str) -> str:
 
 
 def _addresses(host: str, port: int, local: bool) -> list[str]:
+    if host in {"xiaohongshu.com", "xhscdn.com", "xhslink.com", "xhslink.cn"} or host.endswith((".xiaohongshu.com", ".xhscdn.com")):
+        network_safety.require_xhs_network()
     try:
         found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         addresses = list(dict.fromkeys(row[4][0] for row in found))
@@ -274,6 +277,8 @@ class FeedHttpTransport:
             raise ValueError("invalid_feed_scope")
         if not isinstance(config, dict) or not isinstance(config.get("url"), str):
             raise ValueError("feed_url_required")
+        if platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         self.url = validate_source_url(config["url"])
         self.format = config.get("format", "auto")
         if self.format not in {"auto", "json", "rss", "atom"}:
@@ -319,6 +324,8 @@ class FeedHttpTransport:
         return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(public), ""))
 
     def _load(self, cursor: str | None = None) -> _ParsedFeed:
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         if cursor is None and self._latest_cache and time.monotonic() - self._latest_cache[0] < 10:
             return self._latest_cache[1]
         url = self._cursor_url(cursor)
@@ -481,6 +488,8 @@ class FeedHttpTransport:
             self._cache[detail["item_id"]] = detail
 
     def page(self, author_id: str, cursor: str | None) -> Page:
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         parsed = self._load(cursor)
@@ -499,11 +508,15 @@ class FeedHttpTransport:
         raise AdapterFailure("missing_terminal_evidence")
 
     def poll_latest(self) -> list[dict]:
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         parsed = self._load(None)
         self._remember(parsed)
         return list(parsed.details)
 
     def detail(self, author_id: str, item_id: str, source_url: str = "") -> dict:
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         detail = self._cache.get(item_id)
@@ -516,17 +529,23 @@ class FeedHttpTransport:
         return detail
 
     def prepare_page_details(self, author_id, item_ids):
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         return tuple(item for item in item_ids if item not in self._cache)
 
     def prepare_details(self, author_id, item_ids):
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         missing = self.prepare_page_details(author_id, item_ids)
         if missing:
             self.poll_latest()
         return tuple(item for item in item_ids if item not in self._cache)
 
     def verify_author(self, author_id: str) -> dict:
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         self._load(None)
@@ -534,6 +553,8 @@ class FeedHttpTransport:
                 "evidence": "official_profile_link_in_http_feed"}
 
     def download_media(self, candidate: MediaCandidate, target_dir: Path) -> dict:
+        if self.platform == "xiaohongshu":
+            network_safety.require_xhs_network()
         if candidate.kind not in {"image", "video"} or type(candidate.position) is not int or candidate.position < 0:
             raise AdapterFailure("media_failed")
         connection = None

@@ -136,6 +136,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def status():
         configured = service.workspace()["subscriptions"]
         return {"version": __version__, "commit": source_commit(), "mode": "local_mvp", "g1_passed": False,
+                "xhs_network_paused": True, "xhs_pause_reason": "account_safety_user_instruction_2026_09_30",
                 "platforms": [
                     {"platform": "wechat", "implementation": {"creator_resolution": True,
                         "latest": True, "history_pagination": False, "detail": True, "media": True},

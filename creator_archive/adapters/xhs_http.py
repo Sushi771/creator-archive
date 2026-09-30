@@ -26,6 +26,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import http.client
 
 from creator_archive.validation import AdapterFailure, Item, Page
+from creator_archive import network_safety
+from hashlib import sha256
 from .xhs import MediaCandidate
 from .xhs_content import detail_url, project_detail
 from .xhs_media import MediaFailure, download_media, safe_media_url
@@ -80,6 +82,7 @@ def _read_cookies(path: Path) -> tuple[str, dict[str, str]]:
 
 
 def _public_addresses(host: str) -> list[str]:
+    network_safety.require_xhs_network()
     try:
         addresses = list(dict.fromkeys(row[4][0] for row in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)))
         if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
@@ -91,16 +94,19 @@ def _public_addresses(host: str) -> list[str]:
 
 def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) -> bytes:
     """One pinned HTTPS request to an exact platform host; no redirects."""
+    network_safety.require_xhs_network()
     if host not in {_API_HOST, _WEB_HOST} or not path.startswith("/") or path.startswith("//"):
         raise AdapterFailure("unavailable")
     address = _public_addresses(host)[0]
     connection = http.client.HTTPSConnection(host, 443, timeout=20, context=ssl.create_default_context())
+    status = None
     try:
         # Keep TLS name validation for the requested host after DNS pinning.
         connection.sock = ssl.create_default_context().wrap_socket(
             socket.create_connection((address, 443), timeout=20), server_hostname=host)
         connection.request("GET", path, headers=headers)
         response = connection.getresponse()
+        status = response.status
         if response.status == 401 or response.status in {302, 303} and "/login" in response.getheader("Location", ""):
             raise AdapterFailure("needs_login")
         if response.status == 429:
@@ -120,7 +126,10 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
         if len(data) > max_bytes:
             raise AdapterFailure("invalid_response")
         return data
-    except AdapterFailure:
+    except AdapterFailure as error:
+        error.diagnostics = {"http_status": status, "success": None, "business_code": None,
+                             "message": "[HTTP failure; no business response retained]",
+                             "stage": "list" if host == _API_HOST else "detail"}
         raise
     except (TimeoutError, socket.timeout):
         raise AdapterFailure("timeout") from None
@@ -284,6 +293,7 @@ class XhsHttpTransport:
         self._closed = False
 
     def _gate(self):
+        network_safety.require_xhs_network()
         with self._lock:
             if self._closed:
                 raise AdapterFailure("unavailable")
@@ -293,6 +303,7 @@ class XhsHttpTransport:
             self._last_request = time.monotonic()
 
     def _get(self, host: str, path: str, *, api_params: dict[str, str] | None = None) -> bytes:
+        network_safety.require_xhs_network()
         raw_cookie, cookies = _read_cookies(self.cookie_file)
         headers = {"Accept": "application/json,text/html;q=0.9,*/*;q=0.8", "Accept-Encoding": "identity",
                    "User-Agent": _UA, "Cookie": raw_cookie, "Referer": "https://www.xiaohongshu.com/"}
@@ -314,18 +325,24 @@ class XhsHttpTransport:
         except (UnicodeError, ValueError):
             raise AdapterFailure("invalid_response") from None
         code = result.get("code")
+        diagnostic = {"http_status": 200, "success": result.get("success") if type(result.get("success")) is bool else None,
+                      "business_code": code if type(code) is int or code is None else "[noninteger code redacted]",
+                      "stage": "list", "request_cursor_sha256": sha256(cursor.encode()).hexdigest(),
+                      "message": "[platform message redacted]",
+                      "message_sha256": sha256(str(result.get("msg", result.get("message", ""))).encode()).hexdigest()}
         if code == 300011:
-            raise AdapterFailure("verification_required")
+            raise AdapterFailure("verification_required", diagnostics=diagnostic)
         if code == 300012:
-            raise AdapterFailure("rate_limited", retry_after=60)
+            raise AdapterFailure("rate_limited", retry_after=60, diagnostics=diagnostic)
         if result.get("success") is not True or code not in {0, None}:
-            raise AdapterFailure("unavailable")
+            raise AdapterFailure("unknown_business_error", diagnostics=diagnostic)
         data = result.get("data")
         if not isinstance(data, dict):
             raise AdapterFailure("invalid_response")
         return data
 
     def page(self, author_id: str, cursor: str | None) -> Page:
+        network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         if cursor is not None and (not isinstance(cursor, str) or not cursor or len(cursor) > 1024 or any(not 33 <= ord(c) <= 126 for c in cursor)):
@@ -370,11 +387,13 @@ class XhsHttpTransport:
         return page
 
     def prepare_page_details(self, author_id: str, item_ids) -> tuple[str, ...]:
+        network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         return tuple(item_id for item_id in item_ids if item_id not in self._refs)
 
     def prepare_details(self, author_id: str, item_ids) -> tuple[str, ...]:
+        network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         if any(item_id not in self._refs for item_id in item_ids):
@@ -382,6 +401,7 @@ class XhsHttpTransport:
         return self.prepare_page_details(author_id, item_ids)
 
     def detail(self, author_id: str, item_id: str, source_url: str = "") -> dict:
+        network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         _id(item_id)
@@ -460,6 +480,7 @@ class XhsHttpTransport:
         return projected
 
     def poll_latest(self) -> list[dict]:
+        network_safety.require_xhs_network()
         self._detail_cache.clear()
         page = self.page(self.author_id, None)
         if not page.items:
@@ -479,6 +500,7 @@ class XhsHttpTransport:
         return result
 
     def verify_author(self, author_id: str) -> dict:
+        network_safety.require_xhs_network()
         page = self.page(author_id, None)
         if not page.items:
             raise AdapterFailure("identity_mismatch")
@@ -486,13 +508,14 @@ class XhsHttpTransport:
                 "evidence": "observed_user_posted_items_with_stable_author_id"}
 
     def download_media(self, candidate: MediaCandidate, target_dir: Path) -> dict:
+        network_safety.require_xhs_network()
         self._gate()
         try:
             return download_media(candidate, target_dir)
         except MediaFailure as error:
             if str(error) == "media_rate_limited":
-                raise AdapterFailure("rate_limited", retry_after=60) from None
-            raise AdapterFailure("media_failed") from None
+                raise AdapterFailure("rate_limited", retry_after=60, diagnostics=error.diagnostics) from None
+            raise AdapterFailure("media_failed", diagnostics=error.diagnostics) from None
 
     def close(self):
         self._closed = True
@@ -508,6 +531,7 @@ def authorize_session(cookie_file: Path, *, channel: str = "msedge") -> None:
     after the account holder confirms login in the terminal. This is an
     optional explicit action, never called by page(), detail(), or refresh().
     """
+    network_safety.require_browser_disabled()
     target = _cookie_file(str(cookie_file))
     if channel not in {"msedge", "chrome"}:
         raise ValueError("unsupported_browser_channel")

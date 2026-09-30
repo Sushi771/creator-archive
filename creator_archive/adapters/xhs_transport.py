@@ -18,6 +18,7 @@ from .xhs import XhsPageAdapter
 from .xhs_content import DETAIL_STATE, detail_url, project_detail
 from .xhs_media import download_media, MediaFailure
 from creator_archive.validation import AdapterFailure
+from creator_archive import network_safety
 
 
 class TransportFailure(AdapterFailure):
@@ -190,6 +191,7 @@ class XhsBrowserTransport:
         return self._call(prepare)
 
     def _call(self, function, *args):
+        network_safety.require_browser_disabled()
         if self._closed:
             raise TransportFailure("unavailable", "平台浏览器已关闭，请重启应用后继续。")
         def invoke():
@@ -372,6 +374,7 @@ class XhsBrowserTransport:
         return self._call(open_page)
 
     def _ensure(self):
+        network_safety.require_browser_disabled()
         if self._context is not None:
             try:
                 if self._page is None or self._page.is_closed():
@@ -559,7 +562,8 @@ class XhsBrowserTransport:
     def close(self):
         if not self._closed:
             try:
-                self._call(self._cleanup)
+                # Closing an existing context is allowed while all access is locked.
+                self._worker.submit(self._cleanup).result(timeout=self.timeout + 15)
             finally:
                 self._closed = True
                 self._worker.shutdown(wait=True)

@@ -23,7 +23,8 @@ from .workflow import ArchiveWorkflow, _id, _canonical_source_url
 from .validation import AdapterFailure
 from .metrics import FIELDS, read_metrics, read_snapshots
 from .adapters.xhs_share import expand_share_link
-from . import page_pipeline
+from . import page_pipeline, network_safety
+from hashlib import sha256
 
 XHS_HISTORY_PAGE_BUDGET = 100
 
@@ -33,6 +34,9 @@ def default_workspace() -> Path:
 
 
 MESSAGES = {
+    "network_paused": ("小红书联网因账号安全已暂停；已有资料和检查点保留。", "仅可离线阅读与导出；恢复须另有具体方案和用户明确批准。"),
+    "unknown_business_error": ("来源返回未知业务失败；原始业务码与检查点关联保留，未判末页。", "停止该来源，不自动重试；仅使用已有证据离线排查。"),
+    "account_safety_user_instruction_2026_09_30": ("小红书真实联网已持久暂停。", "本轮只做离线核对，不运行登录、验证或恢复。"),
     "user_paused": ("已按请求暂停，列表检查点、正文和已成功媒体保持。", "从原任务继续，系统只处理尚未完成的范围。"),
     "source_refresh_unchanged": ("后台来源没有新增、变化或待补内容；本次仅核对当前 Feed 所列范围。", "需要全历史时启动带可信分页的作者历史任务；本次不证明历史末页。"),
     "source_refresh_complete": ("当前 Feed 列出的待处理作品已保存；历史覆盖仍须另行核验。", "可本机导出；如需全历史，请使用支持可信分页的来源。"),
@@ -97,7 +101,7 @@ class PlatformCooldown(ValueError):
 class PlatformAccessPaused(ValueError):
     def __init__(self, reason):
         self.reason = reason
-        super().__init__("小红书后台访问已暂停；请在本机重新完成本人授权并明确核验作者。旧资料和任务进度保留。")
+        super().__init__("小红书真实联网已因账号安全暂停。旧资料和检查点保留；本轮仅可离线阅读与导出，恢复须另有方案和用户明确批准。")
 
 
 class WorkspaceService:
@@ -136,6 +140,10 @@ class WorkspaceService:
                     source TEXT PRIMARY KEY, imported_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS platform_cooldowns (
                     platform TEXT PRIMARY KEY, retry_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS request_failures (
+                    id INTEGER PRIMARY KEY, job_id INTEGER, run_id INTEGER, platform TEXT NOT NULL,
+                    author_id TEXT NOT NULL, stage TEXT NOT NULL, checkpoint_pages INTEGER,
+                    checkpoint_cursor_sha256 TEXT, diagnostic_json TEXT NOT NULL, observed_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS platform_access_pauses (
                     platform TEXT PRIMARY KEY, reason TEXT NOT NULL, paused_at REAL NOT NULL);
             """)
@@ -144,7 +152,15 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
             db.execute("UPDATE runs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
-        if self.refresh_schedule()["enabled"]:
+        if network_safety.xhs_network_paused():
+            marker = self.root / "xhs-network-paused.json"
+            if not marker.exists():
+                marker.write_text(json.dumps({"paused": True, "reason": network_safety.SAFETY_REASON,
+                                              "automatic_release": False}), encoding="utf-8")
+            with self.workflow.connect() as db:
+                db.execute("INSERT OR IGNORE INTO platform_access_pauses VALUES(?,?,?)",
+                           ("xiaohongshu", network_safety.SAFETY_REASON, time.time()))
+        if self.refresh_schedule()["enabled"] and not network_safety.xhs_network_paused():
             self._start_scheduler()
 
     def refresh_schedule(self):
@@ -175,6 +191,8 @@ class WorkspaceService:
             temporary.unlink(missing_ok=True)
 
     def set_refresh_schedule(self, enabled: bool, interval_minutes: int = 1440):
+        if enabled:
+            self._check_platform_access("xiaohongshu")
         if type(enabled) is not bool or type(interval_minutes) is not int or not 15 <= interval_minutes <= 10080:
             raise ValueError("定时刷新间隔须为15至10080分钟；原设置未改动")
         with self._schedule_lock:
@@ -215,6 +233,8 @@ class WorkspaceService:
             self._schedule_wakeup.clear()
 
     def _run_due_refresh(self, now=None):
+        if network_safety.xhs_network_paused():
+            return 0
         now = time.time() if now is None else now
         with self._schedule_lock:
             schedule = self.refresh_schedule()
@@ -296,23 +316,56 @@ class WorkspaceService:
         return row[0] if row else None
 
     def _check_platform_access(self, platform, db=None):
+        if platform == "xiaohongshu" and network_safety.xhs_network_paused():
+            raise PlatformAccessPaused(network_safety.SAFETY_REASON)
         reason = self._platform_access_reason(platform, db)
         if reason:
             raise PlatformAccessPaused(reason)
 
     def _record_platform_access_pause(self, platform, author_id, reason):
         if (platform != "xiaohongshu" or self._source_kind(platform, author_id) != "xhs_http"
-                or reason not in {"needs_login", "verification_required", "rate_limited"}):
+                or reason not in {"needs_login", "verification_required", "rate_limited", "unknown_business_error", "unavailable"}):
             return
         with self.workflow.connect() as db:
             db.execute("INSERT INTO platform_access_pauses VALUES(?,?,?) ON CONFLICT(platform) DO UPDATE SET reason=excluded.reason,paused_at=excluded.paused_at",
                        (platform, reason, time.time()))
 
+    def _source_call(self, job, operation, *args, **kwargs):
+        """Latch an unknown source failure before another author takes the lock."""
+        with self._network_lock:
+            self._check_platform_access(job["platform"])
+            try:
+                return operation(*args, **kwargs)
+            except AdapterFailure as error:
+                self._record_platform_access_pause(job["platform"], job["author_id"], error.category)
+                raise
+
+    def _record_request_failure(self, job, error, stage):
+        if error.category == "network_paused" or (not error.diagnostics and self._source_kind(job["platform"], job["author_id"]) != "xhs_http"):
+            return
+        with self.workflow.connect() as db:
+            run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job.get("run_id"),)).fetchone()
+            allowed = {key: error.diagnostics.get(key) for key in
+                       ("http_status", "success", "business_code", "message", "message_sha256", "stage", "request_cursor_sha256")}
+            allowed["category"] = error.category
+            if run and allowed.get("request_cursor_sha256"):
+                for saved in db.execute("SELECT page_number,request_cursor FROM pages WHERE run_id=?", (job.get("run_id"),)):
+                    if sha256((saved[1] or "").encode()).hexdigest() == allowed["request_cursor_sha256"]:
+                        allowed["saved_page_number"] = saved[0]
+                        break
+            db.execute("INSERT INTO request_failures(job_id,run_id,platform,author_id,stage,checkpoint_pages,checkpoint_cursor_sha256,diagnostic_json,observed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (job["id"], job.get("run_id"), job["platform"], job["author_id"], stage,
+                        run[0] if run else None, sha256((run[1] or "").encode()).hexdigest() if run else None,
+                        json.dumps(allowed, ensure_ascii=False), time.time()))
+
     def _clear_platform_access_pause(self, platform):
+        if platform == "xiaohongshu" and network_safety.xhs_network_paused():
+            raise PlatformAccessPaused(network_safety.SAFETY_REASON)
         with self.workflow.connect() as db:
             db.execute("DELETE FROM platform_access_pauses WHERE platform=?", (platform,))
 
     def transport(self):
+        self._check_platform_access("xiaohongshu")
         with self._transport_lock:
             if self._transport is None:
                 if self.adapter_factory:
@@ -348,6 +401,7 @@ class WorkspaceService:
         return kind
 
     def set_source(self, platform, author_id, url):
+        self._check_platform_access(platform)
         from .adapters.feed_http import validate_source_url
         if platform not in {"xiaohongshu", "wechat"}:
             raise ValueError("仅支持公众号和小红书来源")
@@ -383,6 +437,7 @@ class WorkspaceService:
                 "message": "后台来源已保存于本机私有配置；尚未请求上游或证明作者身份与历史范围。"}
 
     def transport_for(self, platform, author_id):
+        self._check_platform_access(platform)
         config = self.source_config(platform, author_id)
         if self.adapter_factory and config is None and platform == "xiaohongshu":
             return self.transport()
@@ -401,6 +456,7 @@ class WorkspaceService:
             return self._source_transports[key]
 
     def open_login(self):
+        self._check_platform_access("xiaohongshu")
         if not self.adapter_factory:
             raise ValueError("正式采集已停用旧浏览器传输。请为作者配置本人授权的后台来源；必要登录请在来源自身入口完成。")
         with self._network_lock:
@@ -418,6 +474,7 @@ class WorkspaceService:
                 raise ValueError(getattr(error, "reason", "采集浏览器未就绪，请检查启动自检并重试")) from None
 
     def verify(self, platform, author_id):
+        self._check_platform_access(platform)
         if platform not in {"xiaohongshu", "wechat"}:
             raise ValueError("不支持的平台")
         with self.workflow.connect() as db:
@@ -430,6 +487,8 @@ class WorkspaceService:
             try:
                 observed = self.transport_for(platform, author_id).verify_author(author_id)
             except AdapterFailure as error:
+                self._record_request_failure({"id": None, "run_id": None, "platform": platform,
+                                              "author_id": author_id}, error, "verify_author")
                 if error.category == "rate_limited":
                     self._record_cooldown(platform, retry_after=error.retry_after)
                 self._record_platform_access_pause(platform, author_id, error.category)
@@ -1433,6 +1492,7 @@ class WorkspaceService:
                     run_id = job["run_id"]
                     with self.workflow.connect() as db:
                         batch = db.execute("SELECT batch_id FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+                job["run_id"] = run_id
                 if job["mode"] == "archive":
                     with self.workflow.connect() as db:
                         known = db.execute("SELECT coverage,terminal_evidence FROM runs WHERE platform=? AND author_id=? AND id!=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", (job["platform"], job["author_id"], run_id)).fetchone()
@@ -1461,8 +1521,14 @@ class WorkspaceService:
             except PlatformCooldown:
                 self._finish(job_id, "rate_limited", "rate_limited")
             except PlatformAccessPaused as error:
+                if job.get("run_id"):
+                    with self.workflow.connect() as db:
+                        current = db.execute("SELECT state FROM runs WHERE id=?", (job["run_id"],)).fetchone()
+                    if current and current[0] in {"queued", "running"}:
+                        self.workflow._stop(job["run_id"], "interrupted", "network_paused")
                 self._finish(job_id, "blocked", error.reason)
             except AdapterFailure as error:
+                self._record_request_failure(job, error, "job_preparation")
                 if error.category == "rate_limited":
                     self._record_cooldown(job["platform"], retry_after=error.retry_after)
                 if error.category in {"needs_login", "verification_required", "rate_limited"}:
@@ -1527,6 +1593,7 @@ class WorkspaceService:
                         max_pages=XHS_HISTORY_PAGE_BUDGET - pages_requested)
                     pages_requested += replayed
                 except AdapterFailure as error:
+                    self._record_request_failure(job, error, "restore_page_references")
                     state = error.category if error.category in {"needs_login", "rate_limited"} else "partial"
                     retry_at = time.time() + max(error.retry_after, 5) if state == "rate_limited" else 0
                     if run["state"] != "succeeded":
@@ -1567,9 +1634,10 @@ class WorkspaceService:
                 self._check_cooldown(job["platform"])
                 try:
                     pages_requested += 1
-                    page = transport.page(job["author_id"], run["cursor"])
+                    page = self._source_call(job, transport.page, job["author_id"], run["cursor"])
                     self.workflow._commit_page(run_id, run["cursor"], page)
                 except AdapterFailure as error:
+                    self._record_request_failure(job, error, "list")
                     state = error.category if error.category in {"needs_login", "rate_limited"} else "partial"
                     retry_at = time.time() + max(error.retry_after, 5) if state == "rate_limited" else 0
                     self.workflow._stop(run_id, state, error.category, retry_at)
@@ -1609,7 +1677,7 @@ class WorkspaceService:
                     deferred.update(missing.intersection(expected))
                     continue
                 pages_requested += 1
-                observed = transport.page(job["author_id"], saved["request_cursor"] or None)
+                observed = self._source_call(job, transport.page, job["author_id"], saved["request_cursor"] or None)
                 actual = [item.item_id for item in observed.items]
                 if any(item.author_id != job["author_id"] for item in observed.items):
                     raise AdapterFailure("identity_mismatch")
@@ -1633,7 +1701,7 @@ class WorkspaceService:
                 return
             with self._network_lock:
                 adapter = self.transport_for(job["platform"], job["author_id"])
-                entries = adapter.poll_latest()
+                entries = self._source_call(job, adapter.poll_latest)
             if not entries:
                 self._finish(job["id"], "partial", "invalid_response")
                 return
@@ -1696,7 +1764,7 @@ class WorkspaceService:
             if page_scoped:
                 transport.prepare_page_details(job["author_id"], [i["item_id"] for i in targets])
             elif job["mode"] != "full" and hasattr(transport, "prepare_details") and not isinstance(sources,str):
-                transport.prepare_details(job["author_id"], [i["item_id"] for i in targets if i["item_id"] not in sources])
+                self._source_call(job, transport.prepare_details, job["author_id"], [i["item_id"] for i in targets if i["item_id"] not in sources])
         for item in targets:
             if self._pause_requested(job["id"]) or (parent_id is not None and self._pause_requested(parent_id)):
                 self._finish(job["id"], "interrupted", "user_paused")
@@ -1710,7 +1778,7 @@ class WorkspaceService:
                     self._check_cooldown(job["platform"])
                     transport = self.transport_for(job["platform"], job["author_id"])
                     source = sources if isinstance(sources,str) else sources.get(item["item_id"],item["source_url"] or "")
-                    detail = transport.detail(job["author_id"], item["item_id"], source_url=source)
+                    detail = self._source_call(job, transport.detail, job["author_id"], item["item_id"], source_url=source)
                     if detail.get("item_id") != item["item_id"] or detail.get("author_id") != job["author_id"]:
                         raise AdapterFailure("unavailable")
                     self.workflow.save_metrics(job["platform"], item["item_id"], detail.get("metrics",{}),
@@ -1726,7 +1794,7 @@ class WorkspaceService:
                         content_changed = (job["mode"] == "source_refresh" and
                                            (item["detail_text"] != detail.get("text") or
                                             item["title"] != (detail.get("title") or item["title"])))
-                        if detail.get("text","").strip() and not (page_scoped and item["detail_state"] == "complete"):
+                        if detail.get("text","").strip() and not (job["mode"] != "source_refresh" and bool((item["detail_text"] or "").strip())):
                             self.workflow.save_detail(job["platform"],item["item_id"],job["author_id"],detail["text"],detail["source_url"])
                         else:
                             complete = item["detail_state"] == "complete"
@@ -1741,10 +1809,11 @@ class WorkspaceService:
                             if not content_changed and self.workflow.candidate_saved(job["platform"],item["item_id"],candidate):
                                 continue
                             try:
-                                fetched = transport.download_media(candidate,self.root / "downloads" / job["platform"] / _id(item["item_id"]))
+                                fetched = self._source_call(job, transport.download_media, candidate, self.root / "downloads" / job["platform"] / _id(item["item_id"]))
                                 self.workflow.attach_media(job["platform"],item["item_id"],candidate.asset_id,Path(fetched["path"]),position=candidate.position,kind=candidate.kind,mime=fetched["mime"])
                             except AdapterFailure as error:
-                                if error.category in {"needs_login","rate_limited","unavailable","verification_required"}:
+                                self._record_request_failure(job, error, "media")
+                                if error.category in {"needs_login","rate_limited","unavailable","verification_required","unknown_business_error","network_paused"}:
                                     raise
                                 media_failed = True
                                 if error.category == "media_failed":
@@ -1767,6 +1836,8 @@ class WorkspaceService:
                 raise
             except Exception as error:
                 category = error.category if isinstance(error,AdapterFailure) else "unexpected_error"
+                if isinstance(error, AdapterFailure):
+                    self._record_request_failure(job, error, "detail")
                 if not observed:
                     attempt_source = ("xhs_http_detail_attempt" if self._source_kind(job["platform"], job["author_id"]) == "xhs_http"
                                       else "xhs_browser_detail_attempt")
@@ -1774,7 +1845,7 @@ class WorkspaceService:
                         observation_key=f"job:{job['id']}:{item['item_id']}:failed:{time.time_ns()}",status="failed",reason=category)
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
-                if category in {"rate_limited","needs_login","verification_required","unavailable"}:
+                if category in {"rate_limited","needs_login","verification_required","unavailable","unknown_business_error","network_paused"}:
                     if category in {"needs_login","verification_required"}:
                         self._job_sources.clear()
                     if category == "rate_limited":

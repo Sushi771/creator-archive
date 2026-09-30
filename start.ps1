@@ -7,6 +7,9 @@ param(
     [string]$ProfileDir
 )
 $ErrorActionPreference = 'Stop'
+# Installed legacy versions must stay stopped while the durable safety latch exists.
+if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'CreatorArchive/xhs-network-paused.json')) { throw 'XHS account safety pause: installed legacy runtime remains stopped; no automatic login or restart.' }
+
 Set-Location -LiteralPath $PSScriptRoot
 . (Join-Path $PSScriptRoot 'launcher-profile.ps1')
 $config = Get-LauncherSettings $PSScriptRoot $ProfileDir

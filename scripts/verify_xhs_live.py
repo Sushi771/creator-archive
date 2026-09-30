@@ -77,6 +77,8 @@ class BrowserInboxAdapter(XhsPageAdapter):
         super().__init__(self.fetch)
 
     def fetch(self, author, cursor):
+        from creator_archive import network_safety
+        network_safety.require_browser_disabled()
         if (author, cursor) in self.seed:
             return validate_record(self.seed[(author, cursor)], author, cursor)
         ticket = {"ticket": uuid4().hex, "authorId": author, "requestCursor": cursor,

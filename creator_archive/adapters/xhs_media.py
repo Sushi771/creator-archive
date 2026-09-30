@@ -11,10 +11,14 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .xhs import MediaCandidate
+from creator_archive import network_safety
 
 
 class MediaFailure(ValueError):
-    pass
+    def __init__(self, reason, *, http_status=None):
+        super().__init__(reason)
+        self.diagnostics = {"http_status": http_status, "success": None, "business_code": None,
+                            "stage": "media", "message": "[media error; credential URLs omitted]"}
 
 
 def safe_media_url(url: str, *, resolve: bool = True) -> str:
@@ -29,6 +33,7 @@ def safe_media_url(url: str, *, resolve: bool = True) -> str:
     if not valid:
         raise MediaFailure("media_host_not_allowed")
     if resolve:
+        network_safety.require_xhs_network()
         try:
             addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
             if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
@@ -90,13 +95,14 @@ def download_media(candidate: MediaCandidate, target_dir: Path, *, timeout: floa
                 return {"path": str(path), "mime": mime, "size": saved["size"], "sha256": saved["sha256"], "reused": True}
         except (ValueError, KeyError, TypeError, OSError):
             pass
+    network_safety.require_xhs_network()
     temp = None
     try:
         url = safe_media_url(url)
         request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/", "Accept-Encoding": "identity"})
         with build_opener(_SafeRedirect()).open(request, timeout=timeout) as response:
             if response.status != 200:
-                raise MediaFailure("media_http_failed")
+                raise MediaFailure("media_http_failed", http_status=response.status)
             safe_media_url(response.geturl())
             length = response.headers.get("Content-Length")
             expected = int(length) if length and length.isdigit() else None
@@ -137,7 +143,7 @@ def download_media(candidate: MediaCandidate, target_dir: Path, *, timeout: floa
     except MediaFailure:
         raise
     except HTTPError as exc:
-        raise MediaFailure("media_rate_limited" if exc.code == 429 else "media_url_expired_or_unavailable") from None
+        raise MediaFailure("media_rate_limited" if exc.code == 429 else "media_url_expired_or_unavailable", http_status=exc.code) from None
     except Exception:
         raise MediaFailure("media_download_interrupted") from None
     finally:
