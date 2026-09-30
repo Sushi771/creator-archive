@@ -1,11 +1,11 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const platformName = {wechat:"公众号",xiaohongshu:"小红书"};
-const stateName = {queued:"排队中",running:"执行中",succeeded:"任务完成",complete:"已完成",partial:"部分完成",needs_login:"需要登录",rate_limited:"等待冷却",failed:"未完成",blocked:"接入受限",interrupted:"已中断",pending:"待验证",unavailable:"暂不可用"};
+const stateName = {queued:"排队中",running:"执行中",succeeded:"任务完成",complete:"已完成",partial:"部分完成",needs_login:"需要登录",rate_limited:"联网暂停",failed:"未完成",blocked:"接入受限",interrupted:"已中断",pending:"待验证",unavailable:"暂不可用"};
 const coverageName = {complete_for_accessible_scope:"已观察到可获取列表末页",scanning:"历史扫描进行中",blocked:"历史扫描受阻",complete:"历史列表已至末页",complete_observed:"历史列表已至末页",partial:"历史列表不完整",unknown:"历史覆盖未知",not_started:"尚未扫描"};
-const modeName = {source_refresh:"后台来源刷新",full:"历史列表诊断",latest:"后台近期刷新",archive:"本地归档",all_archive:"逐作者完整历史同步",page_archive:"两页采集并归档（实验）",author_archive:"作者历史归档",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
+const modeName = {source_refresh:"最近内容同步",recent_window:"最近内容同步",full:"旧历史任务（仅保留记录）",latest:"最近内容同步",archive:"本地归档",all_archive:"旧历史批次（仅保留记录）",page_archive:"两页采集并归档（实验）",author_archive:"旧作者历史任务（仅保留记录）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
-const reasonName = {timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台要求冷却后重试",identity_unverified:"作者身份尚待核验"};
+const reasonName = {network_paused:"小红书真实联网已因账号安全暂停，须另有最小验证方案与用户明确批准",account_safety_user_instruction_2026_09_30:"小红书真实联网已持久暂停；登录、冷却和重启不能解除",recent_window_complete:"最近第一页的新作品正文与可获取媒体已保存",recent_window_unchanged:"最近第一页无尚未归档的新作品，已有内容保持",recent_window_partial:"最近第一页部分新作品正文或媒体仍有缺口，成功资源已保留",timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台访问受限，真实联网保持暂停",identity_unverified:"作者身份尚待核验"};
 const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"",itemRequest:0,refreshPromise:null,busy:false,jobPointerActive:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,scheduleSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,sourceAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
@@ -57,7 +57,7 @@ async function refreshSelectedSources() {
   if(!selected_authors.length)throw new Error("请先勾选已核验、已确认且仍订阅的作者。未创建来源刷新任务。");
   try {await api("/api/jobs",{mode:"source_refresh",selected_authors});}
   catch {throw new Error("所选来源刷新未创建。请查看作者配置及本机服务状态；已有资料保留。");}
-  notify(`已为所选 ${selected_authors.length} 位作者请求后台来源刷新；未配置来源的作者会报告缺口。此操作不证明全历史完成。`);
+  notify(`已为所选 ${selected_authors.length} 位作者请求后台来源刷新；未配置来源的作者会报告缺口。小红书只读取最新第一页，已有稳定作品 ID 跳过下载；两次刷新之间新增超过窗口时可能遗漏。`);
   await refresh(true);
   $("jobs").scrollIntoView();
 }
@@ -72,6 +72,7 @@ function renderSubscriptions(subscriptions) {
   $("subscription-filter-count").textContent=`显示 ${visible.length} / ${subscriptions.length} 位作者；筛选只影响列表显示，不改变批次范围；已选作者跨筛选保留。`;
   if(!visible.length){empty(list,"没有匹配的作者","请调整平台或标签筛选；订阅及归档仍保留。");return;}
   for(const sub of visible){
+    const recentWindow=sub.source_kind==="xhs_http"||sub.sync_scope==="recent_window";
     const row=node("article",null,"subscription-row"),info=node("div",null,"author-info"),text=node("div");
     info.append(node("div",(sub.display_name||sub.author_id||"?").slice(0,1),"avatar"));
     text.append(node("h3",sub.display_name||sub.author_id),node("div",`${nameOf(sub.platform)} · ${sub.author_id}`,"meta"));
@@ -79,10 +80,11 @@ function renderSubscriptions(subscriptions) {
     tags.append(badge(sub.subscribed===false?"已取消订阅":sub.subscription_confirmation_required?"待确认订阅":sub.enabled?"订阅中":"已暂停",sub.subscribed===false?"neutral":sub.subscription_confirmation_required?"warning":sub.enabled?"":"neutral"),
                 badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),
                 badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文 · 已登记图片 ${num(sub.registered_media?.image)} / 视频 ${num(sub.registered_media?.video)} · 观察范围媒体已完成 ${num(sub.media_observed_complete_count)} · 待补 ${num(sub.media_partial_item_count)} · 范围未知 ${num(sub.media_unknown_item_count)}`,"neutral"),
-                badge(sub.source_terminal_observed?"后台来源可见范围末页已观察":"后台来源历史末页未验证",sub.source_terminal_observed?"neutral":"warning"),
-                badge((sub.source_configured??sub.source_connected)?`${sub.source_kind==="feed_http"?"后台 Feed":"小红书本机来源"} 已配置${sub.identity_verified?"":"，待核验"}${sub.source_health==="needs_login"?" · 需登录":sub.source_health==="verification_required"?" · 需验证":sub.source_health==="rate_limited"?(sub.source_kind==="xhs_http"?" · 限流暂停，冷却后核验":" · 冷却中"):sub.source_health==="last_run_succeeded"?" · 上次任务成功":" · 当前会话未检查"}`:"后台来源未配置",(sub.source_configured??sub.source_connected)?"neutral":"warning"));
+                badge(recentWindow?`最近内容同步 / 当前来源窗口约${num(sub.window_size??sub.window_limit??30)}篇`:"来源窗口未验证 / 覆盖范围按来源记录","neutral"),
+                badge((sub.source_configured??sub.source_connected)?`${sub.source_kind==="feed_http"?"后台 Feed":"小红书本机来源"} 已配置${sub.identity_verified?"":"，待核验"}${sub.source_health==="needs_login"?" · 需登录":sub.source_health==="verification_required"?" · 需验证":sub.source_health==="rate_limited"?(sub.source_kind==="xhs_http"?" · 联网暂停，须另行批准验证":" · 联网暂停"):["network_paused","account_safety_user_instruction_2026_09_30"].includes(sub.source_health)?" · 账号安全暂停":sub.source_health==="last_run_succeeded"?" · 上次任务成功":" · 当前会话未检查"}`:"后台来源未配置",(sub.source_configured??sub.source_connected)?"neutral":"warning"));
     for(const tag of sub.tags||[])tags.append(badge(tag,"neutral"));
     text.append(tags);
+    if(recentWindow)text.append(node("p","首次同步与手动/定时刷新都只读取最新第一页；按稳定作品 ID 仅新增未归档作品。两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇。","hint"));
     if(sub.subscribed===false)text.append(node("p","新批次不再包含这位作者；旧归档、手工资料、任务及固定批次检查点保留。","hint"));
     else if(sub.subscription_confirmation_required)text.append(node("p",sub.identity_verified?"作者身份已核验；确认前不进入全部订阅批次，也不会自动扫描历史。":"先配置后台来源并核验作者身份；确认前不进入全部订阅批次，也不会自动扫描历史。","hint"));
     else if(sub.message)text.append(node("p",sub.message,"hint"));
@@ -99,8 +101,7 @@ function renderSubscriptions(subscriptions) {
     if(sub.subscribed!==false){
       if(sub.source_kind!=="xhs_http")actions.append(actionButton(sub.platform==="xiaohongshu"?`${sub.source_connected?"更换":"配置"}后台来源（可选 Feed）`:sub.source_connected?"更换后台来源":"配置后台来源",()=>openSourceEditor(sub)));
       if(sub.source_connected&&eligible.has(authorKey(sub))){
-        actions.append(actionButton("刷新此作者来源",()=>startJob("source_refresh",sub)));
-        actions.append(actionButton("尝试完整历史同步",()=>startJob("author_archive",sub)));
+        actions.append(actionButton(sub.platform==="xiaohongshu"?"同步 / 刷新最近内容":"刷新此作者来源",()=>startJob("source_refresh",sub)));
       }
     }
     if(sub.subscribed===false){
@@ -108,24 +109,10 @@ function renderSubscriptions(subscriptions) {
         const result=await api("/api/subscriptions/resubscribe",{platform:sub.platform,author_id:sub.author_id});
         notify(result.message);await refresh(true);
       }));
-      actions.append(actionButton("归档已有资料",()=>startJob("archive",sub)));
     } else if(sub.subscription_confirmation_required){
       if(sub.identity_verified)actions.append(actionButton("确认订阅",()=>openSubscriptionConfirmation(sub)));
     } else {
-      const advanced=node("details",null,"archive-experiments"),advancedActions=node("div",null,"actions");
-      advanced.append(node("summary","其他采集与验证操作"));
-      if(sub.identity_verified&&sub.platform==="xiaohongshu"){
-        advancedActions.append(actionButton("测试前10篇并归档",()=>startJob("demo_archive",sub)));
-        advanced.append(node("p","前10篇测试仅用于诊断，已有成功资源会复用，不代表新下载或历史完整。","hint"));
-        advancedActions.append(actionButton("后台近期诊断",()=>startJob("latest",sub)));
-        advancedActions.append(actionButton("两页采集并归档（实验）",()=>startJob("page_archive",sub)));
-      }
-      if(sub.identity_verified&&sub.platform==="xiaohongshu")advancedActions.append(
-        actionButton("旧列表扫描诊断",()=>startJob("full",sub)),
-        actionButton("保存全部已收录内容",()=>startJob("content",sub)),
-        actionButton("刷新全部指标",()=>startJob("metrics",sub)));
-      actions.append(actionButton("导出本机已有资料",()=>startJob("archive",sub)));
-      advanced.append(advancedActions);actions.append(advanced);
+      if(eligible.has(authorKey(sub)))actions.append(actionButton("导出本机已有资料",()=>startJob("archive",sub)));
       actions.append(actionButton(sub.enabled?"暂停":"启用",async()=>{
         await api("/api/subscriptions/toggle",{platform:sub.platform,author_id:sub.author_id,enabled:!sub.enabled});
         notify(`${sub.display_name||sub.author_id}：已${sub.enabled?"暂停":"启用"}订阅。已有资料保留。`);await refresh(true);
@@ -187,21 +174,23 @@ async function saveTags() {
   $("tag-dialog").close();notify(result.message);
   try {await refresh(true);} catch {notify("标签已保存，但页面刷新失败；请刷新工作区查看。归档和任务进度保留。",true);}
 }
+function isRecentWindow(run) {return run.mode==="recent_window"||run.sync_scope==="recent_window";}
+function isLegacyHistory(run) {return !isRecentWindow(run)&&["full","all_archive","author_archive","page_archive","demo_archive"].includes(run.mode);}
+function recentWindowProgress(run) {return `最近内容同步 / 当前来源窗口约${num(run.window_size??run.window_limit??30)}篇 · 最新第一页 ${num(run.listed_count??run.window_count??run.target_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count??run.existing_count)} 个 · 已存作品列表差异 ${num(run.listed_difference_count)} 个（正文附件保持，未自动判定内容更新）；两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇`; }
 function isPagePipeline(run) {return ["page_archive","author_archive","demo_archive"].includes(run.mode);}
 function renderArchiveBatches(batches) {
   const list=$("archive-batch-list");list.replaceChildren();
   for(const batch of batches){
     const card=node("article",null,"job-card"),top=node("div",null,"job-top");
-    top.append(node("h3",`${batch.mode==="selected_archive"?"所选作者":"全订阅"}逐作者归档（实验） · 批次 #${batch.id}`),badge(batch.state==="running"?"进行中":batch.state==="succeeded"?"已完成":"部分完成",batch.state==="partial"?"warning":""));
+    top.append(node("h3",`${batch.mode==="selected_archive"?"所选作者":"全订阅"}旧历史批次（仅保留记录） · 批次 #${batch.id}`),badge(batch.state==="running"?"进行中":batch.state==="succeeded"?"已完成":"部分完成",batch.state==="partial"?"warning":""));
     card.append(top,node("p",`固定作者 ${num(batch.total)} 位 · 完成 ${num(batch.complete)} · 进行/待恢复 ${num(batch.pending)} · 部分 ${num(batch.partial)} · 失败/受限 ${num(batch.failed)} · 公众号未接入 ${num(batch.blocked)}。正文媒体成功 ${num(batch.items_complete)} / 已纳入 ${num(batch.items_target)} 篇，已尝试未完成 ${num(batch.items_failed)}，待处理 ${num(batch.items_pending)}。完成仅指对应作者已观察到的可获取范围；公众号及双平台G1仍未通过。`,"job-progress"));
     for(const member of batch.members){
       const label=displayAuthor(member.platform,member.author_id);
       card.append(node("p",`${nameOf(member.platform)} · ${label} · ${member.job_id?`任务 #${member.job_id}`:"无采集任务"}${member.reused_existing_job?" · 沿用已有检查点（未自动重试）":""} · ${member.job_id?(stateName[member.state]||member.state):"接入未完成"} · 列表 ${num(member.pages)} 页 · 正文媒体 ${num(member.item_count)} / ${num(member.target_count)} 篇 · ${member.list_finished?"可信末页已观察":"末页未核验"}${member.reason?` · ${reasonName[member.reason]||member.reason}`:""}`,"meta"));
       if(member.scan_url){const link=safeLink(member.scan_url,"查看当前扫描范围");if(link)card.append(link);}
       if(member.scan_manifest_url){const link=safeLink(member.scan_manifest_url,"查看本轮扫描清单（导出时状态）");if(link)card.append(link);}
-      if(member.state!=="succeeded")card.append(node("p",`${member.message||"进度已保留"} ${member.next_step||"请查看对应作者任务。"}`,"hint"));
+      if(member.state!=="succeeded")card.append(node("p","旧任务进度保留，深页恢复已停止，不阻塞最近窗口订阅。","hint"));
     }
-    if(batch.members.some(m=>m.can_resume))card.append(actionButton("继续批次未完成作者",async()=>{const result=await api(`/api/archive-batches/${encodeURIComponent(batch.id)}/resume`,{});notify(`${result.message}${result.waiting?.length?` ${result.waiting.length} 位作者需查看各任务提示。`:""}`);await refresh(true);}));
     list.append(card);
   }
 }
@@ -222,7 +211,7 @@ function renderPauseControls(runs) {
     }));
   }
 }
-function renderJobs(runs) {const list=$("job-list");list.replaceChildren();if(!runs.length){empty(list,"还没有任务","添加作者后配置后台来源并刷新，或将已有作品按作者导出。任务进度会保存在本机。");return;}for(const run of [...runs].sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))){const card=node("article",null,"job-card"),top=node("div",null,"job-top"),title=node("div");title.append(node("h3",`${run.display_name||displayAuthor(run.platform,run.author_id)} · ${run.mode==="full"&&run.target_count!==undefined?"完整历史同步":modeName[run.mode]||run.mode||"采集任务"}`),node("div",`${nameOf(run.platform)} · 任务 #${run.id}${run.parent_job_id?` · 属于按页归档任务 #${run.parent_job_id}，请从该任务恢复`:""}`,"meta"));const tone=["failed","blocked","needs_login","partial","rate_limited","interrupted"].includes(run.state)?"warning":"";top.append(title,badge(run.reason==="validation_import"?"历史观察已导入":stateName[run.state]||run.state||"待处理",tone));const observed=`正文 ${num(run.body_saved_count)} · 已登记图片 ${num(run.registered_media?.image)} / 视频 ${num(run.registered_media?.video)} · 观察范围媒体已完成 ${num(run.media_observed_complete_count)} · 待补 ${num(run.media_partial_item_count)} · 范围未知 ${num(run.media_unknown_item_count)}`;const progress=run.mode==="source_refresh"?`后台来源任务 · 当前来源已发现 ${num(run.target_count)} 个待处理作品，完成 ${num(run.item_count)} 个 · ${observed}；本次刷新窗口不等于原站全历史`:run.mode==="full"&&run.target_count!==undefined?`历史已保存 ${num(run.pages)} 页，列出 ${num(run.listed_count)} 个 ID · 内容已处理 ${num(run.item_count)} / ${num(run.target_count)} · ${observed} · ${coverageName[run.coverage]||"历史覆盖未知"}`:isPagePipeline(run)?pipelineProgress(run):["content","metrics"].includes(run.mode)?`本次已成功 ${num(run.item_count)} / ${num(run.target_count)} 个作品 · 已尝试未完成 ${num(run.failed_count)} 个 · 待处理 ${num(run.pending_count)} 个 · ${observed}；成功资源和有效指标已保留`:run.mode==="archive"?`本次已导出 ${num(run.item_count)} 个作品记录${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""}`:`本次已保存 ${num(run.pages)} 页 · ${num(run.item_count)} 个 ID${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""} · ${coverageName[run.coverage]||"历史覆盖未知"}`;card.append(top,node("p",progress,"job-progress"));if(run.message||run.reason||run.next_step){const issue=node("div",null,"job-issue");issue.append(node("p",run.mode==="source_refresh"?(reasonName[run.reason]||"请查看任务状态与资料库缺口；来源地址不在页面展示。"):run.message||reasonName[run.reason]||`原因：${run.reason||"尚未确定"}`));if(run.mode!=="source_refresh"&&run.next_step)issue.append(node("p",`下一步：${run.next_step}`));card.append(issue);}const bottom=node("div",null,"job-bottom");bottom.append(node("span",formatTime(run.updated_at)?`更新于 ${formatTime(run.updated_at)}`:"进度已持久保存"));const actions=node("div",null,"actions");if(run.can_resume)actions.append(actionButton("从检查点继续",async()=>{await api(`/api/jobs/${encodeURIComponent(run.id)}/resume`,{});notify("已请求继续任务，成功页和已有资料会复用。请查看任务状态。");await refresh(true);}));if(!run.parent_job_id&&["content","metrics","page_archive","author_archive","demo_archive"].includes(run.mode))actions.append(actionButton(isPagePipeline(run)?"查看未完成":"查看未完成 / 补充链接",()=>openRecovery(run)));if(run.scan_url){const link=safeLink(run.scan_url,"查看当前扫描范围");if(link)actions.append(link);}const archiveUrl=run.archive_url||run.export?.archive_url;if(archiveUrl){const link=safeLink(archiveUrl,"打开归档");if(link)actions.append(link);}for(const author of run.export?.authors||[]){const label=displayAuthor(author.platform,author.author_id);for(const [url,title] of [[author.scan_manifest_url,`${label} · 本轮扫描清单（导出时状态）`],[author.manifest_url,`${label} · 全库清单`],[author.corpus_url,`${label} · 正文语料`],[author.failures_url,`${label} · 失败清单`]]){const link=safeLink(url,title);if(link)actions.append(link);}}bottom.append(actions);card.append(bottom);list.append(card);}}
+function renderJobs(runs) {const list=$("job-list");list.replaceChildren();if(!runs.length){empty(list,"还没有任务","添加作者后配置后台来源并刷新，或将已有作品按作者导出。任务进度会保存在本机。");return;}for(const run of [...runs].sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))){const card=node("article",null,"job-card"),top=node("div",null,"job-top"),title=node("div");title.append(node("h3",`${run.display_name||displayAuthor(run.platform,run.author_id)} · ${isRecentWindow(run)?"最近内容同步":modeName[run.mode]||run.mode||"采集任务"}`),node("div",`${nameOf(run.platform)} · 任务 #${run.id}${run.parent_job_id?` · 属于按页归档任务 #${run.parent_job_id}`:""}`,"meta"));const tone=["failed","blocked","needs_login","partial","rate_limited","interrupted"].includes(run.state)?"warning":"";top.append(title,badge(run.reason==="validation_import"?"历史观察已导入":stateName[run.state]||run.state||"待处理",tone));const observed=`正文 ${num(run.body_saved_count)} · 已登记图片 ${num(run.registered_media?.image)} / 视频 ${num(run.registered_media?.video)} · 观察范围媒体已完成 ${num(run.media_observed_complete_count)} · 待补 ${num(run.media_partial_item_count)} · 范围未知 ${num(run.media_unknown_item_count)}`;const progress=isRecentWindow(run)?`${recentWindowProgress(run)} · ${observed}`:run.mode==="source_refresh"?`后台来源任务 · 当前来源已发现 ${num(run.target_count)} 个待处理作品，完成 ${num(run.item_count)} 个 · ${observed}；本次刷新窗口不等于原站全历史`:run.mode==="full"&&run.target_count!==undefined?`历史已保存 ${num(run.pages)} 页，列出 ${num(run.listed_count)} 个 ID · 内容已处理 ${num(run.item_count)} / ${num(run.target_count)} · ${observed} · ${coverageName[run.coverage]||"历史覆盖未知"}`:isPagePipeline(run)?pipelineProgress(run):["content","metrics"].includes(run.mode)?`本次已成功 ${num(run.item_count)} / ${num(run.target_count)} 个作品 · 已尝试未完成 ${num(run.failed_count)} 个 · 待处理 ${num(run.pending_count)} 个 · ${observed}；成功资源和有效指标已保留`:run.mode==="archive"?`本次已导出 ${num(run.item_count)} 个作品记录${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""}`:`本次已保存 ${num(run.pages)} 页 · ${num(run.item_count)} 个 ID${run.library_item_count!==undefined?`（资料库 ${num(run.library_item_count)} 个）`:""} · ${coverageName[run.coverage]||"历史覆盖未知"}`;card.append(top,node("p",progress,"job-progress"));if(isLegacyHistory(run))card.append(node("p","旧历史证据与检查点保留；深分页已退出当前 P0，不继续恢复，也不阻塞最近窗口版本。","hint"));if(!isLegacyHistory(run)&&(run.message||run.reason||run.next_step)){const issue=node("div",null,"job-issue");issue.append(node("p",(isRecentWindow(run)||run.mode==="source_refresh")?(reasonName[run.reason]||"请查看任务状态与资料库缺口；来源地址不在页面展示。"):run.message||reasonName[run.reason]||`原因：${run.reason||"尚未确定"}`));if(!isLegacyHistory(run)&&!isRecentWindow(run)&&run.mode!=="source_refresh"&&run.next_step)issue.append(node("p",`下一步：${run.next_step}`));card.append(issue);}const bottom=node("div",null,"job-bottom");bottom.append(node("span",formatTime(run.updated_at)?`更新于 ${formatTime(run.updated_at)}`:"进度已持久保存"));const actions=node("div",null,"actions");if(run.can_resume&&!isLegacyHistory(run))actions.append(actionButton("从检查点继续",async()=>{await api(`/api/jobs/${encodeURIComponent(run.id)}/resume`,{});notify("已请求继续任务，成功页和已有资料会复用。请查看任务状态。");await refresh(true);}));if(!isLegacyHistory(run)&&!run.parent_job_id&&["content","metrics","page_archive","author_archive","demo_archive"].includes(run.mode))actions.append(actionButton(isPagePipeline(run)?"查看未完成":"查看未完成 / 补充链接",()=>openRecovery(run)));if(run.scan_url){const link=safeLink(run.scan_url,"查看当前扫描范围");if(link)actions.append(link);}const archiveUrl=run.archive_url||run.export?.archive_url;if(archiveUrl){const link=safeLink(archiveUrl,"打开归档");if(link)actions.append(link);}for(const author of run.export?.authors||[]){const label=displayAuthor(author.platform,author.author_id);for(const [url,title] of [[author.scan_manifest_url,`${label} · 本轮扫描清单（导出时状态）`],[author.manifest_url,`${label} · 全库清单`],[author.corpus_url,`${label} · 正文语料`],[author.failures_url,`${label} · 失败清单`]]){const link=safeLink(url,title);if(link)actions.append(link);}}bottom.append(actions);card.append(bottom);list.append(card);}}
 function renderPlatforms(platforms) {const list=$("platform-list");list.replaceChildren();for(const p of platforms){const card=node("article",null,"platform-card"),heading=node("h3",nameOf(p.platform));heading.append(badge(p.status==="experimental"?"实验接入":p.available?"接入可用":"接入未完成",p.status==="experimental"||!p.available?"warning":""));card.append(heading,node("p",p.message||"尚无可验证的接入状态。"));list.append(card);}if(!platforms.length)empty(list,"暂无平台状态","请刷新本机服务。");}
 function renderFilters(subscriptions) {const selected=ui.filter;$("filter-author").replaceChildren(new Option("全部作者",""));for(const sub of subscriptions)$("filter-author").append(new Option(`${sub.display_name||sub.author_id} · ${nameOf(sub.platform)}`,`${sub.platform}|${sub.author_id}`));$("filter-author").value=selected;if($("filter-author").value!==selected){ui.filter="";ui.offset=0;}}
 function dataSignature(value) {
@@ -284,7 +273,7 @@ async function refresh(forceItems = false, background = false) {
         const schedule=w.refresh_schedule||{enabled:false,interval_minutes:1440};
         $("refresh-schedule-enabled").checked=!!schedule.enabled;
         $("refresh-schedule-interval").value=String(schedule.interval_minutes||1440);
-        $("refresh-schedule-status").textContent=schedule.enabled?`已启用 · 下次尝试 ${formatTime(schedule.next_at)||"待安排"} · 上次启动 ${num(schedule.last_started_jobs)} 个作者刷新任务`:"当前关闭；手动同步与手动刷新仍可使用";
+        $("refresh-schedule-status").textContent=schedule.enabled?`已启用 · 下次尝试 ${formatTime(schedule.next_at)||"待安排"} · 上次启动 ${num(schedule.last_started_jobs)} 个作者刷新任务`:"当前关闭；真实联网保持安全暂停，手动/定时操作不能解除";
         ui.scheduleSignature=scheduleSignature;
       }
       $("data-dir").textContent = w.data_dir || "未提供目录";
@@ -310,7 +299,7 @@ async function refresh(forceItems = false, background = false) {
   try { await request; }
   finally { if (ui.refreshPromise === request) ui.refreshPromise = null; }
 }
-async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();let result;try{result=await api("/api/jobs",body);}catch(error){if(mode==="source_refresh")throw new Error("后台来源刷新未创建。请核对作者配置和本机服务；已有资料保留。");throw error;}notify(mode==="source_refresh"?"已请求后台来源刷新。请在任务区查看真实入库结果；来源覆盖不足时历史缺口仍保留。":result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:mode==="demo_archive"?"已核验并确认的小红书作者（含暂停项）":"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
+async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();let result;try{result=await api("/api/jobs",body);}catch(error){if(mode==="source_refresh")throw new Error("后台来源刷新未创建。请核对作者配置和本机服务；已有资料保留。");throw error;}notify(mode==="source_refresh"?"已请求最近内容同步。小红书只读取最新第一页，按稳定作品 ID 跳过已有作品；请查看正文和本地图片/视频结果。真实联网仍遵守安全暂停。":result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:mode==="demo_archive"?"已核验并确认的小红书作者（含暂停项）":"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
 async function previewSelectedArchive() {
   const selected_authors=selectedAuthorPayload();
   if(!selected_authors.length)throw new Error("请先在作者卡片勾选至少一位已核验、已确认且仍订阅的作者。未创建任务。");
@@ -336,7 +325,7 @@ async function exportSelectedLocal() {
   const selected_authors=selectedAuthorPayload();
   if(!selected_authors.length)throw new Error("请先在作者卡片勾选至少一位已核验且仍订阅的作者；未创建导出任务。");
   const result=await api("/api/jobs",{mode:"archive",selected_authors});
-  notify(`已为 ${result.job_ids?.length||selected_authors.length} 位作者创建本机导出任务。只导出已保存内容；历史覆盖仍按各作者检查点标记。`);
+  notify(`已为 ${result.job_ids?.length||selected_authors.length} 位作者创建本机导出任务。只导出本地已保存内容；最近窗口不代表全部历史。`);
   await refresh(true);$("jobs").scrollIntoView();
 }
 function openSubscriptionConfirmation(sub) {
@@ -576,7 +565,7 @@ $("cancel-subscription").onclick=()=>$("confirm-subscription-dialog").close();
 $("confirm-subscription-dialog").addEventListener("close",()=>{ui.confirmAuthor=null;});
 $("subscription-platform").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
 $("subscription-tag").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
-$("preview-selected-archive").onclick=()=>perform($("preview-selected-archive"),previewSelectedArchive);
+if($("preview-selected-archive"))$("preview-selected-archive").onclick=()=>perform($("preview-selected-archive"),previewSelectedArchive);
 $("export-selected-local").onclick=()=>perform($("export-selected-local"),exportSelectedLocal);
 $("start-selected-archive").onclick=()=>perform($("start-selected-archive"),startSelectedArchive);
 $("close-selected-archive").onclick=()=>$("selected-archive-dialog").close();
@@ -585,7 +574,7 @@ $("save-tags").onclick=()=>perform($("save-tags"),saveTags);
 $("close-tags").onclick=()=>$('tag-dialog').close();
 $("tag-dialog").addEventListener("close",()=>{ui.tagAuthor=null;});
 $("save-source").onclick=()=>perform($("save-source"),saveSource);
-$("refresh-schedule-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,async()=>{const result=await api("/api/refresh-schedule",{enabled:$("refresh-schedule-enabled").checked,interval_minutes:Number($("refresh-schedule-interval").value)});notify(result.enabled?"已启用小红书定时刷新；首次完整历史同步仍需手动开始。":"已关闭小红书定时刷新；已有任务与资料保持。");await refresh(true);});});
+$("refresh-schedule-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,async()=>{const result=await api("/api/refresh-schedule",{enabled:$("refresh-schedule-enabled").checked,interval_minutes:Number($("refresh-schedule-interval").value)});notify(result.enabled?"已启用小红书定时刷新；每次只读取最新第一页并新增尚未归档作品；真实联网仍遵守安全暂停。":"已关闭小红书定时刷新；已有任务与资料保持。");await refresh(true);});});
 $("close-source").onclick=()=>$("source-dialog").close();
 $("source-dialog").addEventListener("close",()=>{ui.sourceAuthor=null;$("source-url").value="";});
 $("refresh-selected-sources").onclick=()=>perform($("refresh-selected-sources"),refreshSelectedSources);

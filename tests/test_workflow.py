@@ -116,6 +116,26 @@ assert len(r['runs']) == 1 and r['runs'][0]['pages'] == 4, r
         self.assertEqual(Path(output["authors"][0]["manifest"]).parent.name,
                          quote(biz, safe=""))
 
+    def test_recent_export_overrides_old_terminal_claim_but_preserves_old_evidence(self):
+        self.subscribe("xiaohongshu", "author-a")
+        old = self.workflow.run_all({"xiaohongshu": SyntheticAdapter()})
+        with self.workflow.connect() as db:
+            before = tuple(db.execute("SELECT coverage,terminal_evidence FROM runs WHERE id=?",
+                                      (old["runs"][0]["id"],)).fetchone())
+        output = self.workflow.export_all(batch_id=old["batch_id"],
+                                         recent_window_authors={("xiaohongshu", "author-a")})
+        author = output["authors"][0]
+        manifest = json.loads(Path(author["manifest"]).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["coverage"], "recent_window_only")
+        self.assertIsNone(manifest["terminal_evidence"])
+        self.assertEqual(manifest["window_size"], 30)
+        html = Path(author["index"]).read_text(encoding="utf-8")
+        self.assertIn("两次刷新间新增超过窗口可能遗漏", html)
+        self.assertNotIn("已观察到当前可获取范围的明确末页", html)
+        with self.workflow.connect() as db:
+            self.assertEqual(tuple(db.execute("SELECT coverage,terminal_evidence FROM runs WHERE id=?",
+                                             (old["runs"][0]["id"],)).fetchone()), before)
+
     def test_failed_author_and_missing_platform_do_not_stop_other_authors(self):
         for platform, author_id in (("wechat", "blocked"), ("wechat", "healthy"),
                                     ("xiaohongshu", "other")):

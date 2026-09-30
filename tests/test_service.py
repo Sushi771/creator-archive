@@ -38,9 +38,9 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(sub["identity_verified"])
         self.assertEqual(self.service.workflow.subscriptions(), [])
         self.assertNotIn(b"SECRET_SENTINEL", self.service.workflow.db_path.read_bytes())
-        self.service.start("archive")
-        self.service.wait()
-        self.assertEqual(self.service.workspace()["runs"][0]["reason"], "identity_unverified")
+        with self.assertRaisesRegex(ValueError, "没有可处理"):
+            self.service.start("archive")
+        self.assertEqual(self.service.workspace()["runs"], [])
 
     def test_full_includes_paused_and_survives_restart_with_pagination(self):
         self.seed()
@@ -82,6 +82,12 @@ class WorkspaceTests(unittest.TestCase):
         self.service.cancel_subscription("xiaohongshu", "author-b")
         with self.assertRaisesRegex(ValueError, "所选作者须已核验"):
             self.service.start("archive", selected_authors=scope)
+        self.service.subscribe("https://www.xiaohongshu.com/user/profile/" + "a" * 24, "Unverified candidate")
+        result = self.service.start("archive")
+        self.service.wait()
+        self.assertEqual(len(result["job_ids"]), 1)
+        job = next(j for j in self.service.workspace()["runs"] if j["id"] == result["job_id"])
+        self.assertEqual((job["author_id"], job["state"]), ("author-a", "succeeded"))
 
     def test_cancel_keeps_archive_checkpoint_and_manual_note_then_resubscribes(self):
         author = "a" * 24
@@ -102,8 +108,8 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(next(s for s in self.service.workspace()["subscriptions"] if s["author_id"] == author)["subscribed"])
         with self.assertRaisesRegex(ValueError, "取消订阅"):
             self.service.start("full", "xiaohongshu", author)
-        self.service.start("archive", "xiaohongshu", author)
-        self.service.wait()
+        with self.assertRaisesRegex(ValueError, "仍订阅"):
+            self.service.start("archive", "xiaohongshu", author)
         restarted = WorkspaceService(self.service.root)
         self.assertFalse(next(s for s in restarted.workspace()["subscriptions"] if s["author_id"] == author)["subscribed"])
         with restarted.workflow.connect() as db:

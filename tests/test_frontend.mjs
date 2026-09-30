@@ -183,8 +183,9 @@ console.log('Page archive UI checks passed: explicit two-page scope, separate pr
 const flattenText=element=>[element.textContent,...(element.children||[]).map(flattenText)].join(' ');
 assert.match(html,/id="resolve-item-form"[^>]*hidden/,'Legacy single-note browser action is not advertised in the default background-source UI');
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"author",identity_verified:true,enabled:true,source_connected:true,source_kind:"feed_http"}])');
-assert.match(flattenText(elements['subscription-list']),/后台 Feed 已配置.*刷新此作者来源.*导出本机已有资料/);
-assert.match(flattenText(elements['subscription-list']),/已登记图片 0 \/ 视频 0.*后台来源历史末页未验证/);
+assert.match(flattenText(elements['subscription-list']),/后台 Feed 已配置.*同步 \/ 刷新最近内容.*导出本机已有资料/);
+assert.match(flattenText(elements['subscription-list']),/已登记图片 0 \/ 视频 0.*来源窗口未验证/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/约30篇|只读取最新第一页/,'Feed sources do not inherit the HTTP window claim');
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"pending",identity_verified:true,subscription_confirmation_required:true}])');
 assert.match(flattenText(elements['subscription-list']),/配置后台来源.*确认订阅/,'Pending subscription authors may configure a source before feed verification');
 assert.doesNotMatch(flattenText(elements['subscription-list']),/刷新此作者来源/,'Pending subscription authors cannot refresh all content');
@@ -236,31 +237,28 @@ assert.deepEqual(JSON.parse(run('JSON.stringify(tagCalls)')),[{path:'/api/subscr
 assert.equal(elements['tag-dialog'].open,false);
 console.log('Author tag UI checks passed: edit payload and full subscription list filtering.');
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"archived",identity_verified:true,enabled:false,subscribed:false,item_count:2}])');
-assert.match(flattenText(elements['subscription-list']),/已取消订阅.*重新订阅.*归档已有资料/);
-assert.doesNotMatch(flattenText(elements['subscription-list']),/测试前10篇并归档|暂停|启用|取消订阅（保留归档）/);
+assert.match(flattenText(elements['subscription-list']),/已取消订阅.*重新订阅/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/测试前10篇并归档|暂停|启用|取消订阅（保留归档）|归档已有资料|导出本机已有资料/);
 run('globalThis.lifecycleCalls=[];api=async(path,body)=>{lifecycleCalls.push({path,body});return {message:"已重新订阅；旧资料保留。"}};refresh=async()=>{}');
 await walk(elements['subscription-list']).find(x=>x.textContent==='重新订阅').handlers.click();
 assert.deepEqual(JSON.parse(run('JSON.stringify(lifecycleCalls)')),[{path:'/api/subscriptions/resubscribe',body:{platform:'xiaohongshu',author_id:'archived'}}]);
 run('renderSubscriptions([{platform:"xiaohongshu",author_id:"author",identity_verified:true,enabled:true}])');
 assert.doesNotMatch(visibleText(elements['subscription-list']),/测试前10篇并归档/);
-assert.match(flattenText(elements['subscription-list']),/测试前10篇并归档/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/测试前10篇并归档/);
 assert.match(flattenText(elements['subscription-list']),/取消订阅（保留归档）/);
 await walk(elements['subscription-list']).find(x=>x.textContent==='取消订阅（保留归档）').handlers.click();
 assert.deepEqual(JSON.parse(run('JSON.stringify(lifecycleCalls.at(-1))')),{path:'/api/subscriptions/cancel',body:{platform:'xiaohongshu',author_id:'author'}});
 assert.match(visibleText(elements['subscription-list']),/配置后台来源.*导出本机已有资料/,'Core author actions are visible');
 assert.doesNotMatch(visibleText(elements['subscription-list']),/旧浏览器历史诊断|两页采集并归档（实验）|保存全部已收录内容/,'Diagnostic actions remain collapsed');
-assert.match(flattenText(elements['subscription-list']),/其他采集与验证操作.*测试前10篇并归档.*后台近期诊断.*两页采集并归档/,'Existing diagnostic experiments remain available');
-const batchAdvanced=html.match(/<details class="archive-experiments">[\s\S]*?<\/details>/)?.[0];
-assert.ok(batchAdvanced);
-assert.match(batchAdvanced,/data-job="full"/);
-assert.match(html.replace(batchAdvanced,''),/data-job="all_archive"/);
-assert.match(html.replace(batchAdvanced,''),/id="preview-selected-archive"/);
-assert.match(batchAdvanced,/data-job="content"/);
-assert.match(batchAdvanced,/data-job="demo_archive"/);
-assert.match(html.replace(batchAdvanced,''),/data-job="source_refresh"[^>]*>刷新已连接来源/);
-assert.match(html.replace(batchAdvanced,''),/id="refresh-selected-sources"[^>]*>刷新所选来源/);
-assert.match(html.replace(batchAdvanced,''),/id="export-selected-local"[^>]*>导出所选已保存/);
-assert.match(html.replace(batchAdvanced,''),/data-job="archive"[^>]*>导出全部已保存/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/尝试完整历史同步|旧列表扫描诊断|两页采集并归档|测试前10篇/,'Deep-history experiments have no author UI action');
+assert.doesNotMatch(html,/data-job="(?:full|all_archive|author_archive|page_archive|demo_archive|latest)"/,'Legacy scan modes have no default or collapsed button');
+assert.doesNotMatch(html,/id="preview-selected-archive"/,'Old selected-history batch has no entry point');
+assert.match(html,/data-job="source_refresh"[^>]*>同步 \/ 刷新最近内容/);
+assert.match(html,/id="refresh-selected-sources"[^>]*>刷新所选最近内容/);
+assert.match(html,/id="export-selected-local"[^>]*>导出所选已保存/);
+assert.match(html,/data-job="archive"[^>]*>导出全部已确认作者/);
+assert.match(html,/首次与后续手动\/定时刷新都只读最新第一页.*刷新间新增超过窗口时可能遗漏/);
+assert.match(html,/禁止浏览器自动化.*登录、冷却、重启或时间经过都不会解除/);
 run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 await run('startJob("all_archive")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
@@ -320,13 +318,14 @@ await run('startJob("source_refresh")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(sourceCalls.at(-1).body)')),{mode:'source_refresh'});
 run('renderJobs([{id:51,mode:"source_refresh",state:"partial",target_count:4,item_count:3,body_saved_count:3,registered_media:{image:5,video:1},media_observed_complete_count:2,media_partial_item_count:1,media_unknown_item_count:1,message:"failed http://127.0.0.1:18765/feed?token=SYNTHETIC_ONLY",next_step:"token=SYNTHETIC_ONLY"}])');
 assert.match(flattenText(elements['job-list']),/已发现 4 个待处理作品，完成 3 个.*正文 3.*已登记图片 5 \/ 视频 1.*观察范围媒体已完成 2.*待补 1.*范围未知 1/);
-assert.match(flattenText(elements['job-list']),/后台来源刷新.*本次刷新窗口不等于原站全历史/);
+assert.match(flattenText(elements['job-list']),/最近内容同步.*本次刷新窗口不等于原站全历史/);
 assert.doesNotMatch(flattenText(elements['job-list']),/SYNTHETIC_ONLY|127\.0\.0\.1:18765/,'Source jobs do not render source URLs or credentials');
 console.log('Source UI checks passed: pending configuration, private URL handling, selected/global refresh scope and honest job status.');
 run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 run('renderArchiveBatches([{id:7,state:"partial",total:2,complete:0,unfinished:1,blocked:1,members:[{platform:"wechat",author_id:"wx",job_id:null,reason:"wechat_blocked",pages:0,item_count:0,target_count:0},{platform:"xiaohongshu",author_id:"author",job_id:8,state:"partial",reason:"item_unavailable",reused_existing_job:true,pages:3,item_count:2,target_count:3,can_resume:true,scan_url:"/api/jobs/8/scan",scan_manifest_url:"/archive/xiaohongshu/author/scan-run-1.json"}]}])');
-assert.match(flattenText(elements['archive-batch-list']),/固定作者 2 位.*公众号未接入 1.*任务 #8 · 沿用已有检查点（未自动重试）.*正文媒体 2 \/ 3 篇.*继续批次未完成作者/);
+assert.match(flattenText(elements['archive-batch-list']),/固定作者 2 位.*公众号未接入 1.*任务 #8 · 沿用已有检查点（未自动重试）.*正文媒体 2 \/ 3 篇/);
 assert.match(flattenText(elements['archive-batch-list']),/查看当前扫描范围.*查看本轮扫描清单/);
+assert.doesNotMatch(flattenText(elements['archive-batch-list']),/继续批次未完成作者/,'Old history batch remains read-only');
 run('pageCalls=[]');
 await run('startJob("demo_archive",{platform:"xiaohongshu",author_id:"author"})');
 await run('startJob("demo_archive")');
@@ -342,7 +341,7 @@ assert.match(elements['recovery-resume'].textContent,/继续原前10篇测试/);
 await run('$("recovery-resume").onclick()');
 assert.equal(run('pageCalls.at(-1).path'),'/api/jobs/41/resume');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{});
-console.log('Demo UI checks passed: primary fixed-ten scope, filtered-author batch request, collapsed full experiments, resource reuse semantics and original demo recovery.');
+console.log('Legacy contract checks passed: old functions retained without UI entry points or resume guidance.');
 
 // A poll between pointerdown and click must not replace the resume button.
 run(`refresh=realRefresh;ui.refreshPromise=null;ui.runsSignature=null;ui.itemsSignature='';
@@ -351,7 +350,7 @@ run(`refresh=realRefresh;ui.refreshPromise=null;ui.runsSignature=null;ui.itemsSi
     if(path==='/api/workspace')return {subscriptions:[],archive_batches:[],platforms:[],
       stats:{subscriptions:1,items:6,details:5,assets:5,metric_snapshots:0},
       runs:[{id:72,platform:'xiaohongshu',author_id:'synthetic',display_name:'模拟博主',
-        mode:'full',state:mockState,reason:'author_archive_partial',can_resume:mockState==='partial',
+        mode:'content',state:mockState,reason:'content_partial',can_resume:mockState==='partial',
         pages:3,listed_count:6,target_count:6,item_count:5,failed_count:mockFailures,
         coverage:'complete_for_accessible_scope'}]};
     if(path.startsWith('/api/items?'))return {total:0,items:[]};
@@ -360,7 +359,7 @@ run(`refresh=realRefresh;ui.refreshPromise=null;ui.runsSignature=null;ui.itemsSi
   };`);
 await run('refresh(false,true)');
 let resumeButton=walk(elements['job-list']).find(x=>x.tagName==='button'&&x.textContent==='从检查点继续');
-assert.ok(resumeButton,'A partial native history task exposes the resume action');
+assert.ok(resumeButton,'A partial content task exposes the resume action');
 resumeButton.handlers.click();
 await new Promise(setImmediate);
 assert.equal(run('resumeCalls.length'),1,'An ordinary click calls the original job resume API once');
@@ -392,3 +391,26 @@ globalHandlers.blur();
 flushTimers();
 assert.equal(run('ui.jobPointerActive'),false,'Window blur releases the refresh guard');
 console.log('Resume UI checks passed: ordinary click, poll during press, outside release, cancellation and blur.');
+
+// Current product scope: the first-page window is independent of old terminal history evidence.
+run('renderSubscriptions([{platform:"xiaohongshu",author_id:"recent",identity_verified:true,enabled:true,source_connected:true,source_kind:"xhs_http",source_terminal_observed:true,source_health:"rate_limited"}])');
+assert.match(flattenText(elements['subscription-list']),/最近内容同步 \/ 当前来源窗口约30篇.*两次刷新之间新增超过单页窗口时可能遗漏/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/历史末页|冷却后核验|尝试完整历史|测试前10篇|两页采集/);
+run('renderJobs([{id:75,platform:"xiaohongshu",mode:"recent_window",sync_scope:"recent_window",window_limit:30,state:"partial",listed_count:30,target_count:3,item_count:2,skipped_existing_count:27,registered_media:{image:4,video:1},next_step:"SYNTHETIC_PRIVATE_URL",message:"SYNTHETIC_PRIVATE_URL"}])');
+assert.match(flattenText(elements['job-list']),/最近内容同步 \/ 当前来源窗口约30篇.*最新第一页 30 个 ID.*待归档 3 个，完成 2 个.*已有作品跳过 27 个.*可能遗漏.*已登记图片 4 \/ 视频 1/);
+assert.doesNotMatch(flattenText(elements['job-list']),/可信末页|历史完整|SYNTHETIC_PRIVATE_URL/);
+run('renderJobs([{id:72,platform:"xiaohongshu",mode:"full",state:"partial",pages:7,target_count:210,item_count:196,can_resume:true,next_step:"继续第8页",scan_url:"/api/jobs/72/scan"}])');
+assert.match(flattenText(elements['job-list']),/旧历史任务.*旧历史证据与检查点保留.*不阻塞最近窗口版本/);
+assert.doesNotMatch(flattenText(elements['job-list']),/从检查点继续|查看未完成|继续第8页/);
+assert.ok(walk(elements['job-list']).some(x=>x.tagName==='a'&&x.textContent==='查看当前扫描范围'),'Old evidence remains readable');
+run('renderJobs([{id:76,mode:"author_archive",sync_scope:"recent_window",window_limit:30,state:"succeeded",listed_count:30,target_count:0,item_count:0,skipped_existing_count:30}])');
+assert.match(flattenText(elements['job-list']),/最近内容同步.*已有作品跳过 30 个/,'Compatibility mode follows its recorded recent scope');
+console.log('Recent-window UI checks passed: first-page scope, stable-ID reuse counts, overflow risk, media counts and read-only old deep-history evidence.');
+
+run('renderSubscriptions([{platform:"xiaohongshu",author_id:"unverified",identity_verified:false,enabled:true,source_kind:"xhs_http",archive_url:"/archive/saved/index.html"}])');
+assert.doesNotMatch(flattenText(elements['subscription-list']),/导出本机已有资料/,'Unverified subscription has no new export action');
+assert.match(flattenText(elements['subscription-list']),/打开归档/,'Existing exported archive remains readable');
+run('renderSubscriptions([{platform:"xiaohongshu",author_id:"unconfigured",identity_verified:true,enabled:true}])');
+assert.match(flattenText(elements['subscription-list']),/来源窗口未验证/);
+assert.doesNotMatch(flattenText(elements['subscription-list']),/约30篇|只读取最新第一页/,'Unconfigured authors have no actual source window claim');
+console.log('Final author UI checks passed: confirmed export eligibility, preserved old exports and source-specific window claims.');

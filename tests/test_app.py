@@ -27,6 +27,13 @@ class AppTests(unittest.TestCase):
         self.assertFalse(status["platforms"][0]["implementation"]["history_pagination"])
         self.assertEqual(status["platforms"][0]["validation"], "not_passed")
         self.assertEqual(status["platforms"][1]["runtime"], "not_checked_by_health")
+        xhs = status["platforms"][1]
+        self.assertTrue(xhs["implementation"]["recent_window_subscription"])
+        self.assertFalse(xhs["implementation"]["history_pagination"])
+        self.assertEqual((xhs["sync_scope"], xhs["window_size"]), ("recent_window", 30))
+        self.assertEqual(xhs["validation"], "recent_window_live_not_verified")
+        self.assertIn("可能遗漏", xhs["known_limits"])
+        self.assertTrue(status["xhs_network_paused"])
         self.assertEqual(self.client.get("/api/workspace").json()["build"]["commit"], status["commit"])
         self.assertEqual(self.client.get("/favicon.ico").status_code, 204)
 

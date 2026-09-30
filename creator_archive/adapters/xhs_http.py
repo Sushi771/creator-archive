@@ -40,6 +40,7 @@ _WEB_HOST = "www.xiaohongshu.com"
 _POSTED = "/api/sns/web/v1/user_posted"
 _MAX_HTML = 8 * 1024 * 1024
 _MAX_JSON = 4 * 1024 * 1024
+RECENT_WINDOW_SIZE = 30
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0 Safari/537.36"
 
 
@@ -268,7 +269,8 @@ def _unwrap(value: object) -> object:
 
 class XhsHttpTransport:
     version = "xhs-author-http-v1"
-    latest_coverage = "first_user_posted_page_only; original_platform_history_unknown"
+    latest_coverage = "recent_window_only; refresh_gap_may_exceed_window"
+    window_size = RECENT_WINDOW_SIZE
 
     def __init__(self, config: dict, platform: str, author_id: str):
         if platform != "xiaohongshu" or not isinstance(config, dict):
@@ -314,7 +316,7 @@ class XhsHttpTransport:
         return _http_get(host, path, headers, max_bytes=_MAX_JSON if api_params is not None else _MAX_HTML)
 
     def _get_api(self, cursor: str) -> dict:
-        params = {"num": "30", "cursor": cursor, "user_id": self.author_id,
+        params = {"num": str(RECENT_WINDOW_SIZE), "cursor": cursor, "user_id": self.author_id,
                   "image_formats": "jpg,webp,avif", "xsec_token": "", "xsec_source": "pc_feed"}
         # The order and comma encoding match the signed browser-style query.
         path = _POSTED + "?" + urlencode(params, safe=",")
@@ -342,24 +344,39 @@ class XhsHttpTransport:
         return data
 
     def page(self, author_id: str, cursor: str | None) -> Page:
+        """Legacy pagination contract retained for reading historical evidence."""
+        return self._read_page(author_id, cursor)
+
+    def recent_page(self, author_id: str) -> Page:
+        """One fresh first-page request; no next cursor or terminal claim.
+
+        The response may omit the deep-pagination cursor. This window does not
+        require it and must never follow it. Existing IDs are filtered by the
+        service before detail() is called.
+        """
+        return self._read_page(author_id, None, recent_window=True)
+
+    def _read_page(self, author_id: str, cursor: str | None, *, recent_window=False) -> Page:
         network_safety.require_xhs_network()
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         if cursor is not None and (not isinstance(cursor, str) or not cursor or len(cursor) > 1024 or any(not 33 <= ord(c) <= 126 for c in cursor)):
             raise AdapterFailure("invalid_cursor")
         key = cursor or ""
-        if self._page_cache and self._page_cache[0] == key and time.monotonic() - self._page_cache[1] < 10:
+        if not recent_window and self._page_cache and self._page_cache[0] == key and time.monotonic() - self._page_cache[1] < 10:
             return self._page_cache[2]
         data = self._get_api(key)
         notes, more, next_cursor = data.get("notes"), data.get("has_more"), data.get("cursor")
         if not isinstance(notes, list) or type(more) is not bool:
             raise AdapterFailure("invalid_response")
-        if more and (not notes or not isinstance(next_cursor, str) or not next_cursor or next_cursor == key
+        if recent_window and len(notes) > RECENT_WINDOW_SIZE:
+            raise AdapterFailure("invalid_response")
+        if not recent_window and more and (not notes or not isinstance(next_cursor, str) or not next_cursor or next_cursor == key
                      or len(next_cursor) > 1024 or any(not 33 <= ord(c) <= 126 for c in next_cursor)):
             raise AdapterFailure("missing_cursor")
         # An empty terminal page is indistinguishable from a login/abnormal
         # response in this source. Require a non-empty observed page.
-        if not more and not notes:
+        if not notes and (recent_window or not more):
             raise AdapterFailure("invalid_page")
         items, refs = [], {}
         for raw in notes:
@@ -370,7 +387,12 @@ class XhsHttpTransport:
             observed = user.get("user_id", user.get("userId")) if isinstance(user, dict) else None
             if observed != self.author_id:
                 raise AdapterFailure("identity_mismatch")
-            items.append(Item(item_id, self.author_id, ""))
+            published = ""
+            timestamp = raw.get("time")
+            if type(timestamp) is int and 0 < timestamp < 32503680000000:
+                published = datetime.fromtimestamp(timestamp / 1000, timezone.utc).isoformat()
+            title = raw.get("display_title", raw.get("title"))
+            items.append(Item(item_id, self.author_id, published, title if isinstance(title, str) else ""))
             token = raw.get("xsec_token", raw.get("xsecToken"))
             if isinstance(token, str) and 0 < len(token) <= 2048 and all(33 <= ord(c) <= 126 for c in token):
                 query = {"xsec_token": token}
@@ -378,7 +400,11 @@ class XhsHttpTransport:
                 if isinstance(source, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", source):
                     query["xsec_source"] = source
                 refs[item_id] = detail_url(item_id) + "?" + urlencode(query)
-        if more:
+        if len({item.item_id for item in items}) != len(items):
+            raise AdapterFailure("invalid_response")
+        if recent_window:
+            page = Page(tuple(items), None, False, None)
+        elif more:
             page = Page(tuple(items), next_cursor, True)
         else:
             page = Page(tuple(items), None, False, "xhs user_posted: observed explicit has_more=false")
@@ -536,7 +562,7 @@ class XhsHttpTransport:
 
     def verify_author(self, author_id: str) -> dict:
         network_safety.require_xhs_network()
-        page = self.page(author_id, None)
+        page = self.recent_page(author_id)
         if not page.items:
             raise AdapterFailure("identity_mismatch")
         return {"author_id": author_id, "display_name": author_id,
@@ -548,6 +574,11 @@ class XhsHttpTransport:
         try:
             return download_media(candidate, target_dir)
         except MediaFailure as error:
+            status = error.diagnostics.get("http_status")
+            if status == 401:
+                raise AdapterFailure("needs_login", diagnostics=error.diagnostics) from None
+            if status in {403, 406, 461, 471}:
+                raise AdapterFailure("verification_required", diagnostics=error.diagnostics) from None
             if str(error) == "media_rate_limited":
                 raise AdapterFailure("rate_limited", retry_after=60, diagnostics=error.diagnostics) from None
             raise AdapterFailure("media_failed", diagnostics=error.diagnostics) from None

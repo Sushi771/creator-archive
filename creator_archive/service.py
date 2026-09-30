@@ -27,6 +27,9 @@ from . import page_pipeline, network_safety
 from hashlib import sha256
 
 XHS_HISTORY_PAGE_BUDGET = 100
+XHS_RECENT_WINDOW_SIZE = 30
+XHS_LEGACY_NETWORK_MODES = {"full", "author_archive", "page_archive", "demo_archive", "latest", "source_refresh"}
+XHS_RECENT_WINDOW_WARNING = "最近内容同步 / 当前来源窗口约30篇；两次刷新间新增超过窗口可能遗漏，置顶或列表排序也可能缩小最近范围。"
 
 
 def default_workspace() -> Path:
@@ -34,6 +37,10 @@ def default_workspace() -> Path:
 
 
 MESSAGES = {
+    "recent_window_complete": ("最近第一页的新作品正文与当前可获取媒体已归档；已有作品保持。", XHS_RECENT_WINDOW_WARNING),
+    "recent_window_unchanged": ("最近第一页没有尚未归档的新作品；已有正文与附件保持。", XHS_RECENT_WINDOW_WARNING),
+    "recent_window_partial": ("最近第一页部分新作品正文或媒体仍有缺口；成功资源保持。", "可恢复本窗口未完成作品；不扫描旧历史。" + XHS_RECENT_WINDOW_WARNING),
+    "legacy_history_retired": ("旧深分页任务已停用，代码与检查点保留作历史证据。", "请从作者卡片开始最近内容同步；旧页及 -100 不阻塞最近窗口版本。"),
     "network_paused": ("小红书联网因账号安全已暂停；已有资料和检查点保留。", "仅可离线阅读与导出；恢复须另有具体方案和用户明确批准。"),
     "unknown_business_error": ("来源返回未知业务失败；原始业务码与检查点关联保留，未判末页。", "停止该来源，不自动重试；仅使用已有证据离线排查。"),
     "account_safety_user_instruction_2026_09_30": ("小红书真实联网已持久暂停。", "本轮只做离线核对，不运行登录、验证或恢复。"),
@@ -149,6 +156,7 @@ class WorkspaceService:
             """)
         self.pipeline_migration_backup = page_pipeline.initialize(self.workflow)
         self.batch_migration_backup = self._initialize_archive_batches()
+        self.recent_window_migration_backup = self._initialize_recent_window_observations()
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
             db.execute("UPDATE runs SET state='interrupted',reason='process_interrupted',updated_at=? WHERE state IN ('running','queued')", (time.time(),))
@@ -290,6 +298,26 @@ class WorkspaceService:
             db.commit()
             return str(backup) if backup else None
 
+    def _initialize_recent_window_observations(self):
+        """Add window observations after verifying a backup of any populated DB."""
+        with closing(sqlite3.connect(self.workflow.db_path)) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='recent_window_observations'").fetchone():
+                return None
+            backup = None
+            if db.execute("SELECT 1 FROM jobs UNION ALL SELECT 1 FROM runs UNION ALL SELECT 1 FROM items UNION ALL SELECT 1 FROM subscriptions LIMIT 1").fetchone():
+                directory = self.workflow.db_path.parent / "backups"
+                directory.mkdir(exist_ok=True)
+                backup = directory / f"archive-before-recent-window-{time.time_ns()}.sqlite3"
+                with closing(sqlite3.connect(backup)) as target:
+                    db.backup(target)
+                    if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise ValueError("数据库备份校验失败，未执行最近窗口观察表升级")
+            db.execute("""CREATE TABLE recent_window_observations (
+                job_id INTEGER NOT NULL, item_id TEXT NOT NULL, disposition TEXT NOT NULL,
+                difference_json TEXT, PRIMARY KEY(job_id,item_id))""")
+            db.commit()
+            return str(backup) if backup else None
+
     def _cooldown_until(self, platform, db):
         return db.execute("SELECT coalesce(max(retry_at),0) FROM (SELECT retry_at FROM platform_cooldowns WHERE platform=? UNION ALL SELECT retry_at FROM runs WHERE platform=?)", (platform, platform)).fetchone()[0]
 
@@ -324,7 +352,8 @@ class WorkspaceService:
 
     def _record_platform_access_pause(self, platform, author_id, reason):
         if (platform != "xiaohongshu" or self._source_kind(platform, author_id) != "xhs_http"
-                or reason not in {"needs_login", "verification_required", "rate_limited", "unknown_business_error", "unavailable"}):
+                or reason not in {"needs_login", "verification_required", "rate_limited", "unknown_business_error", "unavailable",
+                                  "identity_mismatch", "invalid_response", "timeout", "invalid_stable_id"}):
             return
         with self.workflow.connect() as db:
             db.execute("INSERT INTO platform_access_pauses VALUES(?,?,?) ON CONFLICT(platform) DO UPDATE SET reason=excluded.reason,paused_at=excluded.paused_at",
@@ -505,7 +534,8 @@ class WorkspaceService:
             self._clear_platform_access_pause(platform)
         if intent:
             self.workflow.set_enabled(platform, author_id, bool(intent["enabled"]))
-        return {"platform": platform, "author_id": author_id, "identity_verified": True, "message": "作者身份已通过后台来源的作者范围核验；历史完整性须另行采集验证。"}
+        return {"platform": platform, "author_id": author_id, "identity_verified": True,
+                "message": "作者身份已通过后台来源核验，可同步最近内容。" + XHS_RECENT_WINDOW_WARNING}
 
     def close(self):
         self._stopping.set()
@@ -758,11 +788,11 @@ class WorkspaceService:
         native_full = (row["mode"] == "full" and
                        (bool(run and run["adapter_version"] == "xhs-author-http-v1") or
                         bool(db.execute("SELECT 1 FROM job_items WHERE job_id=? LIMIT 1", (row["id"],)).fetchone())))
-        if row["mode"] in {"content", "metrics", "source_refresh"} or native_full:
+        if row["mode"] in {"content", "metrics", "source_refresh", "recent_window"} or native_full:
             progress = db.execute("SELECT count(*),coalesce(sum(state='succeeded'),0),coalesce(sum(state='partial'),0) FROM job_items WHERE job_id=?", (row["id"],)).fetchone()
             result.update(target_count=progress[0],item_count=progress[1],failed_count=progress[2],pending_count=progress[0]-progress[1]-progress[2],
                           coverage="not_applicable" if row["mode"] != "full" else result["coverage"])
-            if row["mode"] == "full":
+            if row["mode"] in {"full", "recent_window"}:
                 result.update(listed_count=len(run_ids), list_finished=bool(run and run["terminal_evidence"]),
                               scan_url=f"/api/jobs/{row['id']}/scan")
             observed = db.execute("""SELECT coalesce(sum(i.detail_state='complete'),0),
@@ -777,11 +807,24 @@ class WorkspaceService:
                 ON a.platform=j.platform AND a.item_id=j.item_id
                 WHERE j.job_id=? GROUP BY a.kind""", (row["id"],))}
             result["failed_items"] = [dict(r) for r in db.execute("SELECT item_id,reason FROM job_items WHERE job_id=? AND state='partial' ORDER BY item_id LIMIT 20", (row["id"],))]
+        if row["mode"] == "recent_window":
+            skipped = db.execute("SELECT count(*) FROM recent_window_observations WHERE job_id=? AND disposition='existing_preserved'", (row["id"],)).fetchone()[0]
+            differences = db.execute("SELECT count(*) FROM recent_window_observations WHERE job_id=? AND difference_json IS NOT NULL", (row["id"],)).fetchone()[0]
+            result.update(sync_scope="recent_window", window_size=XHS_RECENT_WINDOW_SIZE,
+                          window_warning=XHS_RECENT_WINDOW_WARNING, coverage="recent_window_only",
+                          page_limit=1, list_finished=False, until_terminal=False,
+                          window_list_saved=bool(run and run["pages"] == 1),
+                          skipped_existing_count=skipped, listed_difference_count=differences,
+                          update_detection="existing_content_preserved_update_unchecked")
+        elif (row["platform"] == "xiaohongshu" and row["mode"] in XHS_LEGACY_NETWORK_MODES
+              and self._source_kind(row["platform"], row["author_id"]) == "xhs_http"):
+            result.update(can_resume=False, retired=True, retirement_reason="legacy_history_retired")
         association = db.execute("SELECT parent_job_id FROM pipeline_pages WHERE child_job_id=?", (row["id"],)).fetchone()
         if association:
             result.update(parent_job_id=association[0],can_resume=False)
         if row["mode"] in page_pipeline.MODES:
             checkpoint = db.execute("SELECT * FROM page_pipelines WHERE parent_job_id=?", (row["id"],)).fetchone()
+            checkpoint = checkpoint or {"stage": "not_started", "page_limit": None}
             progress = page_pipeline.progress(db,row["id"])
             success = sum(item["state"] == "succeeded" for item in progress)
             failures = [item for item in progress if item["state"] == "partial"]
@@ -794,7 +837,7 @@ class WorkspaceService:
                           children=[dict(r) for r in db.execute("SELECT p.page_number,j.id,j.state,j.reason FROM pipeline_pages p JOIN jobs j ON j.id=p.child_job_id WHERE p.parent_job_id=? ORDER BY p.page_number", (row["id"],))])
             if row["mode"] == "author_archive":
                 result["scan_url"] = f"/api/jobs/{row['id']}/scan"
-        message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
+        message, next_step = MESSAGES.get(row["reason"], ("任务正在处理，成功进度持续保存。" if row["state"] in {"queued", "running"} else "请查看最近窗口正文与媒体状态。" if row["mode"] == "recent_window" else "请查看历史覆盖与正文状态。", "等待任务结束，或查看已保存作品。"))
         if row["mode"] in {"content", "metrics", "source_refresh"} and row["reason"] in {"unavailable", "timeout"}:
             message = "作品详情或媒体暂未能获取，具体原因尚未确认；已有正文、成功媒体及指标原值与时间保留。"
             next_step = "核对该作者的后台来源及访问权限后恢复原任务；成功媒体会复用。"
@@ -805,6 +848,8 @@ class WorkspaceService:
         if row["state"] == "succeeded" and not row["reason"] and run and run["coverage"] == "complete_for_accessible_scope":
             message = "本次列表扫描已到当前可获取范围的明确末页；正文和媒体完整性单独核验。"
             next_step = "查看已保存作品，或按作者归档现有资料。"
+        if result.get("retired"):
+            message, next_step = MESSAGES["legacy_history_retired"]
         result.update(message=message, next_step=next_step)
         if exported:
             result["export"] = exported
@@ -857,9 +902,14 @@ class WorkspaceService:
                 sub["source_terminal_observed"] = bool(source_run and source_run["terminal_evidence"])
                 run = db.execute("SELECT coverage FROM runs WHERE platform=? AND author_id=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", args).fetchone()
                 sub["coverage"] = run[0] if run else "unknown"
+                if sub["source_kind"] == "xhs_http":
+                    sub.update(sync_scope="recent_window", window_size=XHS_RECENT_WINDOW_SIZE,
+                               window_warning=XHS_RECENT_WINDOW_WARNING,
+                               coverage="recent_window_only", source_history_coverage="not_applicable",
+                               source_terminal_observed=False)
                 latest = next((j for j in jobs if (j["platform"], j["author_id"]) == args and not j.get("parent_job_id")), None)
                 latest_source_job = next((j for j in jobs if (j["platform"], j["author_id"]) == args
-                                          and j["mode"] in {"full", "source_refresh"}
+                                          and j["mode"] in {"full", "source_refresh", "recent_window"}
                                           and not j.get("parent_job_id")), None)
                 latest_source_version = None
                 if latest_source_job and latest_source_job.get("run_id"):
@@ -870,14 +920,14 @@ class WorkspaceService:
                 sub["source_health"] = ("not_configured" if not sub["source_configured"] else
                                         platform_access if platform_access else
                                         "rate_limited" if latest and latest["reason"] == "rate_limited" else
-                                        "last_run_succeeded" if latest_source_job and latest_source_job["mode"] == "full"
+                                        "last_run_succeeded" if latest_source_job and latest_source_job["mode"] in {"full", "recent_window"}
                                             and latest_source_job["state"] == "succeeded"
                                             and latest_source_version == source_version else
                                         "not_checked")
                 sub["source_health_checked_at"] = (latest_source_job["updated_at"] if latest_source_job
                                                     and sub["source_health"] == "last_run_succeeded" else None)
                 sub["message"] = (latest["message"] if latest else
-                                  "作者身份已核验；尚未开始历史同步。" if sub["identity_verified"] else
+                                  "作者身份已核验；尚未开始最近内容同步。" if sub["identity_verified"] else
                                   MESSAGES["identity_unverified"][0])
                 exports = next((j["export"] for j in jobs if (j["platform"], j["author_id"]) == args and j.get("export")), None)
                 if exports:
@@ -889,7 +939,7 @@ class WorkspaceService:
             stats = {"subscriptions": len(subscriptions), "items": db.execute("SELECT count(*) FROM items").fetchone()[0], "details": db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], "running": sum(j["state"] in {"queued", "running"} for j in jobs)}
         return {"subscriptions": subscriptions, "runs": jobs, "archive_batches": archive_batches, "stats": stats,
                 "platforms": [{"platform": "wechat", "available": any(s["platform"] == "wechat" and s["source_connected"] for s in subscriptions), "status": "deferred", "message": "公众号本轮暂缓；现有来源和资料保留。"},
-                              {"platform": "xiaohongshu", "available": any(s["platform"] == "xiaohongshu" and s["source_connected"] for s in subscriptions), "status": "configured_source_only", "message": "小红书来源按作者核验；历史末页、正文和媒体须分别以实际同步结果确认。"}],
+                              {"platform": "xiaohongshu", "available": any(s["platform"] == "xiaohongshu" and s["source_connected"] for s in subscriptions), "status": "recent_window", "message": XHS_RECENT_WINDOW_WARNING}],
                 "data_dir": str(self.root), "archive_dir": str(self.workflow.archive_root),
                 "obsidian_dir": str(self.workflow.obsidian_root) if self.workflow.obsidian_root else None,
                 "refresh_schedule": self.refresh_schedule(),
@@ -917,6 +967,9 @@ class WorkspaceService:
                                 "can_resume": job["can_resume"] if job else False})
                 if job:
                     members[-1]["scan_url"] = f"/api/jobs/{job['id']}/scan"
+                    for field in ("sync_scope", "window_size", "window_warning", "retired", "retirement_reason"):
+                        if field in job:
+                            members[-1][field] = job[field]
                 if job and job.get("export"):
                     exported_author = next((author for author in job["export"]["authors"]
                                             if (author["platform"], author["author_id"]) ==
@@ -945,8 +998,8 @@ class WorkspaceService:
             job = db.execute("SELECT run_id,mode,platform,author_id FROM jobs WHERE id=?", (job_id,)).fetchone()
             if job is None:
                 raise KeyError("job_not_found")
-            if job["mode"] not in {"author_archive", "full"}:
-                raise ValueError("仅单作者全历史归档任务有本轮扫描清单")
+            if job["mode"] not in {"author_archive", "full", "recent_window"}:
+                raise ValueError("仅单作者归档或最近窗口任务有本轮列表清单")
             if not job["run_id"]:
                 library_only = [row[0] for row in db.execute(
                     "SELECT item_id FROM items WHERE platform=? AND author_id=? ORDER BY published_at,item_id",
@@ -962,7 +1015,7 @@ class WorkspaceService:
             run = dict(db.execute("SELECT * FROM runs WHERE id=?", (job["run_id"],)).fetchone())
             items = [dict(row) for row in db.execute("SELECT * FROM items WHERE platform=? AND author_id=? ORDER BY published_at,item_id",
                                                   (job["platform"], job["author_id"]))]
-            if job["mode"] == "full":
+            if job["mode"] in {"full", "recent_window"}:
                 observed = {}
                 for page in db.execute("SELECT page_number,item_ids FROM pages WHERE run_id=? ORDER BY page_number", (job["run_id"],)):
                     for item_id in json.loads(page["item_ids"]):
@@ -983,7 +1036,7 @@ class WorkspaceService:
                                            "detail_state": item["detail_state"] if item else "missing",
                                            "media_state": item["media_state"] if item else "unknown"})
                 library_only = [item["item_id"] for item in items if item["item_id"] not in observed]
-                return {"schema_version": 2, "kind": "author_scan", "platform": job["platform"],
+                result = {"schema_version": 2, "kind": "author_scan", "platform": job["platform"],
                         "author_id": job["author_id"], "run_id": job["run_id"],
                         "parent_job_id": job_id, "pages_scanned": run["pages"],
                         "coverage": run["coverage"], "list_finished": bool(run["terminal_evidence"]),
@@ -996,6 +1049,12 @@ class WorkspaceService:
                                    "not_targeted": sum(item["download_state"] == "not_targeted" for item in observed_items),
                                    "library_only": len(library_only)},
                         "observed_items": observed_items, "library_only_item_ids": library_only}
+                if job["mode"] == "recent_window":
+                    result.update(kind="recent_window_scan", sync_scope="recent_window",
+                                  coverage="recent_window_only", list_finished=False,
+                                  terminal_evidence=None, window_size=XHS_RECENT_WINDOW_SIZE,
+                                  window_warning=XHS_RECENT_WINDOW_WARNING)
+                return result
             return self.workflow._author_scan_manifest(db, run, items)
 
     def _archive_status(self, db, item):
@@ -1124,16 +1183,17 @@ class WorkspaceService:
             if mode == "selected_archive" and selected_authors is None:
                 raise ValueError("所选作者归档需要明确的作者范围；未创建任务")
             return self.start_archive_batch(selected_authors)
-        if mode == "author_archive" and platform == "xiaohongshu" and author_id and self._source_kind(platform, author_id) == "xhs_http":
-            mode = "full"
+        if (mode in XHS_LEGACY_NETWORK_MODES
+                and platform == "xiaohongshu" and author_id and self._source_kind(platform, author_id) == "xhs_http"):
+            mode = "recent_window"
         if mode == "latest" and not self.adapter_factory:
             mode = "source_refresh"
-        if selected_authors is not None and mode not in {"archive", "source_refresh"}:
+        if selected_authors is not None and mode not in {"archive", "source_refresh", "recent_window"}:
             raise ValueError("所选作者范围仅用于后台来源刷新或本机已有资料导出")
         selected_export = self._selected_author_keys(selected_authors) if selected_authors is not None else None
         if selected_export is not None and any(value is not None for value in (platform, author_id, item_id, source_url, item_ids)):
             raise ValueError("所选作者本机导出只接受作者选择范围")
-        if mode not in {"full", "latest", "source_refresh", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
+        if mode not in {"full", "latest", "source_refresh", "recent_window", "archive", "content", "metrics", *page_pipeline.MODES} or bool(platform) != bool(author_id):
             raise ValueError("请选择有效模式；指定作者时须同时提供平台和作者ID")
         if mode in {"page_archive", "author_archive"} and (not author_id or
                 (platform != "xiaohongshu" and not self.source_config(platform, author_id))):
@@ -1154,8 +1214,10 @@ class WorkspaceService:
                      and s["identity_verified"]]
             if {(s["platform"], s["author_id"]) for s in scope} != selected_export:
                 raise ValueError("所选作者须已核验、确认且仍订阅；请刷新选择。旧资料保持不变")
-        if mode == "source_refresh":
+        if mode in {"source_refresh", "recent_window"}:
             scope = [s for s in scope if s["identity_verified"] and self.source_config(s["platform"], s["author_id"])]
+            if mode == "recent_window" and any(s["source_kind"] != "xhs_http" for s in scope):
+                raise ValueError("最近窗口同步需要已配置的小红书后台 HTTP 来源")
             if selected_export is not None and {(s["platform"], s["author_id"]) for s in scope} != selected_export:
                 raise ValueError("所选作者必须已核验并配置后台来源")
         if author_id and scope and not scope[0]["subscribed"] and mode != "archive":
@@ -1163,10 +1225,14 @@ class WorkspaceService:
         if mode == "demo_archive" and not author_id:
             scope = [s for s in scope if s["platform"] == "xiaohongshu" and s["identity_verified"]
                      and not s["subscription_confirmation_required"]]
+        if mode == "archive" and not author_id and selected_export is None:
+            scope = [s for s in scope if s["identity_verified"]]
         if not scope:
             raise ValueError("没有可处理的订阅作者；待确认作者请先确认，已取消作者请先重新订阅。旧归档和任务检查点保留")
-        if mode in {"full", "latest", "source_refresh", *page_pipeline.MODES} and any(s["subscription_confirmation_required"] for s in scope):
+        if mode in {"full", "latest", "source_refresh", "recent_window", *page_pipeline.MODES} and any(s["subscription_confirmation_required"] for s in scope):
             raise ValueError("该作品作者尚未确认订阅；请先在作者卡片确认，原历史和作品保持不变")
+        if mode == "archive" and any(s["subscription_confirmation_required"] or not s["subscribed"] or not s["identity_verified"] for s in scope):
+            raise ValueError("本机导出仅支持已核验、已确认且仍订阅的作者；原资料保持")
         if mode in page_pipeline.MODES and any(not s["identity_verified"] for s in scope):
             raise ValueError("按页闭环实验需要已核验的订阅作者")
         ids = []
@@ -1184,9 +1250,11 @@ class WorkspaceService:
                 if active and mode != "archive":
                     raise ValueError("该作者已有任务排队或运行，请等待完成")
             for sub in scope:
-                cur = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)", (sub["platform"], sub["author_id"], mode, time.time(), time.time()))
+                author_mode = ("recent_window" if mode in {*XHS_LEGACY_NETWORK_MODES, "recent_window"}
+                               and self._source_kind(sub["platform"], sub["author_id"]) == "xhs_http" else mode)
+                cur = db.execute("INSERT INTO jobs(platform,author_id,mode,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)", (sub["platform"], sub["author_id"], author_mode, time.time(), time.time()))
                 ids.append(cur.lastrowid)
-                if mode in page_pipeline.MODES:
+                if author_mode in page_pipeline.MODES:
                     db.execute("INSERT INTO page_pipelines(parent_job_id,page_limit) VALUES(?,2)", (cur.lastrowid,))
                 if mode in {"content","metrics"}:
                     clause = " AND item_id IN (" + ",".join("?" for _ in selected) + ")" if selected else " AND item_id=?" if item_id else ""
@@ -1222,7 +1290,7 @@ class WorkspaceService:
                 "members": [{"platform": s["platform"], "author_id": s["author_id"],
                              "display_name": s["display_name"], "paused": not bool(s["enabled"]),
                              "platform_available": self.source_config(s["platform"], s["author_id"]) is not None} for s in scope],
-                "message": "预览仅核对当前可选择作者；执行时会再次核对并固定范围。未配置历史来源的作者保留明确缺口。"}
+                "message": "预览仅核对当前可选择作者；执行时再次核对并固定范围。小红书只同步最近第一页，未配置来源的作者保留明确缺口。"}
 
     def _archive_batch_scope(self, db, selected_keys):
         eligible = {(row["platform"], row["author_id"]): dict(row)
@@ -1253,8 +1321,10 @@ class WorkspaceService:
             version = self.transport().version
         else:
             return False
-        row = db.execute("""SELECT r.adapter_version FROM jobs j LEFT JOIN runs r ON r.id=j.run_id
+        row = db.execute("""SELECT r.adapter_version,j.mode FROM jobs j LEFT JOIN runs r ON r.id=j.run_id
             WHERE j.id=?""", (job_id,)).fetchone()
+        if row and self._source_kind(platform, author_id) == "xhs_http" and row[1] in XHS_LEGACY_NETWORK_MODES:
+            return False
         return bool(row) and row[0] in {None, "pending", version}
 
     def start_archive_batch(self, selected_authors=None):
@@ -1292,7 +1362,7 @@ class WorkspaceService:
             reused_ids = []
             for sub in scope:
                 job_id = None
-                history_mode = "full" if self._source_kind(sub["platform"], sub["author_id"]) == "xhs_http" else "author_archive"
+                history_mode = "recent_window" if self._source_kind(sub["platform"], sub["author_id"]) == "xhs_http" else "author_archive"
                 reason = ("wechat_blocked" if sub["platform"] == "wechat" else "source_unconfigured") if (
                     not self.source_config(sub["platform"], sub["author_id"]) and
                     not (sub["platform"] == "xiaohongshu" and self.adapter_factory)) else None
@@ -1385,6 +1455,9 @@ class WorkspaceService:
             job = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not job:
                 raise KeyError("job_not_found")
+            if (job["mode"] in XHS_LEGACY_NETWORK_MODES and
+                    self._source_kind(job["platform"], job["author_id"]) == "xhs_http"):
+                raise ValueError(MESSAGES["legacy_history_retired"][0] + MESSAGES["legacy_history_retired"][1])
             association = db.execute("SELECT parent_job_id FROM pipeline_pages WHERE child_job_id=?", (job_id,)).fetchone()
             if association:
                 raise ValueError(f"该内容子任务属于按页实验，请恢复父任务 {association[0]}，避免丢失列表检查点")
@@ -1432,6 +1505,9 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             db.execute("UPDATE jobs SET state=?,reason=?,export_json=?,updated_at=? WHERE id=?", (state, reason, json.dumps(export) if export else None, time.time(), job_id))
             job = db.execute("SELECT mode,run_id FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if job and job["mode"] == "recent_window" and job["run_id"]:
+                db.execute("UPDATE runs SET state=?,reason=?,coverage='recent_window_only',cursor=NULL,terminal_evidence=NULL,updated_at=? WHERE id=?",
+                           (state, reason, time.time(), job["run_id"]))
             if job and job["mode"] in page_pipeline.MODES and state not in {"queued","running","succeeded"}:
                 # A failure may occur after the page transaction but before
                 # content starts (e.g. hashing an existing unreadable asset).
@@ -1463,6 +1539,10 @@ class WorkspaceService:
             try:
                 with self.workflow.connect() as db:
                     job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+                    if (job["mode"] in XHS_LEGACY_NETWORK_MODES and
+                            self._source_kind(job["platform"], job["author_id"]) == "xhs_http"):
+                        self._finish(job_id, "blocked", "legacy_history_retired")
+                        return
                     db.execute("UPDATE jobs SET state='running',updated_at=? WHERE id=?", (time.time(), job_id))
                     verified = db.execute("SELECT 1 FROM subscriptions WHERE platform=? AND author_id=?", (job["platform"], job["author_id"])).fetchone()
                 if job["mode"] != "archive":
@@ -1496,8 +1576,12 @@ class WorkspaceService:
                 if job["mode"] == "archive":
                     with self.workflow.connect() as db:
                         known = db.execute("SELECT coverage,terminal_evidence FROM runs WHERE platform=? AND author_id=? AND id!=? ORDER BY CASE WHEN coverage='complete_for_accessible_scope' THEN 0 ELSE 1 END,id DESC LIMIT 1", (job["platform"], job["author_id"], run_id)).fetchone()
-                        db.execute("UPDATE runs SET state='succeeded',coverage=?,terminal_evidence=?,updated_at=? WHERE id=?", (known[0] if known else "unknown", known[1] if known else None, time.time(), run_id))
-                    exported = self.workflow.export_all(batch_id=batch)
+                        recent_source = self._source_kind(job["platform"], job["author_id"]) == "xhs_http"
+                        db.execute("UPDATE runs SET state='succeeded',coverage=?,terminal_evidence=?,updated_at=? WHERE id=?",
+                                   ("recent_window_only" if recent_source else known[0] if known else "unknown",
+                                    None if recent_source else known[1] if known else None, time.time(), run_id))
+                    exported = self.workflow.export_all(batch_id=batch,
+                        recent_window_authors={(job["platform"], job["author_id"])} if self._source_kind(job["platform"], job["author_id"]) == "xhs_http" else ())
                     for author in exported["authors"]:
                         for key in ("manifest", "corpus", "index", "failures"):
                             author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.workflow.archive_root).as_posix(), safe="/")
@@ -1506,8 +1590,8 @@ class WorkspaceService:
                 if not self.source_config(job["platform"], job["author_id"]) and (job["platform"] == "wechat" or not self.adapter_factory):
                     self._finish(job_id, "blocked", "wechat_blocked")
                     return
-                if job["mode"] == "full" and self._source_kind(job["platform"], job["author_id"]) == "xhs_http":
-                    self._execute_xhs_history(job, run_id, batch)
+                if job["mode"] == "recent_window":
+                    self._execute_xhs_recent_window(job, run_id, batch)
                     return
                 with self._network_lock:
                     self._check_cooldown(job["platform"])
@@ -1537,9 +1621,90 @@ class WorkspaceService:
                 # Preparation can fail before any item is attempted. Preserve
                 # the typed cause instead of claiming the transport is absent.
                 category = error.category
-                self._finish(job_id, category if category in {"needs_login", "rate_limited"} else "blocked", category)
+                state = category if category in {"needs_login", "rate_limited"} else "partial" if category == "reference_missing" and job["mode"] == "recent_window" else "blocked"
+                self._finish(job_id, state, category)
             except Exception:
                 self._finish(job_id, "failed", "unexpected_error")
+
+    def _execute_xhs_recent_window(self, job, run_id, batch_id):
+        """Archive new IDs from one first-page snapshot; never follow its cursor."""
+        with self._network_lock:
+            transport = self.transport_for(job["platform"], job["author_id"])
+            with self.workflow.connect() as db:
+                run = dict(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
+                saved = db.execute("SELECT * FROM pages WHERE run_id=? ORDER BY page_number LIMIT 1", (run_id,)).fetchone()
+            if run["adapter_version"] not in {"pending", transport.version}:
+                self._finish(job["id"], "partial", "adapter_version_changed")
+                return
+            if not saved:
+                if self._pause_requested(job["id"]):
+                    self._finish(job["id"], "interrupted", "user_paused")
+                    return
+                self._check_cooldown(job["platform"])
+                if hasattr(transport, "recent_page"):
+                    page = self._source_call(job, transport.recent_page, job["author_id"])
+                else:
+                    page = self._source_call(job, transport.page, job["author_id"], None)
+                if not page.items or len(page.items) > XHS_RECENT_WINDOW_SIZE:
+                    raise AdapterFailure("invalid_page")
+                ids = [item.item_id for item in page.items]
+                if len(set(ids)) != len(ids):
+                    raise AdapterFailure("invalid_stable_id")
+                for item in page.items:
+                    if item.author_id != job["author_id"]:
+                        raise AdapterFailure("identity_mismatch")
+                    if not isinstance(item.item_id, str) or not re.fullmatch(r"[0-9a-f]{24}", item.item_id):
+                        raise AdapterFailure("invalid_stable_id")
+                with self.workflow.connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    for item in page.items:
+                        previous = db.execute("SELECT author_id,title,published_at FROM items WHERE platform=? AND item_id=?",
+                                              (job["platform"], item.item_id)).fetchone()
+                        if previous and previous["author_id"] != job["author_id"]:
+                            raise AdapterFailure("identity_mismatch")
+                        title = getattr(item, "title", "") or ""
+                        if not isinstance(title, str) or not isinstance(item.published_at, str):
+                            raise AdapterFailure("invalid_response")
+                        difference = {}
+                        if previous:
+                            for field, observed in (("title", title), ("published_at", item.published_at)):
+                                if observed and observed != (previous[field] or ""):
+                                    difference[field] = {"saved": previous[field], "listed": observed}
+                        else:
+                            db.execute("INSERT INTO items(platform,item_id,author_id,published_at,title) VALUES(?,?,?,?,?)",
+                                       (job["platform"], item.item_id, job["author_id"], item.published_at, title))
+                            db.execute("INSERT INTO job_items(job_id,platform,item_id) VALUES(?,?,?)",
+                                       (job["id"], job["platform"], item.item_id))
+                        db.execute("INSERT INTO recent_window_observations VALUES(?,?,?,?)",
+                                   (job["id"], item.item_id, "existing_preserved" if previous else "new",
+                                    json.dumps(difference, ensure_ascii=False) if difference else None))
+                    # The saved row is a window snapshot, not evidence of a history end.
+                    db.execute("INSERT INTO pages VALUES(?,1,'',NULL,?,NULL,?)", (run_id, json.dumps(ids), time.time()))
+                    db.execute("UPDATE runs SET adapter_version=?,pages=1,cursor=NULL,state='running',coverage='recent_window_only',terminal_evidence=NULL,updated_at=? WHERE id=?",
+                               (transport.version, time.time(), run_id))
+                    saved = dict(db.execute("SELECT * FROM pages WHERE run_id=?", (run_id,)).fetchone())
+                    self._save_xhs_page_references(job, run_id, transport, saved)
+            else:
+                # A retry uses private references from this fixed first-page snapshot.
+                # Missing or expired references remain a gap; no old page is reread.
+                self._load_xhs_page_references(job, run_id, transport, dict(saved))
+        with self.workflow.connect() as db:
+            target_count = db.execute("SELECT count(*) FROM job_items WHERE job_id=?", (job["id"],)).fetchone()[0]
+        if target_count:
+            pending = self._execute_content(job, finalize=False)
+            with self.workflow.connect() as db:
+                current = db.execute("SELECT state FROM jobs WHERE id=?", (job["id"],)).fetchone()[0]
+            if current != "running":
+                return
+        else:
+            pending = 0
+        exported = self.workflow.export_all(batch_id=batch_id,
+            recent_window_authors={(job["platform"], job["author_id"])})
+        for author in exported["authors"]:
+            for key in ("manifest", "corpus", "index", "failures"):
+                author[key + "_url"] = "/archive/" + quote(Path(author[key]).relative_to(self.workflow.archive_root).as_posix(), safe="/")
+        self._finish(job["id"], "partial" if pending else "succeeded",
+                     "recent_window_partial" if pending else "recent_window_complete" if target_count else "recent_window_unchanged", exported)
 
     def _execute_xhs_history(self, job, run_id, batch_id):
         """Scan the full page chain while recording individual content gaps."""
@@ -1818,7 +1983,7 @@ class WorkspaceService:
             transport = self.transport_for(job["platform"], job["author_id"])
             if page_scoped:
                 transport.prepare_page_details(job["author_id"], [i["item_id"] for i in targets])
-            elif job["mode"] != "full" and hasattr(transport, "prepare_details") and not isinstance(sources,str):
+            elif job["mode"] not in {"full", "recent_window"} and hasattr(transport, "prepare_details") and not isinstance(sources,str):
                 self._source_call(job, transport.prepare_details, job["author_id"], [i["item_id"] for i in targets if i["item_id"] not in sources])
         for item in targets:
             if self._pause_requested(job["id"]) or (parent_id is not None and self._pause_requested(parent_id)):
@@ -1845,7 +2010,7 @@ class WorkspaceService:
                                    (detail.get("title"),detail.get("content_type"),detail.get("content_type"),detail.get("published_at") or "",detail.get("published_at") or "",job["platform"],item["item_id"]))
                     complete = True
                     incomplete_reason = "content_partial"
-                    if job["mode"] in {"content", "source_refresh", "full"}:
+                    if job["mode"] in {"content", "source_refresh", "full", "recent_window"}:
                         content_changed = (job["mode"] == "source_refresh" and
                                            (item["detail_text"] != detail.get("text") or
                                             item["title"] != (detail.get("title") or item["title"])))
@@ -1900,7 +2065,8 @@ class WorkspaceService:
                         observation_key=f"job:{job['id']}:{item['item_id']}:failed:{time.time_ns()}",status="failed",reason=category)
                 with self.workflow.connect() as db:
                     db.execute("UPDATE job_items SET state='partial',reason=? WHERE job_id=? AND platform=? AND item_id=?", (category,job["id"],job["platform"],item["item_id"]))
-                if category in {"rate_limited","needs_login","verification_required","unavailable","unknown_business_error","network_paused"}:
+                if (category in {"rate_limited","needs_login","verification_required","unavailable","unknown_business_error","network_paused"}
+                        or job["mode"] == "recent_window" and category in {"identity_mismatch", "invalid_response", "timeout", "invalid_stable_id"}):
                     if category in {"needs_login","verification_required"}:
                         self._job_sources.clear()
                     if category == "rate_limited":

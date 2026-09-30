@@ -355,50 +355,50 @@ class SyntheticUnknownFailureTests(unittest.TestCase):
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
         return service, job, run_id, batch_id
 
-    def _check_failure(self, pending):
-        service, job, run_id, batch_id = self._seed_checkpoint(pending)
-        with patch.object(service, "transport_for", return_value=self.transport):
-            service._execute_xhs_history(job, run_id, batch_id)
-        expected_cursor = "next-6" if pending else "next-7"
-        self.assertEqual(self.requests, [expected_cursor])
+    def _check_retired_checkpoint(self, pending):
+        service, job, run_id, _ = self._seed_checkpoint(pending)
         with service.workflow.connect() as db:
-            run = dict(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
-            self.assertEqual((run["pages"], run["cursor"]), (7, "next-7"))
-            self.assertNotEqual(run["state"], "succeeded")
-            self.assertNotEqual(run["coverage"], "complete_for_accessible_scope")
-            self.assertIsNone(run["terminal_evidence"])
-            self.assertEqual(run["reason"], "unknown_business_error")
-            items = list(db.execute("SELECT item_id,state FROM job_items WHERE job_id=? ORDER BY item_id", (job["id"],)))
-            self.assertEqual(len(items), 7)
-            self.assertEqual(items[-1][1], "pending" if pending else "succeeded")
+            before_run = tuple(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone())
+            before_items = [tuple(row) for row in db.execute("SELECT * FROM job_items WHERE job_id=? ORDER BY item_id", (job["id"],))]
+        with self.assertRaisesRegex(ValueError, "旧深分页任务已停用"):
+            service.resume(job["id"])
+        self.assertEqual(self.requests, [])
+        with service.workflow.connect() as db:
+            self.assertEqual(tuple(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()), before_run)
+            self.assertEqual([tuple(row) for row in db.execute("SELECT * FROM job_items WHERE job_id=? ORDER BY item_id", (job["id"],))], before_items)
+        observed = next(row for row in service.workspace()["runs"] if row["id"] == job["id"])
+        self.assertFalse(observed["can_resume"])
+        self.assertTrue(observed["retired"])
+
+    def test_old_seventh_page_pending_checkpoint_is_readonly_and_not_resumed(self):
+        self._check_retired_checkpoint(pending=True)
+
+    def test_old_deep_history_checkpoint_is_readonly_and_not_resumed(self):
+        self._check_retired_checkpoint(pending=False)
+
+    def test_recent_first_page_unknown_failure_stops_all_authors_without_retry(self):
+        service = WorkspaceService(self.root / "recent", validation_root=self.root / "validation")
+        self.addCleanup(service.close)
+        (service.root / "sources.json").write_text(json.dumps({"xiaohongshu/*": {"kind": "xhs_http", "cookie_file": str(self.root / "never-read")}}))
+        service.workflow.subscribe("xiaohongshu", AUTHOR, "Synthetic author", verified=True, evidence="synthetic")
+        with patch.object(service, "transport_for", return_value=self.transport):
+            started = service.start("source_refresh", "xiaohongshu", AUTHOR)
+            service.wait(10)
+        job = next(row for row in service.workspace()["runs"] if row["id"] == started["job_id"])
+        self.assertEqual((job["mode"], job["reason"]), ("recent_window", "unknown_business_error"))
+        self.assertEqual(self.requests, [""])
+        with service.workflow.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM items").fetchone()[0], 0)
             evidence = dict(db.execute("SELECT * FROM request_failures WHERE job_id=?", (job["id"],)).fetchone())
-            self.assertEqual(evidence["checkpoint_pages"], 7)
-            self.assertEqual(evidence["checkpoint_cursor_sha256"], sha256(b"next-7").hexdigest())
-            diagnostics = json.loads(evidence["diagnostic_json"])
-            self.assertEqual(diagnostics["business_code"], -100)
-            self.assertEqual(diagnostics["request_cursor_sha256"], sha256(expected_cursor.encode()).hexdigest())
-            if pending:
-                self.assertEqual(diagnostics["saved_page_number"], 7)
-            else:
-                self.assertNotIn("saved_page_number", diagnostics)
-            self.assertEqual(evidence["stage"], "restore_page_references" if pending else "list")
-            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_text='Preserved body'").fetchone()[0], 6 if pending else 7)
+            self.assertEqual(json.loads(evidence["diagnostic_json"])["business_code"], -100)
         with self.assertRaises(PlatformAccessPaused):
             service.resume(job["id"])
-        self.assertEqual(self.requests, [expected_cursor])
-        service.workflow.subscribe("xiaohongshu", OTHER, "Second synthetic author", verified=True, evidence="synthetic")
-        second_job = {"platform": "xiaohongshu", "author_id": OTHER}
-        with patch.object(self.transport, "page") as second_page:
+        second = {"platform": "xiaohongshu", "author_id": OTHER}
+        with patch.object(self.transport, "recent_page") as page:
             with self.assertRaises(PlatformAccessPaused):
-                service._source_call(second_job, self.transport.page, OTHER, None)
-            second_page.assert_not_called()
-        self.assertEqual(self.requests, [expected_cursor])
-
-    def test_failure_while_restoring_seventh_page_preserves_pending_item(self):
-        self._check_failure(pending=True)
-
-    def test_failure_requesting_next_page_never_marks_history_complete(self):
-        self._check_failure(pending=False)
+                service._source_call(second, self.transport.recent_page, OTHER)
+            page.assert_not_called()
+        self.assertEqual(self.requests, [""])
 
     def test_full_retry_keeps_nonempty_body_and_verified_asset_without_redownload(self):
         service, job, _, _ = self._seed_checkpoint(pending=False)

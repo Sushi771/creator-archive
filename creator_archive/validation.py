@@ -13,6 +13,7 @@ class Item:
     item_id: str
     author_id: str
     published_at: str
+    title: str = ""
 
 
 @dataclass(frozen=True)

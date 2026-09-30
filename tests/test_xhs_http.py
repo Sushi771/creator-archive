@@ -12,6 +12,8 @@ from creator_archive.adapters.xhs_http import (
     authorize_session,
 )
 from creator_archive.validation import AdapterFailure
+from creator_archive.adapters.xhs import MediaCandidate
+from creator_archive.adapters.xhs_media import MediaFailure
 
 
 AUTHOR = "a" * 24
@@ -185,6 +187,49 @@ class XhsHttpTransportTests(unittest.TestCase):
                 self.transport.restore_page_references(AUTHOR, {**references, NOTE_TWO: invalid})
             self.assertEqual(caught.exception.category, "reference_missing")
             self.assertEqual(self.transport._refs, {})
+
+    def test_recent_window_needs_no_deep_cursor_and_each_refresh_is_fresh(self):
+        calls = []
+        response = _listing([NOTE_ONE], more=True, cursor="")
+        response["notes"][0].update(display_title="Window title", time=1700000000000)
+        def listing(cursor):
+            calls.append(cursor)
+            return response
+        self.transport._get_api = listing
+        with patch.object(self.transport, "detail", side_effect=AssertionError("list only")):
+            for _ in range(2):
+                page = self.transport.recent_page(AUTHOR)
+                self.assertEqual((page.next_cursor, page.terminal_evidence), (None, None))
+                self.assertEqual(page.items[0].title, "Window title")
+                self.assertTrue(page.items[0].published_at)
+        self.assertEqual(calls, ["", ""])
+
+    def test_media_access_denial_is_source_stop_not_recoverable_asset_gap(self):
+        candidate = MediaCandidate("image", 0, "https://ci.xhscdn.com/synthetic.jpg")
+        for status, category in [(401, "needs_login"), (403, "verification_required"),
+                                 (406, "verification_required"), (461, "verification_required"),
+                                 (471, "verification_required"), (429, "rate_limited")]:
+            reason = "media_rate_limited" if status == 429 else "media_url_expired_or_unavailable"
+            with self.subTest(status=status), patch.object(self.transport, "_gate"), patch(
+                    "creator_archive.adapters.xhs_http.download_media",
+                    side_effect=MediaFailure(reason, http_status=status)):
+                with self.assertRaises(AdapterFailure) as caught:
+                    self.transport.download_media(candidate, Path(self.temporary.name) / "media")
+                self.assertEqual(caught.exception.category, category)
+
+    def test_recent_window_accepts_thirty_and_rejects_abnormal_scope(self):
+        ids = [f"{index:024x}" for index in range(30)]
+        self.transport._get_api = lambda cursor: _listing(ids, more=True, cursor="ignored")
+        self.assertEqual(len(self.transport.recent_page(AUTHOR).items), 30)
+        for response, category in [(_listing(ids + ["f" * 24]), "invalid_response"),
+                                   (_listing([NOTE_ONE, NOTE_ONE]), "invalid_response"),
+                                   (_listing([], more=False), "invalid_page"),
+                                   (_listing([NOTE_ONE], author=FOREIGN), "identity_mismatch")]:
+            with self.subTest(category=category):
+                self.transport._get_api = lambda cursor, response=response: response
+                with self.assertRaises(AdapterFailure) as caught:
+                    self.transport.recent_page(AUTHOR)
+                self.assertEqual(caught.exception.category, category)
 
     def test_embedded_state_is_data_and_undefined_inside_text_is_preserved(self):
         sample = b'<script>window.__INITIAL_STATE__={"text":"undefined in a string","missing":undefined};</script>'

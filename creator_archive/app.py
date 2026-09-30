@@ -75,7 +75,7 @@ class TagsInput(AuthorInput):
 
 
 class JobInput(BaseModel):
-    mode: str = "full"
+    mode: str = "source_refresh"
     platform: str | None = None
     author_id: str | None = None
     item_id: str | None = None
@@ -144,10 +144,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                      "validation": "not_passed", "experimental": False,
                      "known_limits": "Feed 可用于近期增量；订阅前完整历史仍需已授权且有可信末页的来源。"},
                     {"platform": "xiaohongshu", "implementation": {"creator_resolution": True,
-                        "latest": True, "history_pagination": True, "detail": True, "media": True},
+                        "latest": True, "recent_window_subscription": True, "history_pagination": False, "detail": True, "media": True},
+                     "sync_scope": "recent_window", "window_size": 30,
                      "configuration": "xhs_http_or_feed_http", "configured_authors": sum(s["platform"] == "xiaohongshu" and s["source_configured"] for s in configured), "runtime": "not_checked_by_health",
-                     "validation": "prior_browser_samples_only", "experimental": True,
-                     "known_limits": "真实小红书来源须独立核验；仅历史页链可信末页可证明来源可获取范围，正文媒体分别计数。"}
+                     "validation": "recent_window_live_not_verified", "experimental": False,
+                     "known_limits": "最近内容同步 / 当前来源窗口约30篇；两次刷新间新增超过窗口可能遗漏，置顶也可能影响窗口顺序。作者、正文与图片视频仍待获准真实验收。"}
                 ], "refresh_schedule": service.refresh_schedule(), "runs": store.all()}
 
     @app.exception_handler(ValueError)
@@ -160,7 +161,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.exception_handler(AdapterFailure)
     async def platform_failure(request, error):
-        return JSONResponse({"detail": getattr(error, "reason", "平台暂不可用，进度已保留。请检查独立浏览器的登录和验证提示后重试。"), "reason": error.category}, status_code=409)
+        return JSONResponse({"detail": getattr(error, "reason", "平台暂不可用，进度已保留。出现业务失败、验证或访问拒绝须停止；账号安全暂停须按获准方案另行处理。"), "reason": error.category}, status_code=409)
 
     @app.exception_handler(PlatformCooldown)
     async def platform_cooldown(request, error):

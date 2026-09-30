@@ -482,7 +482,7 @@ class ArchiveWorkflow:
             return exact["kind"] == candidate.kind and exact["position"] == candidate.position and self.asset_valid(platform,item_id,candidate.asset_id)
         return any(self.asset_valid(platform,item_id,asset_id) for asset_id in legacy)
 
-    def export_all(self, *, batch_id: int | None = None) -> dict:
+    def export_all(self, *, batch_id: int | None = None, recent_window_authors=()) -> dict:
         """Write offline artifacts for the fixed batch scope, preserving edited files."""
         with self.connect() as db:
             if batch_id is None:
@@ -576,6 +576,12 @@ class ArchiveWorkflow:
                             "missing_registered_assets": missing_assets,
                             "media_coverage": "unknown_expected_count",
                             "items": manifest_items}
+                recent_window = (platform, author_id) in recent_window_authors
+                window_warning = "最近内容同步 / 当前来源窗口约30篇；两次刷新间新增超过窗口可能遗漏，置顶也可能影响窗口顺序。"
+                if recent_window:
+                    manifest.update(sync_scope="recent_window", window_size=30,
+                                    window_warning=window_warning,
+                                    coverage="recent_window_only", terminal_evidence=None)
                 manifest_path = _managed_write(base / "manifest.json",
                                                json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
                 corpus_path = _managed_write(base / "corpus.jsonl",
@@ -612,6 +618,8 @@ class ArchiveWorkflow:
                 coverage_text = ("已观察到当前可获取范围的明确末页" if
                                  manifest["coverage"] == "complete_for_accessible_scope" and manifest["terminal_evidence"]
                                  else "历史覆盖尚未确认，不能据此认为已到末页")
+                coverage_notice = (f'<p>{escape(window_warning)}导出范围是本地已保存作品。</p>' if recent_window
+                                   else f'<p>历史覆盖：{coverage_text}。此状态仅针对列表，不代表正文或媒体完整。</p>')
                 scan_link = (f' · <a href="{escape(quote(scan_path.name), quote=True)}">本轮扫描清单</a>'
                              if scan_path is not None else "")
                 scan_notice = (f'<p>本轮观察 {scan["counts"]["observed_unique"]} 个唯一作品；'
@@ -624,7 +632,7 @@ class ArchiveWorkflow:
                     f'<main><h1>{escape(author["display_name"])} · 作者归档</h1>'
                     f'<p>平台：{escape(platform)} · 作者ID：{escape(author_id)}</p>'
                     f'<p>已保存 {len(items)} 条作品记录；正文已保存 {len(corpus)} 条，缺失 {len(items) - len(corpus)} 条。</p>'
-                    f'<p>历史覆盖：{coverage_text}。此状态仅针对列表，不代表正文或媒体完整。</p>'
+                    + coverage_notice +
                     f'<p>媒体预期总数未知；已登记但缺失或校验失败的附件：{missing_assets} 个。</p>'
                     + scan_notice +
                     f'<nav><a href="{escape(quote(manifest_path.name), quote=True)}">归档清单</a> · '
