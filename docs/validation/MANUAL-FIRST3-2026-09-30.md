@@ -18,4 +18,10 @@
 
 ## 打包与实际安装
 
-构建/安装及运行SHA、旧资料比对和本地页面结果在完成升级后补记。交付前不提交任何真实验收动作，平台请求应保持0；只有用户本人勾选范围并点击“开始前三篇手动验收（核验并订阅）”才可能执行该一次许可。已有会话不可用时报告需要用户本人完成授权，不生成浏览器会话。
+实际版本 `0.6.0rc8`，构建及运行源码SHA `58607e1dc35233679c0f5d58928100af033d998c`，非强推同步codex/first-release并核对远端相同。包为dist/CreatorArchive-0.6.0rc8-windows.zip，SHA-256 `38189704d13e25081c87f0f6665e14afbeb5f8d4845154299b85e10cd7618ea5`。逐文件匹配构建manifest，21项锁定依赖版本匹配，pip check通过。
+
+安装目录 `C:\Users\ss\AppData\Local\Programs\CreatorArchive\CreatorArchive-0.6.0rc8-windows`。旧rc7目录保留，三个旧桌面快捷方式备份到上述backup/shortcuts后改指向rc8；真实workspace/archive/runtime复用。两个真实数据库升级后quick_check均ok，所有业务表逐行摘要与升级前完全一致；7496个旧资料文件哈希相同，无新增/删除旧资料。3个订阅及1个候选意向保留，页面共4个作者条目。
+
+本机GET核对：版本/SHA匹配新包；HTML和JS含手动入口；私有许可configured=true、validate=pending、budget=16、请求计数0、active=false、无阻塞原因。产品scope仍recent_window/window_size=30。3条旧正文及搜索读取成功，图片/视频各1样本与本地哈希匹配；874个旧导出索引与基线匹配，48个旧任务导出链接正常。只监听127.0.0.1:8765，0活跃任务、定时关闭、全局安全暂停保留。页面HTTP正常，打开应用面板返回queued；没有自动化渲染或真实平台成功证据。
+
+最终完整Python回归329项在132.142秒完成，322通过/7跳过，Node通过；socket守卫拦截7个故意测试操作。交付前真实验收请求0。用户本人打开 `http://127.0.0.1:8765/#manual-validation`，勾选范围并点击“开始前三篇手动验收（核验并订阅）”后才可能执行该一次许可。会话不可用仅报告需要用户本人完成授权，不生成浏览器会话。真实前三篇和双平台验收均未执行/未通过。
