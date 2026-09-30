@@ -25,6 +25,10 @@
 
 ## 安装进度
 
-rc10代码与模拟验证完成，待提交、构建、备份安装及运行SHA核对。当前仍为已安装rc9，运行源码8db9fa24b096632f09c7db5246a1af9f34cdd500，仅监听127.0.0.1:8765。资料沿用既有私有workspace；旧rc9及更早程序保留。安装完成后在此更新实际SHA/备份/数据保持证据。
+- 构建及运行源码SHA `4af5bb030e15079d3b5546eec3a12e6d3fa6c3c3`，GitHub codex/first-release非强推同步；49个包内源文件全部按提交清单核对。预览包dist/CreatorArchive-0.6.0rc10-windows.zip，SHA256 `cdeb60eb642b8a44568ecc58914b510921f30b39db6ccd53c33df5679f31148e`。后续仅文档提交不改变运行SHA。
+- 程序 `%LOCALAPPDATA%/Programs/CreatorArchive/CreatorArchive-0.6.0rc10-windows`；旧rc9及更早程序保留。桌面Start / Stop / Files指向rc10，正常停止/启动通过，仅监听127.0.0.1:8765，访问 http://127.0.0.1:8765/。程序包另经临时库和出口拦截器核对本机路由，无平台请求。
+- 资料实际位于 `%LOCALAPPDATA%/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/CreatorArchive/workspace`，归档在archive子目录。SQLite backup及quick_check通过，初始备份workspace/backups/before-rc10-20261001-000933，停服正式备份before-release-20261001-002610-27ff7b3e；弹窗补丁再次备份before-rc10-dialog-20261001-003420，包含上版rc10程序源文件，旧构建ZIP亦留在本机dist。
+- 升级及补丁后两库全部业务行摘要一致，7496个旧归档/下载/手工资料文件哈希完全一致，新增文件0。原3作者、1409作品、431非空正文、961附件（916图/45视频）、73任务、3脱敏失败保留；新活跃任务0，定时关闭。GET实读旧正文3篇、图片/视频各1个及哈希、旧导出HTML3个，434个index.html保留。
+- 实机重启后保留账号HTTP471/verification_required，阶段unknown，因为旧记录无端点阶段。会话文件存在、无待扫二维码；没有新增平台失败记录。真实账号及列表-100根因未解，本轮不重复真实请求；P0和双平台仍未通过。
 
 用户操作：页面刷新后可在左侧选择分区与博主阅读旧资料，“＋”打开正常订阅入口。当前HTTP471未解决，不要求再次扫码或提交Cookie。仅官方App明确提示验证时由本人处理；没有实质修复或条件变化不反复请求。后续能独立确认账号有效，再由本人沿正常产品流程抽查已有指定链接的前三篇，无需重复提供链接。
