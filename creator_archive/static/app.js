@@ -12,7 +12,7 @@ const nameOf = (p) => platformName[p] || p || "未知平台";
 function node(tag,text,className) {const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(className)n.className=className;return n;}
 function badge(text,tone="") {return node("span",text,`badge ${tone}`);}
 function empty(target,title,description="") {const n=node("div",null,"empty");n.append(node("strong",title));if(description)n.append(node("span",description));target.replaceChildren(n);}
-function notify(text,error=false) {$("feedback").textContent=text;$("feedback").className=`feedback${error?" error":""}`;$("feedback").hidden=false;if($("item-dialog").open){$("detail-feedback").textContent=text;$("detail-feedback").className=`feedback${error?" error":""}`;$("detail-feedback").hidden=false;}}
+function notify(text,error=false) {$("feedback").textContent=text;$("feedback").className=`feedback${error?" error":""}`;$("feedback").hidden=false;for(const [dialog,feedback] of [["item-dialog","detail-feedback"],["add-author-dialog","subscribe-feedback"]])if($(dialog).open){$(feedback).textContent=text;$(feedback).className=`feedback${error?" error":""}`;$(feedback).hidden=false;}if(error&&$("xhs-account").open){$("account-error").textContent=text;$("account-error").hidden=false;}}
 function formatTime(v) {if(!v)return "";const date=new Date(typeof v==="number"?v*1000:v);return Number.isNaN(date.getTime())?"":date.toLocaleString("zh-CN",{hour12:false});}
 function safeLink(url,label) {if(typeof url!=="string")return null;try{const parsed=new URL(url,location.origin);if(!["http:","https:"].includes(parsed.protocol))return null;const a=node("a",label);a.href=parsed.href;a.target="_blank";a.rel="noopener noreferrer";return a;}catch{return null;}}
 async function api(path,body) {let response;try{response=await fetch(path,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json","X-Creator-Archive":"local-validation"},body:JSON.stringify(body)});}catch{throw new Error("本机服务连接失败，原因尚未确定。已有资料与任务检查点保留；请双击 start.cmd 启动服务后刷新页面。");}let data;try{data=await response.json();}catch{throw new Error("本机服务未返回可读取的结果，请检查启动窗口后刷新。");}if(!response.ok){let message=typeof data.detail==="string"?data.detail:data.message;if(!message&&Array.isArray(data.detail))message=data.detail.map(x=>x.msg).join("；");if(data.business_code!==null&&data.business_code!==undefined)message=`${message}（业务码 ${data.business_code}）`;throw new Error(message||`操作未完成（HTTP ${response.status}），已保存资料仍保留，请检查服务后重试。`);}return data;}
@@ -748,7 +748,7 @@ $("reader-wechat").onclick=()=>selectReaderAuthor("wechat").catch(e=>notify(e.me
 $("reader-search").addEventListener("input",renderReaderAuthors);
 $("reader-account").onclick=()=>$("xhs-account").showModal();
 $("close-account").onclick=()=>$("xhs-account").close();
-$("reader-add").onclick=$("manage-add").onclick=()=>$("add-author-dialog").showModal();
+$("reader-add").onclick=$("manage-add").onclick=()=>{$("subscribe-feedback").hidden=true;$("add-author-dialog").showModal();};
 $("close-add-author").onclick=()=>$("add-author-dialog").close();
 for(const anchor of document.querySelectorAll(".sidebar nav a, .sidebar .brand"))anchor.addEventListener("click",()=>showReaderView(anchor.getAttribute("href").slice(1)));
 $("filter-platform").value=ui.platform;

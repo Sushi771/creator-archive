@@ -445,3 +445,11 @@ assert.ok(run('readerCalls.every(call=>call.body===undefined)'), 'Platform/searc
 assert.match(run('accountFailureText({reason:"verification_required",failure:{phase:"create_qr",http_status:471}})'),/生成二维码.*471.*具体原因未知.*无需反复扫码/);
 assert.match(html,/<dialog id="xhs-account"/);assert.match(html,/<dialog id="add-author-dialog"/);
 console.log('Author-first workspace checks passed: platform partitions, local author search, scoped local items, independent account/add dialogs and accurate HTTP471 feedback.');
+
+run('$("add-author-dialog").open=true;notify("订阅失败，旧资料保留",true)');
+assert.equal(elements['subscribe-feedback'].hidden,false);
+assert.match(elements['subscribe-feedback'].textContent,/订阅失败/);
+run('$("add-author-dialog").open=false;$("xhs-account").open=true;notify("账号接口HTTP471",true)');
+assert.equal(elements['account-error'].hidden,false);
+assert.match(elements['account-error'].textContent,/HTTP471/);
+console.log('Dialog submission feedback checks passed: failures stay visible inside the current dialog.');
