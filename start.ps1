@@ -7,8 +7,7 @@ param(
     [string]$ProfileDir
 )
 $ErrorActionPreference = 'Stop'
-# Installed legacy versions must stay stopped while the durable safety latch exists.
-if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'CreatorArchive/xhs-network-paused.json')) { throw 'XHS account safety pause: installed legacy runtime remains stopped; no automatic login or restart.' }
+# Local pages may run only with the application's network and browser locks intact.
 
 Set-Location -LiteralPath $PSScriptRoot
 . (Join-Path $PSScriptRoot 'launcher-profile.ps1')
@@ -66,6 +65,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed. Check the network and run start.cmd again.' }
         Set-Content -LiteralPath $dependencyStamp -Value $lockHash -Encoding ascii
     }
+    & $pythonExe -c 'from creator_archive.network_safety import require_paused_local_runtime; require_paused_local_runtime()'
+    if ($LASTEXITCODE -ne 0) { throw 'Local runtime safety check failed. XHS networking and browser login must remain paused.' }
     if ($DataDir.Contains('"')) { throw 'DataDir must not contain quotation marks.' }
     if ($Foreground) {
         Write-Host "Creator Archive: $url (Ctrl+C to stop)"

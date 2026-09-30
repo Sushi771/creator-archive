@@ -20,3 +20,17 @@ def require_xhs_network():
 def require_browser_disabled():
     # Browser automation remains forbidden even in an approved HTTP test scope.
     raise AdapterFailure("network_paused")
+
+
+def require_paused_local_runtime():
+    """Fail closed before launching local pages if either safety guard is absent."""
+    if xhs_network_paused() is not True:
+        raise RuntimeError("XHS network policy must remain paused")
+    for guard in (require_xhs_network, require_browser_disabled):
+        try:
+            guard()
+        except AdapterFailure as error:
+            if error.category != "network_paused":
+                raise RuntimeError("Unexpected local runtime safety policy") from error
+        else:
+            raise RuntimeError("Local runtime safety guard is not blocking")

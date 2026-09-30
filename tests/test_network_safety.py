@@ -62,6 +62,16 @@ class NetworkSafetyTests(unittest.TestCase):
             self.assertPaused(network_safety.require_xhs_network)
             self.assertPaused(network_safety.require_browser_disabled)
 
+    def test_local_runtime_start_requires_both_network_and_browser_locks(self):
+        network_safety.require_paused_local_runtime()
+        with patch.object(network_safety, "xhs_network_paused", return_value=False):
+            with self.assertRaises(RuntimeError):
+                network_safety.require_paused_local_runtime()
+        for name in ("require_xhs_network", "require_browser_disabled"):
+            with patch.object(network_safety, name, return_value=None):
+                with self.assertRaises(RuntimeError):
+                    network_safety.require_paused_local_runtime()
+
     def test_http_all_entry_points_block_before_cookies_signing_or_dns(self):
         candidate = MediaCandidate("image", 0, CDN)
         calls = (
