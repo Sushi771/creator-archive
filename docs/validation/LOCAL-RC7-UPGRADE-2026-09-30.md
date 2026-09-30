@@ -23,4 +23,15 @@ Windows 本机 Python 3.14，socket 出口拦截和临时合成库：317 项运�
 
 ## 安装结果
 
-实际安装、运行SHA、监听、原资料摘要、文件指纹和本地读取结果在完成本机验证后补充。此处不预先声明部署成功。
+- 新版本：`0.6.0rc7`，构建/运行源码 `152133a0847bfead6d0b28771da8fae6a522e843`。该提交为上述基础源码加版本号、离线启动检查和文档；安装后证据另提交，程序文件不再改动。
+- 安装目录：`C:\Users\ss\AppData\Local\Programs\CreatorArchive\CreatorArchive-0.6.0rc7-windows`。旧rc6目录保持。仓库 `dist/CreatorArchive-0.6.0rc7-windows.zip` 及 `.sha256` 仅本机保存，不发布；ZIP SHA-256 `587a3e639ec48226c83ae031c4dc8690610674c07aaac790110119788fbb96c4`。所有打包文件均与release-info校验一致。
+- 新建独立venv并复制旧已安装site-packages，逐项核对全部21个requirements锁定版本，pip check通过；没有下载依赖或启动浏览器。
+- 三个旧快捷方式先备份至上述备份的shortcuts子目录，确认归属rc6后更新为rc7；launcher profile复用同一workspace/runtime。未调用通用upgrade脚本，未读取/复制Cookie或凭据，sources配置及资料原位保留。
+- 正常Stop/Start运行成功，`/api/status`与release-info版本/完整SHA一致，仅 `127.0.0.1:8765` 监听；定时enabled=false、0活跃jobs。服务保持运行等待用户，未发起任何同步/验证/恢复。
+- 页面/静态JS/API通过本机HTTP读取：最近内容同步/约30篇口径、scope=recent_window及window_size=30均已部署。打开应用面板工具返回queued，未使用浏览器自动化；没有浏览器渲染或人工点击验收证据。
+- 本机API读取3作者、搜索3个稳定ID和3条已存正文；图片/视频各读取1个实际附件，返回字节与本地SHA匹配。3作者、1409作品、431非空正文、961附件（916图片/45视频）保持。
+- 874个旧作者索引通过HTTP读出且与升级前哈希一致；48个旧导出任务归档/清单链接可读。未运行新导出任务，单个/所选/全部导出由临时合成回归验证，不能冒称真实用户点击。
+- 升级后两库quick_check=ok。所有旧表计数和逐行摘要一致；仅新增request_failures与recent_window_observations两张空表。7496个旧文件大小和SHA一致，0新增文件；旧正文/媒体/导出/手工资料保持。私有验证结果在备份目录local-data-baseline.json、after-upgrade-report.json及local-http-report.json，不提交Git。
+- Node `tests/test_frontend.mjs`合同通过。没有小红书真实请求、作者验证、真实订阅、首次同步、手动/定时同步刷新、#72/#74、深分页、Cookie/凭据处理、浏览器自动化或WeWe操作。
+
+交付状态为新版本机安全安装与资料读回通过、服务空闲等待；**真实订阅闭环尚不能开始，原因是现有硬暂停也拦住用户点击登录/核验/订阅/刷新。** 该限制明确保留，本轮未扩大最小离线启动修正为联网策略解锁。真实前三篇及双平台验收未通过。

@@ -4,6 +4,10 @@
 
 用户已明确授权打包和本机升级，替代上轮禁止本机部署/重启的限制；小红书真实联网、登录/会话与浏览器自动化限制保持。基于 `27e06ede3763dbdd85d03e0d50fc37722f578612`，仅升级预览版本号并调整启动入口：启动前必须证明 HTTP 与浏览器安全策略都返回 `network_paused`，否则拒绝启动。本地资料浏览、搜索及导出可运行，旧 rc6 目录及真实资料保留。实际备份、安装、运行 SHA 和数据一致性结果见本单元部署记录，不能用下文旧版结果替代。
 
+**实际安装已完成：** `0.6.0rc7`，打包/运行源码 SHA `152133a0847bfead6d0b28771da8fae6a522e843`，程序目录 `C:\Users\ss\AppData\Local\Programs\CreatorArchive\CreatorArchive-0.6.0rc7-windows`。ZIP及校验文件在仓库忽略目录dist，包SHA-256 `587a3e639ec48226c83ae031c4dc8690610674c07aaac790110119788fbb96c4`。实际workspace沿用Codex私有目录（见[安装记录](docs/validation/LOCAL-RC7-UPGRADE-2026-09-30.md)），archive为workspace/archive。升级前SQLite backup在workspace/backups/before-rc7-20260930-173115；原库、备份及升级后quick_check均ok。全部旧业务表逐行摘要和7496个旧归档/downloads/Obsidian文件指纹一致，无新增/删除旧资料；仅新增request_failures与recent_window_observations两张空表。
+
+运行后本机HTTP读取作者、搜索和3条正文，图片/视频各1样本与本地哈希匹配；874个旧导出索引与基线哈希相同，另48个旧任务归档/清单链接读取成功。3作者、1409作品、431非空正文、961附件（916图片/45视频）保持。recent-window HTML/JS及API scope=recent_window/window_size=30已部署；未运行新的导出任务，单个/所选/全部导出由离线合成回归验证。正常Stop/Start后版本/SHA与资料保持，3桌面快捷方式指向rc7，仅127.0.0.1:8765监听，0活跃任务、定时关闭，服务保持运行等待用户。本地页面HTTP可达；应用打开面板工具返回queued，没有自动化浏览器渲染/点击证据。317项离线回归310通过/7跳过，Node界面合同通过。真实前三篇及双平台验收仍未执行/未通过。
+
 **限制：当前源码仍硬暂停小红书。** 用户点击订阅、核验、刷新或登录也不会解锁；浏览器登录脚本仍拒绝。该版可以等待用户查看本地界面，但尚不能声称具备真实订阅闭环验收条件。本轮不改变联网策略。
 
 > **当前正式P0：小红书最近窗口订阅。** 用户已取消首次全历史要求；最新第一页（现有来源最多30篇）是正式同步范围，非Demo。深分页、可信历史末页、#72第7/8页和-100根因退出P0并停止继续排查。见[执行与最小验证计划](docs/CURRENT_EXECUTION_RECENT_WINDOW.md)。
