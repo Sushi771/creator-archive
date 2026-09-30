@@ -33,7 +33,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual((xhs["sync_scope"], xhs["window_size"]), ("recent_window", 30))
         self.assertEqual(xhs["validation"], "recent_window_live_not_verified")
         self.assertIn("可能遗漏", xhs["known_limits"])
-        self.assertTrue(status["xhs_network_paused"])
+        self.assertFalse(status["xhs_network_paused"])
         self.assertEqual(self.client.get("/api/workspace").json()["build"]["commit"], status["commit"])
         self.assertEqual(self.client.get("/favicon.ico").status_code, 204)
 

@@ -17,8 +17,7 @@ import tempfile
 import time
 
 
-def configure_native_source(data_dir: Path, cookie_file: Path) -> Path:
-    network_safety.require_xhs_network()
+def configure_native_source(data_dir: Path, cookie_file: Path, *, replace: bool = False) -> Path:
     data_dir = Path(data_dir).resolve(strict=True)
     cookie_file = Path(cookie_file).resolve(strict=True)
     if not data_dir.is_dir() or not (data_dir / "archive.sqlite3").is_file():
@@ -38,9 +37,12 @@ def configure_native_source(data_dir: Path, cookie_file: Path) -> Path:
         data = {}
     target = {"kind": "xhs_http", "cookie_file": str(cookie_file), "min_interval_seconds": 1.5}
     existing = data.get("xiaohongshu/*")
-    if existing is not None and existing != target:
+    if existing is not None and existing != target and not replace:
         raise ValueError("existing_xhs_source_requires_manual_review")
-    if existing == target:
+    author_updates = {key: {**value, "cookie_file": str(cookie_file)} for key, value in data.items()
+                      if replace and key.startswith("xiaohongshu/") and isinstance(value, dict)
+                      and value.get("kind") == "xhs_http" and value.get("cookie_file") != str(cookie_file)}
+    if existing == target and not author_updates:
         return path
 
     # Preserve other author/platform entries and verify the backup before
@@ -53,6 +55,7 @@ def configure_native_source(data_dir: Path, cookie_file: Path) -> Path:
         if backup.read_bytes() != path.read_bytes():
             raise OSError("private_source_backup_failed")
     data["xiaohongshu/*"] = target
+    data.update(author_updates)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=data_dir,

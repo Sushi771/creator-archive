@@ -45,11 +45,7 @@ def safe_media_url(url: str, *, resolve: bool = True) -> str:
 
 class _SafeRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        scope = network_safety.manual_scope()
-        if scope is not None:
-            scope.stop("media_redirect_refused")
-            raise MediaFailure("media_redirect_refused", http_status=code)
-        return super().redirect_request(req, fp, code, msg, headers, safe_media_url(newurl))
+        raise MediaFailure("media_redirect_refused", http_status=code)
 
 
 def _mime(header: bytes, kind: str) -> tuple[str, str]:
@@ -102,8 +98,6 @@ def download_media(candidate: MediaCandidate, target_dir: Path, *, timeout: floa
     network_safety.require_xhs_network()
     temp = None
     try:
-        parsed = urlsplit(url)
-        network_safety.consume_manual_request(parsed.hostname, parsed.path + ("?" + parsed.query if parsed.query else ""))
         url = safe_media_url(url)
         request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/", "Accept-Encoding": "identity"})
         with build_opener(_SafeRedirect()).open(request, timeout=timeout) as response:

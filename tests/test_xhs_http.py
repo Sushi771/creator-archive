@@ -309,31 +309,14 @@ class XhsHttpTransportTests(unittest.TestCase):
             self.transport.page(AUTHOR, "next")
         self.assertEqual(caught.exception.category, "verification_required")
 
-    def test_explicit_login_helper_saves_only_private_local_cookies(self):
+    def test_old_browser_login_helper_is_disabled_without_creating_session(self):
         target = Path(self.temporary.name) / "authorized.txt"
-        opened = []
-        browser = SimpleNamespace(
-            new_context=lambda: SimpleNamespace(
-                new_page=lambda: SimpleNamespace(goto=lambda url, **kwargs: opened.append(url)),
-                cookies=lambda urls: [{"name": "a1", "value": "synthetic-a1", "domain": ".xiaohongshu.com"},
-                                      {"name": "web_session", "value": "synthetic-session", "domain": "www.xiaohongshu.com"},
-                                      {"name": "attacker", "value": "skip", "domain": "evilxiaohongshu.com"}]),
-            close=lambda: None)
-        playwright = SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: browser))
-        class Manager:
-            def __enter__(self):
-                return playwright
-            def __exit__(self, *args):
-                pass
-        package = ModuleType("playwright")
-        package.__path__ = []
-        sync_api = ModuleType("playwright.sync_api")
-        sync_api.sync_playwright = lambda: Manager()
-        with patch.dict(sys.modules, {"playwright": package, "playwright.sync_api": sync_api}), patch("builtins.input", return_value=""):
-            authorize_session(target)
-        self.assertEqual(opened, ["https://www.xiaohongshu.com/explore"])
-        self.assertEqual(_read_cookies(target)[1], {"a1": "synthetic-a1", "web_session": "synthetic-session"})
-        self.assertNotIn("attacker", target.read_text(encoding="utf-8"))
+        with patch("creator_archive.network_safety.require_browser_disabled",
+                   side_effect=AdapterFailure("browser_automation_disabled")), patch("subprocess.Popen") as launch:
+            with self.assertRaises(AdapterFailure):
+                authorize_session(target)
+            launch.assert_not_called()
+        self.assertFalse(target.exists())
 
 
 if __name__ == "__main__":

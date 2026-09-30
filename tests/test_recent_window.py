@@ -176,12 +176,11 @@ class RecentWindowTests(unittest.TestCase):
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
         self.assertEqual(job["listed_count"], 2)
 
-    def test_network_pause_remains_hard_rejection(self):
-        with patch("creator_archive.network_safety.xhs_network_paused", return_value=True):
-            with self.assertRaises(PlatformAccessPaused):
-                self.service.start("full", "xiaohongshu", AUTHOR)
-        self.assertEqual(FakeXhsHttpTransport.page_requests, [])
-        self.assertEqual(FakeXhsHttpTransport.detail_requests, [])
+    def test_no_artificial_pause_is_recreated_and_schedule_stays_off(self):
+        self.assertFalse((self.root / "xhs-network-paused.json").exists())
+        self.assertIsNone(self.service._platform_access_reason("xiaohongshu"))
+        self.assertFalse(self.service.refresh_schedule()["enabled"])
+        self.assertIsNone(self.service._scheduler)
 
     def test_every_legacy_network_entry_converts_new_work_and_retires_old_jobs(self):
         for mode in ("full", "author_archive", "page_archive", "demo_archive", "latest", "source_refresh"):

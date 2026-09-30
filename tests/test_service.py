@@ -316,7 +316,7 @@ class WorkspaceTests(unittest.TestCase):
                 service = WorkspaceService(root, adapter_factory=lambda _: Limited())
                 author = "a" * 24
                 service.subscribe(f"https://www.xiaohongshu.com/user/profile/{author}")
-                with self.assertRaises(AdapterFailure):
+                with patch.object(service.account, "start", side_effect=AdapterFailure("rate_limited",60)), self.assertRaises(AdapterFailure):
                     service.verify("xiaohongshu", author) if entry == "verify" else service.open_login()
                 self.assertEqual(service.workspace()["runs"], [])
                 restarted = WorkspaceService(root, adapter_factory=lambda _: self.fail("no network during persisted cooldown"))

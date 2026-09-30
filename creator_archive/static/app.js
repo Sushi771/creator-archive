@@ -5,7 +5,7 @@ const stateName = {queued:"排队中",running:"执行中",succeeded:"任务完�
 const coverageName = {complete_for_accessible_scope:"已观察到可获取列表末页",scanning:"历史扫描进行中",blocked:"历史扫描受阻",complete:"历史列表已至末页",complete_observed:"历史列表已至末页",partial:"历史列表不完整",unknown:"历史覆盖未知",not_started:"尚未扫描"};
 const modeName = {source_refresh:"最近内容同步",recent_window:"最近内容同步",full:"旧历史任务（仅保留记录）",latest:"最近内容同步",archive:"本地归档",all_archive:"旧历史批次（仅保留记录）",page_archive:"两页采集并归档（实验）",author_archive:"旧作者历史任务（仅保留记录）",demo_archive:"前10篇测试并归档",content:"保存正文与媒体",metrics:"刷新互动指标",import:"导入验证资料"};
 const kindName = {profile:"博主主页",item:"作品链接",short_link:"分享短链",collection:"合集链接"};
-const reasonName = {network_paused:"小红书真实联网已因账号安全暂停，须另有最小验证方案与用户明确批准",account_safety_user_instruction_2026_09_30:"小红书真实联网已持久暂停；登录、冷却和重启不能解除",recent_window_complete:"最近第一页的新作品正文与可获取媒体已保存",recent_window_unchanged:"最近第一页无尚未归档的新作品，已有内容保持",recent_window_partial:"最近第一页部分新作品正文或媒体仍有缺口，成功资源已保留",timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台访问受限，真实联网保持暂停",identity_unverified:"作者身份尚待核验"};
+const reasonName = {recent_window_complete:"最近第一页的新作品正文与可获取媒体已保存",recent_window_unchanged:"最近第一页无尚未归档的新作品，已有内容保持",recent_window_partial:"最近第一页部分新作品正文或媒体仍有缺口，成功资源已保留",timeout:"请求超时",page_budget_reached:"达到本次页数上限",repeated_cursor:"分页游标重复",empty_nonterminal_page:"返回空页但仍有下一页",missing_terminal_evidence:"缺少可信末页依据",identity_mismatch:"作者身份不一致",adapter_version_changed:"组件版本变化",unexpected_adapter_error:"组件异常",transport_unavailable:"采集通道尚未接通",needs_login:"当前会话需要登录",rate_limited:"平台访问受限，真实联网保持暂停",identity_unverified:"作者身份尚待核验",unknown_business_error:"平台业务请求失败；已停止当次任务，请查看错误记录",verification_required:"平台要求验证；已停止当次任务",invalid_response:"平台响应不符合预期；已停止当次任务",media_failed:"媒体保存失败；已停止，正文和成功资源保留",reference_missing:"作品引用缺失；已停止，成功资源保留"};
 const ui = {filters:{sort:"published_at",order:"desc"},detailRequest:0,workspace:null,offset:0,limit:20,total:0,filter:"",platform:"",itemRequest:0,refreshPromise:null,busy:false,jobPointerActive:false,mutationEpoch:0,pendingRefresh:false,subscriptionsSignature:null,runsSignature:null,platformsSignature:null,scheduleSignature:null,itemsSignature:"",confirmAuthor:null,tagAuthor:null,sourceAuthor:null,selectedAuthors:new Set(),previewAuthors:null};
 const num = (v) => Number(v || 0).toLocaleString("zh-CN");
 const nameOf = (p) => platformName[p] || p || "未知平台";
@@ -15,7 +15,7 @@ function empty(target,title,description="") {const n=node("div",null,"empty");n.
 function notify(text,error=false) {$("feedback").textContent=text;$("feedback").className=`feedback${error?" error":""}`;$("feedback").hidden=false;if($("item-dialog").open){$("detail-feedback").textContent=text;$("detail-feedback").className=`feedback${error?" error":""}`;$("detail-feedback").hidden=false;}}
 function formatTime(v) {if(!v)return "";const date=new Date(typeof v==="number"?v*1000:v);return Number.isNaN(date.getTime())?"":date.toLocaleString("zh-CN",{hour12:false});}
 function safeLink(url,label) {if(typeof url!=="string")return null;try{const parsed=new URL(url,location.origin);if(!["http:","https:"].includes(parsed.protocol))return null;const a=node("a",label);a.href=parsed.href;a.target="_blank";a.rel="noopener noreferrer";return a;}catch{return null;}}
-async function api(path,body) {let response;try{response=await fetch(path,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json","X-Creator-Archive":"local-validation"},body:JSON.stringify(body)});}catch{throw new Error("本机服务连接失败，原因尚未确定。已有资料与任务检查点保留；请双击 start.cmd 启动服务后刷新页面。");}let data;try{data=await response.json();}catch{throw new Error("本机服务未返回可读取的结果，请检查启动窗口后刷新。");}if(!response.ok){let message=typeof data.detail==="string"?data.detail:data.message;if(!message&&Array.isArray(data.detail))message=data.detail.map(x=>x.msg).join("；");throw new Error(message||`操作未完成（HTTP ${response.status}），已保存资料仍保留，请检查服务后重试。`);}return data;}
+async function api(path,body) {let response;try{response=await fetch(path,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json","X-Creator-Archive":"local-validation"},body:JSON.stringify(body)});}catch{throw new Error("本机服务连接失败，原因尚未确定。已有资料与任务检查点保留；请双击 start.cmd 启动服务后刷新页面。");}let data;try{data=await response.json();}catch{throw new Error("本机服务未返回可读取的结果，请检查启动窗口后刷新。");}if(!response.ok){let message=typeof data.detail==="string"?data.detail:data.message;if(!message&&Array.isArray(data.detail))message=data.detail.map(x=>x.msg).join("；");if(data.business_code!==null&&data.business_code!==undefined)message=`${message}（业务码 ${data.business_code}）`;throw new Error(message||`操作未完成（HTTP ${response.status}），已保存资料仍保留，请检查服务后重试。`);}return data;}
 function actionButton(label,action,small=true) {const b=node("button",label,`secondary${small?" small":""}`);b.type="button";b.addEventListener("click",()=>perform(b,action));return b;}
 async function perform(button, action) {
   if (ui.busy) {
@@ -35,7 +35,7 @@ async function perform(button, action) {
     ui.busy = false;
     button.disabled = false;
     button.textContent = original;
-    renderManualValidation(ui.workspace?.manual_validation);
+
     if (ui.pendingRefresh) {
       ui.pendingRefresh = false;
       refresh(true).catch(error => notify(error.message, true));
@@ -43,30 +43,6 @@ async function perform(button, action) {
   }
 }
 function authorBy(platform,id) {return ui.workspace?.subscriptions.find(x=>x.platform===platform&&x.author_id===id);}
-function renderManualValidation(plan) {
-  $("manual-validation").hidden=!plan?.configured;
-  if(!plan?.configured)return;
-  const sub=authorBy("xiaohongshu",plan.author_id);
-  const descriptions={pending:"待本人点击",running:"进行中",succeeded:"已完成",stopped:"已停止"};
-  $("xhs-safety-notice").textContent="常规小红书联网保持暂停；已配置下方单作者手动验收。只有本人确认并点击对应按钮才会请求，不自动同步。";
-  const state=plan.actions.validate;
-  $("manual-validation-status").textContent=`作者：${sub?.display_name||plan.author_id} · 前三篇验收：${descriptions[state.state]||state.state} · 已计数HTTP ${Object.values(state.counts||{}).reduce((a,b)=>a+b,0)} / 16${plan.media_required?` · 待归档媒体共${plan.media_required}项，剩余${plan.media_remaining}项`:""}${plan.blocked_reason?` · 已停止：${plan.blocked_reason}。请反馈提示，不重复重试。`:""}`;
-  $("manual-validate").disabled=Boolean(plan.active||plan.blocked_reason||state.state!=="pending");
-  $("manual-export").disabled=!sub?.identity_verified||sub.subscribed===false||sub.subscription_confirmation_required;
-}
-async function performManualValidation(action) {
-  const plan=ui.workspace?.manual_validation;
-  if(!plan?.configured||!$("manual-validation-confirm").checked)throw new Error("请先勾选本人确认与本次请求预算。未请求平台。");
-  $("manual-validation-confirm").checked=false;
-  try {
-    const result=await api("/api/xhs/manual-validation",{action,author_id:plan.author_id,confirmed:true});
-    notify(`已创建前三篇手动验收任务 #${result.job_id}，总预算16 HTTP。请查看任务状态并核对原列表前三篇。`);
-  } catch(error) {
-    await refresh(true);
-    throw new Error(`${error.message}。本次验收已停止，请反馈提示，不重复重试。`);
-  }
-  await refresh(true);
-}
 function displayAuthor(platform,id) {return authorBy(platform,id)?.display_name||id||"全部作者";}
 function renderSubscriptionTags(subscriptions) {
   const select=$("subscription-tag"), selected=select.value;
@@ -106,10 +82,10 @@ function renderSubscriptions(subscriptions) {
                 badge(sub.identity_verified?"身份已核验":"身份待验证",sub.identity_verified?"":"warning"),
                 badge(`${num(sub.item_count)} 作品 · ${num(sub.detail_count)} 正文 · 已登记图片 ${num(sub.registered_media?.image)} / 视频 ${num(sub.registered_media?.video)} · 观察范围媒体已完成 ${num(sub.media_observed_complete_count)} · 待补 ${num(sub.media_partial_item_count)} · 范围未知 ${num(sub.media_unknown_item_count)}`,"neutral"),
                 badge(recentWindow?`最近内容同步 / 当前来源窗口约${num(sub.window_size??sub.window_limit??30)}篇`:"来源窗口未验证 / 覆盖范围按来源记录","neutral"),
-                badge((sub.source_configured??sub.source_connected)?`${sub.source_kind==="feed_http"?"后台 Feed":"小红书本机来源"} 已配置${sub.identity_verified?"":"，待核验"}${sub.source_health==="needs_login"?" · 需登录":sub.source_health==="verification_required"?" · 需验证":sub.source_health==="rate_limited"?(sub.source_kind==="xhs_http"?" · 联网暂停，须另行批准验证":" · 联网暂停"):["network_paused","account_safety_user_instruction_2026_09_30"].includes(sub.source_health)?" · 账号安全暂停":sub.source_health==="last_run_succeeded"?" · 上次任务成功":" · 当前会话未检查"}`:"后台来源未配置",(sub.source_configured??sub.source_connected)?"neutral":"warning"));
+                badge((sub.source_configured??sub.source_connected)?`${sub.source_kind==="feed_http"?"后台 Feed":"小红书本机来源"} 已配置${sub.identity_verified?"":"，待核验"}${sub.source_health==="needs_login"?" · 需登录":sub.source_health==="verification_required"?" · 需验证":sub.source_health==="rate_limited"?(sub.source_kind==="xhs_http"?" · 平台限流，需检查会话":" · 联网暂停"):["network_paused","account_safety_user_instruction_2026_09_30"].includes(sub.source_health)?" · 上次请求受限":sub.source_health==="last_run_succeeded"?" · 上次任务成功":" · 当前会话未检查"}`:"后台来源未配置",(sub.source_configured??sub.source_connected)?"neutral":"warning"));
     for(const tag of sub.tags||[])tags.append(badge(tag,"neutral"));
     text.append(tags);
-    if(recentWindow)text.append(node("p","首次同步与手动/定时刷新都只读取最新第一页；按稳定作品 ID 仅新增未归档作品。两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇。","hint"));
+    if(recentWindow)text.append(node("p","首次同步与手动刷新都只读取最新第一页；按稳定作品 ID 仅新增未归档作品。两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇。","hint"));
     if(sub.subscribed===false)text.append(node("p","新批次不再包含这位作者；旧归档、手工资料、任务及固定批次检查点保留。","hint"));
     else if(sub.subscription_confirmation_required)text.append(node("p",sub.identity_verified?"作者身份已核验；确认前不进入全部订阅批次，也不会自动扫描历史。":"先配置后台来源并核验作者身份；确认前不进入全部订阅批次，也不会自动扫描历史。","hint"));
     else if(sub.message)text.append(node("p",sub.message,"hint"));
@@ -201,7 +177,7 @@ async function saveTags() {
 }
 function isRecentWindow(run) {return run.mode==="recent_window"||run.sync_scope==="recent_window";}
 function isLegacyHistory(run) {return !isRecentWindow(run)&&["full","all_archive","author_archive","page_archive","demo_archive"].includes(run.mode);}
-function recentWindowProgress(run) {if(run.manual_validation_scope==="first3")return `本人手动验收 · 原列表前三篇 · 整次最多16 HTTP · 已保存列表 ${num(run.listed_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count)} 个；本次不是30篇窗口完整验收，不进行第二轮刷新`;return `最近内容同步 / 当前来源窗口约${num(run.window_size??run.window_limit??30)}篇 · 最新第一页 ${num(run.listed_count??run.window_count??run.target_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count??run.existing_count)} 个 · 已存作品列表差异 ${num(run.listed_difference_count)} 个（正文附件保持，未自动判定内容更新）；两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇`; }
+function recentWindowProgress(run) {return `最近内容同步 / 当前来源窗口约${num(run.window_size??run.window_limit??30)}篇 · 本次最多 ${num(run.window_limit??30)} 篇 · 最新第一页 ${num(run.listed_count??run.window_count??run.target_count)} 个 ID · 待归档 ${num(run.target_count)} 个，完成 ${num(run.item_count)} 个 · 已有作品跳过 ${num(run.skipped_existing_count??run.existing_count)} 个 · 已存作品列表差异 ${num(run.listed_difference_count)} 个（正文附件保持，未自动判定内容更新）；两次刷新之间新增超过单页窗口时可能遗漏，不保证永不漏篇`; }
 function isPagePipeline(run) {return ["page_archive","author_archive","demo_archive"].includes(run.mode);}
 function renderArchiveBatches(batches) {
   const list=$("archive-batch-list");list.replaceChildren();
@@ -270,7 +246,7 @@ async function refresh(forceItems = false, background = false) {
       w.runs = w.runs || [];
       w.archive_batches = w.archive_batches || [];
       ui.workspace = w;
-      renderManualValidation(w.manual_validation);
+      renderAccount(w.xhs_account);
       $("stat-subscriptions").textContent = num(w.stats?.subscriptions ?? w.subscriptions.length);
       $("stat-items").textContent = num(w.stats?.items);
       $("stat-details").textContent = num(w.stats?.details);
@@ -299,7 +275,7 @@ async function refresh(forceItems = false, background = false) {
         const schedule=w.refresh_schedule||{enabled:false,interval_minutes:1440};
         $("refresh-schedule-enabled").checked=!!schedule.enabled;
         $("refresh-schedule-interval").value=String(schedule.interval_minutes||1440);
-        $("refresh-schedule-status").textContent=schedule.enabled?`已启用 · 下次尝试 ${formatTime(schedule.next_at)||"待安排"} · 上次启动 ${num(schedule.last_started_jobs)} 个作者刷新任务`:"当前关闭；真实联网保持安全暂停，手动/定时操作不能解除";
+        $("refresh-schedule-status").textContent=schedule.enabled?`已启用 · 下次尝试 ${formatTime(schedule.next_at)||"待安排"} · 上次启动 ${num(schedule.last_started_jobs)} 个作者刷新任务`:"当前关闭；本版本仅由本人手动同步，账号连接和订阅可在页面操作。";
         ui.scheduleSignature=scheduleSignature;
       }
       $("data-dir").textContent = w.data_dir || "未提供目录";
@@ -325,7 +301,7 @@ async function refresh(forceItems = false, background = false) {
   try { await request; }
   finally { if (ui.refreshPromise === request) ui.refreshPromise = null; }
 }
-async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();let result;try{result=await api("/api/jobs",body);}catch(error){if(mode==="source_refresh")throw new Error("后台来源刷新未创建。请核对作者配置和本机服务；已有资料保留。");throw error;}notify(mode==="source_refresh"?"已请求最近内容同步。小红书只读取最新第一页，按稳定作品 ID 跳过已有作品；请查看正文和本地图片/视频结果。真实联网仍遵守安全暂停。":result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:mode==="demo_archive"?"已核验并确认的小红书作者（含暂停项）":"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
+async function startJob(mode,sub,sourceUrl="") {const body={mode};if(sub){body.platform=sub.platform;body.author_id=sub.author_id;if(sub.item_id)body.item_id=sub.item_id;}if(sub?.item_id&&["content","metrics"].includes(mode)&&sourceUrl.trim())body.source_url=sourceUrl.trim();let result;try{result=await api("/api/jobs",body);}catch(error){if(mode==="source_refresh")throw new Error("后台来源刷新未创建。请核对作者配置和本机服务；已有资料保留。");throw error;}notify(mode==="source_refresh"?"已请求最近内容同步。小红书只读取最新第一页，按稳定作品 ID 跳过已有作品；请查看正文和本地图片/视频结果。遇到平台拒绝、验证、限流或业务失败立即停止。":result.message||`已创建${sub?`「${sub.display_name||sub.author_id}」`:mode==="demo_archive"?"已核验并确认的小红书作者（含暂停项）":"全部订阅"}的${modeName[mode]}任务。请查看实际进度与接入提示。`);await refresh(true);if($("item-dialog").open)$("item-dialog").close();$("jobs").scrollIntoView();}
 async function previewSelectedArchive() {
   const selected_authors=selectedAuthorPayload();
   if(!selected_authors.length)throw new Error("请先在作者卡片勾选至少一位已核验、已确认且仍订阅的作者。未创建任务。");
@@ -584,14 +560,12 @@ async function openItem(item) {
   if(!$("item-dialog").open)$("item-dialog").showModal();
 }
 
-$("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined});$("link-result").textContent=result.message||"订阅已保存。作者核验与采集能力请查看订阅和平台状态。";notify($("link-result").textContent);await refresh(true);});});
+$("subscribe-form").addEventListener("submit",(event)=>{event.preventDefault();const b=event.submitter;perform(b,async()=>{const result=await api("/api/subscriptions",{text:$("link").value,display_name:$("display-name").value||undefined,window_limit:Number($("sync-window-limit").value)});$("link-result").textContent=result.message||"订阅已保存，请查看实际任务结果。";notify($("link-result").textContent);await refresh(true);});});
 $("resolve-item-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,resolveAndSaveItem);});
 $("confirm-subscription").onclick=()=>perform($("confirm-subscription"),confirmSubscription);
 $("cancel-subscription").onclick=()=>$("confirm-subscription-dialog").close();
 $("confirm-subscription-dialog").addEventListener("close",()=>{ui.confirmAuthor=null;});
 $("subscription-platform").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
-$("manual-validate").addEventListener("click",()=>perform($("manual-validate"),()=>performManualValidation("validate")));
-$("manual-export").addEventListener("click",()=>perform($("manual-export"),()=>startJob("archive",{platform:"xiaohongshu",author_id:ui.workspace.manual_validation.author_id})));
 $("subscription-tag").onchange=()=>renderSubscriptions(ui.workspace?.subscriptions||[]);
 if($("preview-selected-archive"))$("preview-selected-archive").onclick=()=>perform($("preview-selected-archive"),previewSelectedArchive);
 $("export-selected-local").onclick=()=>perform($("export-selected-local"),exportSelectedLocal);
@@ -602,7 +576,7 @@ $("save-tags").onclick=()=>perform($("save-tags"),saveTags);
 $("close-tags").onclick=()=>$('tag-dialog').close();
 $("tag-dialog").addEventListener("close",()=>{ui.tagAuthor=null;});
 $("save-source").onclick=()=>perform($("save-source"),saveSource);
-$("refresh-schedule-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,async()=>{const result=await api("/api/refresh-schedule",{enabled:$("refresh-schedule-enabled").checked,interval_minutes:Number($("refresh-schedule-interval").value)});notify(result.enabled?"已启用小红书定时刷新；每次只读取最新第一页并新增尚未归档作品；真实联网仍遵守安全暂停。":"已关闭小红书定时刷新；已有任务与资料保持。");await refresh(true);});});
+$("refresh-schedule-form").addEventListener("submit",event=>{event.preventDefault();perform(event.submitter,async()=>{const result=await api("/api/refresh-schedule",{enabled:$("refresh-schedule-enabled").checked,interval_minutes:Number($("refresh-schedule-interval").value)});notify(result.enabled?"已启用小红书定时刷新；每次只读取最新第一页并新增尚未归档作品；遇到平台拒绝、验证、限流或业务失败立即停止。":"已关闭小红书定时刷新；已有任务与资料保持。");await refresh(true);});});
 $("close-source").onclick=()=>$("source-dialog").close();
 $("source-dialog").addEventListener("close",()=>{ui.sourceAuthor=null;$("source-url").value="";});
 $("refresh-selected-sources").onclick=()=>perform($("refresh-selected-sources"),refreshSelectedSources);
@@ -671,3 +645,44 @@ document.addEventListener("pointerup",releaseJobPointer);
 document.addEventListener("pointercancel",releaseJobPointer);
 globalThis.addEventListener("blur",releaseJobPointer);
 refresh(true).catch(e=>notify(e.message,true));setInterval(()=>{if(!document.hidden&&!ui.busy)refresh(false,true).catch(()=>{});},4000);
+
+let accountPollTimer=null;
+function renderAccount(account) {
+  if(!account)return;
+  const labels={connected:"账号已验证",not_checked:"已存在本机会话，尚未检查",disconnected:"尚未连接有效账号",waiting_scan:"请扫码",waiting_confirmation:"请在手机确认登录"};
+  $("account-status").textContent=`${labels[account.state]||account.state}${account.nickname?` · ${account.nickname}`:""}${account.checked_at?` · 上次检查 ${formatTime(account.checked_at)}`:""}。作者列表是否可用将在同步时单独验证。`;
+  $("account-error").textContent=account.reason?`本次账号操作已停止：${account.reason}；旧资料保留，没有自动重试。`:"";
+  $("cancel-xhs-login").hidden=!account.qr_active;
+  $("xhs-login-qr").hidden=!account.qr_active;
+  if(!account.qr_active) {$("xhs-login-qr").removeAttribute("src");clearTimeout(accountPollTimer);}
+  if(!$("link").value) {
+    const pending=ui.workspace?.subscriptions.filter(s=>s.platform==="xiaohongshu"&&!s.identity_verified);
+    if(pending?.length===1)$("link").value=`https://www.xiaohongshu.com/user/profile/${pending[0].author_id}`;
+  }
+}
+async function pollAccount() {
+  accountPollTimer=null;
+  try {
+    const result=await api("/api/xhs/account",{action:"poll"});renderAccount(result);
+    if(result.qr_active)accountPollTimer=setTimeout(pollAccount,2000);
+    else await refresh(true);
+  } catch(error) {
+    $("account-error").textContent=`${error.message} 本次登录已停止，没有自动重试。`;
+    $("xhs-login-qr").hidden=true;
+    $("cancel-xhs-login").hidden=true;
+  }
+}
+$("connect-xhs").onclick=()=>perform($("connect-xhs"),async()=>{
+  clearTimeout(accountPollTimer);
+  const result=await api("/api/platforms/xiaohongshu/login",{});
+  renderAccount(result);
+  $("xhs-login-qr").src=`/api/xhs/account/qr-image?v=${Date.now()}`;
+  accountPollTimer=setTimeout(pollAccount,2000);
+});
+$("check-xhs-account").onclick=()=>perform($("check-xhs-account"),async()=>{
+  clearTimeout(accountPollTimer);
+  renderAccount(await api("/api/xhs/account",{action:"verify"}));await refresh(true);
+});
+$("cancel-xhs-login").onclick=()=>perform($("cancel-xhs-login"),async()=>{
+  clearTimeout(accountPollTimer);renderAccount(await api("/api/xhs/account",{action:"cancel"}));
+});

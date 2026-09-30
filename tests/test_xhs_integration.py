@@ -233,8 +233,8 @@ class XhsIntegrationTests(unittest.TestCase):
             run = db.execute("SELECT pages,cursor,coverage FROM runs WHERE id=?", (job["run_id"],)).fetchone()
             self.assertEqual((run["pages"], run["cursor"], run["coverage"]),
                              (1, None, "recent_window_only"))
-            self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 2)
-        self.assertTrue(job["export"]["authors"][0]["manifest"])
+            self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 1)
+        self.assertIsNone(job.get("export"))
         self.service.resume(started["job_id"])
         self.service.wait(30)
         done = self._author_job(started["job_id"])
@@ -242,6 +242,7 @@ class XhsIntegrationTests(unittest.TestCase):
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
         with self.service.workflow.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM assets").fetchone()[0], 3)
+
 
     def test_process_restart_reuses_durable_references_without_refetching_page(self):
         self.service.subscribe(PROFILE)
@@ -316,26 +317,27 @@ class XhsIntegrationTests(unittest.TestCase):
         self.service.resume(started["job_id"])
         self.service.wait(30)
         job = self._author_job(started["job_id"])
-        self.assertEqual((job["state"], job["reason"]), ("partial", "recent_window_partial"), job)
+        self.assertEqual((job["state"], job["reason"]), ("partial", "reference_missing"), job)
         with self.service.workflow.connect() as db:
             run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job["run_id"],)).fetchone()
             self.assertEqual((run["pages"], run["cursor"]), (1, None))
 
-    def test_missing_note_keeps_other_window_items_and_is_attempted_once(self):
+
+    def test_missing_note_stops_window_and_explicit_resume_stops_again(self):
         self.service.subscribe(PROFILE)
         FakeXhsHttpTransport.item_unavailable_items.add(IDS[0])
         started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
         self.service.wait(30)
         job = self._author_job(started["job_id"])
-        self.assertEqual((job["state"], job["reason"]), ("partial", "recent_window_partial"), job)
+        self.assertEqual((job["state"], job["reason"]), ("blocked", "item_unavailable"), job)
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
         self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 1)
-        self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 2)
+        self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 1)
         with self.service.workflow.connect() as db:
             run = db.execute("SELECT state,pages,coverage,terminal_evidence FROM runs WHERE id=?",
                              (job["run_id"],)).fetchone()
             self.assertEqual((run["state"], run["pages"], run["coverage"]),
-                             ("partial", 1, "recent_window_only"))
+                             ("blocked", 1, "recent_window_only"))
             self.assertIsNone(run["terminal_evidence"])
             failure = db.execute("SELECT state,reason FROM job_items WHERE job_id=? AND item_id=?",
                                  (started["job_id"], IDS[0])).fetchone()
@@ -343,18 +345,18 @@ class XhsIntegrationTests(unittest.TestCase):
             observation = db.execute("SELECT source,status,reason FROM metric_snapshots WHERE platform='xiaohongshu' AND item_id=? ORDER BY id DESC LIMIT 1",
                                      (IDS[0],)).fetchone()
             self.assertEqual(tuple(observation), ("xhs_http_detail_attempt", "failed", "item_unavailable"))
-            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 1)
-        self.assertTrue(Path(job["export"]["authors"][0]["manifest"]).is_file())
-        self.assertTrue(Path(job["export"]["authors"][0]["failures"]).is_file())
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 0)
+        self.assertIsNone(job.get("export"))
         self.service.close()
         self.service = WorkspaceService(self.root)
         self.service.resume(started["job_id"])
         self.service.wait(30)
         resumed = self._author_job(started["job_id"])
-        self.assertEqual(resumed["state"], "partial", resumed)
+        self.assertEqual(resumed["state"], "blocked", resumed)
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
         self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 2)
-        self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 3)
+        self.assertEqual(len(FakeXhsHttpTransport.detail_requests), 2)
+
 
     def test_unknown_source_failure_stops_before_requesting_next_page(self):
         self.service.subscribe(PROFILE)
@@ -375,7 +377,7 @@ class XhsIntegrationTests(unittest.TestCase):
         started = self.service.start("author_archive", "xiaohongshu", AUTHOR)
         self.service.wait(30)
         job = self._author_job(started["job_id"])
-        self.assertEqual((job["state"], job["reason"]), ("partial", "recent_window_partial"), job)
+        self.assertEqual((job["state"], job["reason"]), ("partial", "reference_missing"), job)
         self.assertEqual(FakeXhsHttpTransport.page_requests, [None])
         self.assertEqual(FakeXhsHttpTransport.detail_requests.count(IDS[0]), 1)
         with self.service.workflow.connect() as db:
@@ -384,7 +386,8 @@ class XhsIntegrationTests(unittest.TestCase):
             failure = db.execute("SELECT state,reason FROM job_items WHERE job_id=? AND item_id=?",
                                  (started["job_id"], IDS[0])).fetchone()
             self.assertEqual(tuple(failure), ("partial", "reference_missing"))
-            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT count(*) FROM items WHERE detail_state='complete'").fetchone()[0], 0)
+
 
     def test_history_budget_is_irrelevant_to_recent_window(self):
         self.service.subscribe(PROFILE)
@@ -417,22 +420,14 @@ class XhsIntegrationTests(unittest.TestCase):
         self.assertEqual(sub["source_health"], "not_checked")
         self.assertIsNone(sub["source_health_checked_at"])
 
-    def test_refresh_schedule_defaults_off_and_only_starts_due_native_authors(self):
+    def test_refresh_schedule_stays_off_and_saved_jobs_are_not_started(self):
         self.assertFalse(self.service.refresh_schedule()["enabled"])
         self.service.subscribe(PROFILE)
         self.assertEqual(self.service._run_due_refresh(time.time()), 0)
-        with self.service.workflow.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0], 0)
-        self.service.set_refresh_schedule(True, 15)
-        path = self.root / "refresh-schedule.json"
-        config = json.loads(path.read_text(encoding="utf-8"))
-        config["next_at"] = time.time() - 1
-        self.service._save_refresh_schedule(config)
-        self.assertEqual(self.service._run_due_refresh(time.time()), 1)
-        self.service.wait(30)
-        with self.service.workflow.connect() as db:
-            self.assertEqual(tuple(db.execute("SELECT mode,state FROM jobs").fetchone()), ("recent_window", "succeeded"))
-        self.assertFalse(self.service.set_refresh_schedule(False, 15)["enabled"])
+        with self.assertRaisesRegex(ValueError, "定时刷新保持关闭"):
+            self.service.set_refresh_schedule(True, 15)
+        self.assertIsNone(self.service._scheduler)
+        self.assertEqual(self.service.workspace()["runs"], [])
 
     def test_login_failure_pause_survives_restart_and_verification_cannot_release_it(self):
         second_author = "b" * 24

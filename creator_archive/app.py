@@ -49,6 +49,7 @@ class DemoInput(BaseModel):
 
 class SubscriptionInput(LinkInput):
     display_name: str | None = Field(default=None, max_length=160)
+    window_limit: int = Field(default=30, ge=1, le=30)
 
 class SourceInput(BaseModel):
     platform: str
@@ -82,6 +83,7 @@ class JobInput(BaseModel):
     source_url: str | None = Field(default=None,max_length=4096)
     item_ids: list[str] | None = Field(default=None,max_length=200)
     selected_authors: list[AuthorInput] | None = None
+    window_limit: int = Field(default=30, ge=1, le=30)
 
 
 class SelectedArchiveInput(BaseModel):
@@ -93,10 +95,8 @@ class ResumeInput(BaseModel):
     source_urls: list[str] | None = Field(default=None,max_length=200)
 
 
-class ManualValidationInput(BaseModel):
+class AccountActionInput(BaseModel):
     action: str
-    author_id: str = Field(pattern=r"^[0-9a-f]{24}$")
-    confirmed: bool = False
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -142,7 +142,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def status():
         configured = service.workspace()["subscriptions"]
         return {"version": __version__, "commit": source_commit(), "mode": "local_mvp", "g1_passed": False,
-                "xhs_network_paused": True, "xhs_pause_reason": "account_safety_user_instruction_2026_09_30",
+                "xhs_network_paused": False, "xhs_pause_reason": None,
+                "xhs_account": service.account.status(),
                 "platforms": [
                     {"platform": "wechat", "implementation": {"creator_resolution": True,
                         "latest": True, "history_pagination": False, "detail": True, "media": True},
@@ -167,9 +168,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.exception_handler(AdapterFailure)
     async def platform_failure(request, error):
-        if request.url.path == "/api/xhs/manual-validation" and error.category == "needs_login":
-            return JSONResponse({"detail": "需要用户本人完成授权。本次验收已停止，不自动重试，不使用浏览器自动化生成会话。", "reason": error.category}, status_code=409)
-        return JSONResponse({"detail": getattr(error, "reason", "平台暂不可用，进度已保留。出现业务失败、验证或访问拒绝须停止；账号安全暂停须按获准方案另行处理。"), "reason": error.category}, status_code=409)
+        messages = {"needs_login": "请在应用内连接小红书账号并检查账号状态；旧资料已保留。",
+                    "verification_required": "平台要求验证，本次操作已停止。请本人在官方应用处理，再回到本页面更新会话。",
+                    "unknown_business_error": "平台返回业务失败，本次操作已停止；原因尚未确认，不自动重试。",
+                    "rate_limited": "平台限流，本次操作已停止；请等待冷却，不切换账号或IP。"}
+        return JSONResponse({"detail": messages.get(error.category, "本次操作未完成，旧资料已保留；请查看账号状态和任务错误。"), "reason": error.category,
+                             "business_code": error.diagnostics.get("business_code")}, status_code=409)
 
     @app.exception_handler(PlatformCooldown)
     async def platform_cooldown(request, error):
@@ -179,16 +183,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def workspace():
         snapshot = service.workspace()
         snapshot["build"] = {"version": __version__, "commit": source_commit()}
-        snapshot["manual_validation"] = service.manual_validation.status()
-        manual_job = snapshot["manual_validation"].get("job_id")
-        for job in snapshot["runs"]:
-            if manual_job and job["id"] == manual_job:
-                job["manual_validation_scope"] = "first3"
+        snapshot["xhs_account"] = service.account.status()
         return snapshot
 
     @app.post("/api/subscriptions")
     def subscribe(body: SubscriptionInput):
-        return service.subscribe(body.text, body.display_name)
+        return service.subscribe(body.text, body.display_name, sync=True, window_limit=body.window_limit)
 
     @app.post("/api/sources")
     def configure_source(body: SourceInput):
@@ -202,13 +202,17 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def configure_refresh_schedule(body: RefreshScheduleInput):
         return service.set_refresh_schedule(body.enabled, body.interval_minutes)
 
-    @app.get("/api/xhs/manual-validation")
-    def manual_validation_status():
-        return service.manual_validation.status()
+    @app.get("/api/xhs/account")
+    def account_status():
+        return service.account.status()
 
-    @app.post("/api/xhs/manual-validation")
-    def manual_validation_action(body: ManualValidationInput):
-        return service.manual_validation.perform(body.action, body.author_id, body.confirmed)
+    @app.post("/api/xhs/account")
+    def account_action(body: AccountActionInput):
+        return service.account_action(body.action)
+
+    @app.get("/api/xhs/account/qr-image")
+    def qr_image():
+        return Response(service.account.qr_image(), media_type="image/svg+xml")
 
     @app.post("/api/subscriptions/toggle")
     def toggle(body: ToggleInput):
@@ -250,7 +254,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     def start_job(body: JobInput):
         return service.start(body.mode, body.platform, body.author_id, body.item_id, body.source_url,
                              body.item_ids, [author.model_dump() for author in body.selected_authors]
-                             if body.selected_authors is not None else None)
+                             if body.selected_authors is not None else None, window_limit=body.window_limit)
 
     @app.post("/api/archive-batches/preview")
     def preview_archive_batch(body: SelectedArchiveInput):

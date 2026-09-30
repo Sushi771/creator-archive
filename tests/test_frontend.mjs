@@ -10,6 +10,7 @@ class Element {
   addEventListener(event,callback) {this.handlers[event]=callback;}
   closest(selector) {return selector==='button'&&this.tagName==='button'?this:null;}
   setAttribute() {}
+  removeAttribute() {}
   reportValidity() {return true;}
   reset() {}
   querySelectorAll() {return [];}
@@ -257,8 +258,8 @@ assert.match(html,/data-job="source_refresh"[^>]*>同步 \/ 刷新最近内容/)
 assert.match(html,/id="refresh-selected-sources"[^>]*>刷新所选最近内容/);
 assert.match(html,/id="export-selected-local"[^>]*>导出所选已保存/);
 assert.match(html,/data-job="archive"[^>]*>导出全部已确认作者/);
-assert.match(html,/首次与后续手动\/定时刷新都只读最新第一页.*刷新间新增超过窗口时可能遗漏/);
-assert.match(html,/禁止浏览器自动化.*登录、冷却、重启或时间经过都不会解除/);
+assert.match(html,/首次与后续手动刷新都只读最新第一页.*刷新间新增超过窗口时可能遗漏/);
+assert.match(html,/本人扫码.*独立核验账号.*作者列表.*另行校验/);
 run('api=async(path,body)=>{pageCalls.push({path,body});return body?{job_id:32}:{total:0,items:[]};}');
 await run('startJob("all_archive")');
 assert.deepEqual(JSON.parse(run('JSON.stringify(pageCalls.at(-1).body)')),{mode:'all_archive'});
@@ -415,27 +416,12 @@ assert.match(flattenText(elements['subscription-list']),/来源窗口未验证/)
 assert.doesNotMatch(flattenText(elements['subscription-list']),/约30篇|只读取最新第一页/,'Unconfigured authors have no actual source window claim');
 console.log('Final author UI checks passed: confirmed export eligibility, preserved old exports and source-specific window claims.');
 
-run('ui.workspace={subscriptions:[],manual_validation:{configured:true,author_id:"manual",active:false,actions:{validate:{state:"pending",counts:{}}}}};renderManualValidation(ui.workspace.manual_validation)');
-assert.equal(elements['manual-validation'].hidden,false);
-assert.equal(elements['manual-validate'].disabled,false);
-assert.ok(!elements['manual-refresh'],'No second refresh entry exists');
-let manualRequests=[];
-context.api=async(path,body)=>{manualRequests.push({path,body});return {identity_verified:true};};
-context.refresh=async()=>{};
-elements['manual-validation-confirm'].checked=false;
-await assert.rejects(()=>run('performManualValidation("validate")'),/请先勾选/);
-assert.equal(manualRequests.length,0);
-elements['manual-validation-confirm'].checked=true;
-await run('performManualValidation("validate")');
-assert.equal(manualRequests[0].path,'/api/xhs/manual-validation');
-assert.equal(manualRequests[0].body.author_id,'manual');
-assert.equal(manualRequests[0].body.confirmed,true);
-assert.equal(elements['manual-validation-confirm'].checked,false);
-run('ui.workspace.manual_validation.blocked_reason="needs_login";renderManualValidation(ui.workspace.manual_validation)');
-assert.equal(elements['manual-validate'].disabled,true);
-assert.match(elements['manual-validation-status'].textContent,/已停止.*不重复重试/);
-assert.match(html,/整次最多16 HTTP/);
-assert.doesNotMatch(html,/128次|96项附件/);
-run('renderJobs([{id:77,mode:"recent_window",manual_validation_scope:"first3",state:"blocked",listed_count:3,target_count:3,item_count:0}])');
-assert.match(flattenText(elements['job-list']),/原列表前三篇.*最多16 HTTP.*不是30篇窗口完整验收/);
-console.log('Manual validation UI checks passed: explicit consent, first-three-only 16-HTTP budget, single-author payload, no refresh entry and failure stop.');
+
+assert.doesNotMatch(html,/manual-validation|manual-validation-confirm|xhs-safety-notice/);
+assert.match(html,/id="connect-xhs"/);
+assert.match(html,/订阅并同步/);
+assert.match(html,/id="sync-window-limit".*value="3".*value="30"/);
+run('ui.workspace={subscriptions:[]};renderAccount({state:"connected",nickname:"模拟账号",checked_at:1,qr_active:false})');
+assert.match(elements['account-status'].textContent,/账号已验证.*作者列表.*单独验证/);
+assert.equal(elements['xhs-login-qr'].hidden,true);
+console.log('Normal account UI checks passed: distinct account/list evidence, normal subscribe control and no manual permit.');

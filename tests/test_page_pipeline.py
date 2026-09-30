@@ -309,7 +309,8 @@ class PagePipelineTests(unittest.TestCase):
         children = self.children(job)
         self.assertEqual(len(children), 1)
         self.source.open_login = lambda: {"state": "synthetic_ready"}
-        self.assertEqual(self.service.open_login(), {"state": "synthetic_ready"})
+        with patch.object(self.service.account, "start", return_value={"state":"synthetic_ready"}):
+            self.assertEqual(self.service.open_login(), {"state": "synthetic_ready"})
         self.service.resume(job)
         self.service.wait()
         self.assertEqual(self.children(job)[:1], children)

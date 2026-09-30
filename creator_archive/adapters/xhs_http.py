@@ -22,7 +22,7 @@ import socket
 import ssl
 import threading
 import time
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, quote
 import http.client
 
 from creator_archive.validation import AdapterFailure, Item, Page
@@ -94,11 +94,15 @@ def _public_addresses(host: str) -> list[str]:
 
 
 def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) -> bytes:
+    return _https_request("GET", host, path, headers, max_bytes=max_bytes)[0]
+
+
+def _https_request(method: str, host: str, path: str, headers: dict[str, str], *, max_bytes: int,
+                   body: bytes | None = None) -> tuple[bytes, list[str]]:
     """One pinned HTTPS request to an exact platform host; no redirects."""
     network_safety.require_xhs_network()
     if host not in {_API_HOST, _WEB_HOST} or not path.startswith("/") or path.startswith("//"):
         raise AdapterFailure("unavailable")
-    network_safety.consume_manual_request(host, path)
     address = _public_addresses(host)[0]
     connection = http.client.HTTPSConnection(host, 443, timeout=20, context=ssl.create_default_context())
     status = None
@@ -106,7 +110,10 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
         # Keep TLS name validation for the requested host after DNS pinning.
         connection.sock = ssl.create_default_context().wrap_socket(
             socket.create_connection((address, 443), timeout=20), server_hostname=host)
-        connection.request("GET", path, headers=headers)
+        if body is None:
+            connection.request(method, path, headers=headers)
+        else:
+            connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
         status = response.status
         if response.status == 401 or response.status in {302, 303} and "/login" in response.getheader("Location", ""):
@@ -127,7 +134,8 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
         data = response.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise AdapterFailure("invalid_response")
-        return data
+        received = response.getheaders() if hasattr(response, "getheaders") else []
+        return data, [value for name, value in received if name.lower() == "set-cookie"]
     except AdapterFailure as error:
         error.diagnostics = {"http_status": status, "success": None, "business_code": None,
                              "message": "[HTTP failure; no business response retained]",
@@ -141,14 +149,17 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
         connection.close()
 
 
-def _signed_headers(cookies: dict[str, str], params: dict[str, str]) -> dict[str, str]:
+def _signed_headers(cookies: dict[str, str], params: dict | None, *, uri: str = _POSTED,
+                    method: str = "GET") -> dict[str, str]:
     try:
         installed = package_version("xhshow")
         numbers = tuple(int(part) for part in installed.split(".")[:3])
         if numbers < (0, 2, 0):
             raise ValueError()
         from xhshow import Xhshow
-        signed = Xhshow().sign_headers_get(uri=_POSTED, cookies=cookies, params=params)
+        signer = Xhshow()
+        signed = (signer.sign_headers_get(uri=uri, cookies=cookies, params=params) if method == "GET"
+                  else signer.sign_headers_post(uri=uri, cookies=cookies, payload=params))
         allowed = {key.lower(): value for key, value in signed.items()
                    if key.lower() in {"x-s", "x-t", "x-s-common", "x-b3-traceid", "x-xray-traceid", "x-mns", "xy-direction"}
                    and isinstance(value, str) and value and "\n" not in value and "\r" not in value}
@@ -320,7 +331,7 @@ class XhsHttpTransport:
         params = {"num": str(RECENT_WINDOW_SIZE), "cursor": cursor, "user_id": self.author_id,
                   "image_formats": "jpg,webp,avif", "xsec_token": "", "xsec_source": "pc_feed"}
         # The order and comma encoding match the signed browser-style query.
-        path = _POSTED + "?" + urlencode(params, safe=",")
+        path = _POSTED + "?" + urlencode(params, safe=",", quote_via=quote)
         try:
             result = json.loads(self._get(_API_HOST, path, api_params=params))
             if not isinstance(result, dict):
@@ -359,9 +370,6 @@ class XhsHttpTransport:
 
     def _read_page(self, author_id: str, cursor: str | None, *, recent_window=False) -> Page:
         network_safety.require_xhs_network()
-        network_safety.require_manual_author(author_id)
-        if network_safety.manual_scope() is not None and (not recent_window or cursor is not None):
-            raise AdapterFailure("network_paused")
         if author_id != self.author_id:
             raise AdapterFailure("identity_mismatch")
         if cursor is not None and (not isinstance(cursor, str) or not cursor or len(cursor) > 1024 or any(not 33 <= ord(c) <= 126 for c in cursor)):
@@ -407,7 +415,6 @@ class XhsHttpTransport:
         if len({item.item_id for item in items}) != len(items):
             raise AdapterFailure("invalid_response")
         if recent_window:
-            network_safety.observe_manual_window(author_id, (item.item_id for item in items))
             page = Page(tuple(items), None, False, None)
         elif more:
             page = Page(tuple(items), next_cursor, True)
@@ -595,58 +602,14 @@ class XhsHttpTransport:
         self._page_cache = None
 
 
-def authorize_session(cookie_file: Path, *, channel: str = "msedge") -> None:
-    """Open the official site once for the account holder, then save local cookies.
-
-    No scraping or profile scrolling runs in this browser. The window closes
-    after the account holder confirms login in the terminal. This is an
-    optional explicit action, never called by page(), detail(), or refresh().
-    """
+def authorize_session(cookie_file: Path, *, channel: str = "msedge"):
+    """Legacy browser entry is disabled; connect the account in the local app."""
     network_safety.require_browser_disabled()
-    target = _cookie_file(str(cookie_file))
-    if channel not in {"msedge", "chrome"}:
-        raise ValueError("unsupported_browser_channel")
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise AdapterFailure("unavailable") from None
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel=channel, headless=False)
-        try:
-            context = browser.new_context()
-            page = context.new_page()
-            page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=30000)
-            input("请在官方窗口由本人完成登录，完成后回到此终端按 Enter；取消可按 Ctrl+C。")
-            cookies = context.cookies(["https://www.xiaohongshu.com/"])
-            selected = {cookie["name"]: cookie["value"] for cookie in cookies
-                        if (cookie.get("domain", "").lstrip(".") == "xiaohongshu.com"
-                            or cookie.get("domain", "").lstrip(".").endswith(".xiaohongshu.com"))
-                        and _COOKIE_NAME.fullmatch(cookie.get("name", ""))
-                        and isinstance(cookie.get("value"), str) and cookie["value"]
-                        and all(33 <= ord(c) <= 126 and c != ";" for c in cookie["value"])}
-            if not selected.get("a1") or not selected.get("web_session"):
-                raise AdapterFailure("needs_login")
-            content = "; ".join(f"{name}={value}" for name, value in selected.items()) + "\n"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary = target.with_name(f".{target.name}.{time.time_ns()}.tmp")
-            try:
-                with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as output:
-                    output.write(content)
-                    output.flush()
-                    os.fsync(output.fileno())
-                if target.exists():
-                    backup = target.with_name(f"{target.name}.{time.time_ns()}.bak")
-                    shutil.copy2(target, backup)
-                os.replace(temporary, target)
-            finally:
-                temporary.unlink(missing_ok=True)
-        finally:
-            browser.close()
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="本人在官方小红书窗口完成一次登录，保存仅本机使用的会话文件")
+    parser = argparse.ArgumentParser(description="旧浏览器授权入口已停用，请使用应用内扫码连接")
     parser.add_argument("--cookie-file", required=True, type=Path, help="仓库外的绝对私有文件路径")
     parser.add_argument("--channel", choices=("msedge", "chrome"), default="msedge")
     args = parser.parse_args()

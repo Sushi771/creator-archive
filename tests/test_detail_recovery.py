@@ -261,8 +261,9 @@ class RecoveryTests(unittest.TestCase):
             self.service.open_login()
         self.service._finish(job,'needs_login','needs_login')
         self.service._job_sources[job]={IDS[0]:'ephemeral'}
-        self.service.open_login()
-        self.assertEqual(self.service._job_sources,{})
+        with patch.object(self.service.account, 'start', return_value={'state':'waiting_scan'}):
+            self.service.open_login()
+        self.assertEqual(self.service._job_sources,{job:{IDS[0]:'ephemeral'}})
 
     def test_actual_subprocess_exit_resumes_without_reprocessing_success(self):
         script = '''

@@ -46,7 +46,9 @@ build/
 .DS_Store
 Thumbs.db
 
-# Durable private safety latch
+# Private account metadata and retired safety markers
+private/
+xhs-account.json
 xhs-network-paused.json
 xhs-manual-validation.json
 # Private observed detail references (contain platform tokens)
