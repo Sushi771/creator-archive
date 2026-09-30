@@ -163,6 +163,22 @@ class XhsAccountTests(unittest.TestCase):
             self.service.account._call(cookies, "GET", "/api/sns/web/v2/user/me")
         self.assertEqual(cookies, {"a1": "synthetic-a1", "web_session": "new-session"})
 
+    def test_redirect_diagnostic_is_retained_without_location_or_credentials(self):
+        from creator_archive.adapters.xhs_http import _redirect_diagnostics
+        location = "/website-login/captcha?token=private-response-token&return=/login"
+        diagnostic = _redirect_diagnostics("www.xiaohongshu.com", "/explore/" + IDS[0], location)
+        self.service._record_request_failure(
+            {"id": 75, "platform": "xiaohongshu", "author_id": AUTHOR},
+            AdapterFailure("verification_required", diagnostics={"http_status": 302,
+                **diagnostic, "Location": location}), "detail")
+        with self.service.workflow.connect() as db:
+            record = json.loads(db.execute("SELECT diagnostic_json FROM request_failures").fetchone()[0])
+        self.assertEqual(record["redirect_target_host"], "www.xiaohongshu.com")
+        self.assertEqual(record["redirect_path_type"], "verification")
+        self.assertEqual(record["redirect_location_sha256"], sha256(location.encode()).hexdigest())
+        self.assertNotIn("private-response-token", json.dumps(record))
+        self.assertNotIn("Location", record)
+
     def test_cookie_deletion_and_max_age_precedence(self):
         for attributes, retained in [
                 ("Max-Age=-1", False), ("Max-Age=0", False),

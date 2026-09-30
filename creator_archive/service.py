@@ -405,7 +405,8 @@ class WorkspaceService:
         with self.workflow.connect() as db:
             run = db.execute("SELECT pages,cursor FROM runs WHERE id=?", (job.get("run_id"),)).fetchone()
             allowed = {key: error.diagnostics.get(key) for key in
-                       ("http_status", "success", "business_code", "message", "message_sha256", "stage", "phase", "request_cursor_sha256")}
+                       ("http_status", "success", "business_code", "message", "message_sha256", "stage", "phase", "request_cursor_sha256",
+                        "redirect_location_present", "redirect_target_host", "redirect_path_type", "redirect_location_sha256")}
             allowed["category"] = error.category
             if run and allowed.get("request_cursor_sha256"):
                 for saved in db.execute("SELECT page_number,request_cursor FROM pages WHERE run_id=?", (job.get("run_id"),)):

@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from creator_archive.adapters.xhs_http import (
     XhsHttpTransport, _http_get, _json_state, _read_cookies, _replace_javascript_literals,
@@ -254,6 +255,11 @@ class XhsHttpTransportTests(unittest.TestCase):
             ("edith.xiaohongshu.com", 404, None, "unavailable"),
             ("www.xiaohongshu.com", 401, None, "needs_login"),
             ("www.xiaohongshu.com", 302, "/login", "needs_login"),
+            ("www.xiaohongshu.com", 302, "/website-login/captcha?token=private-test-token", "verification_required"),
+            ("www.xiaohongshu.com", 302, "/404?return=/login&token=private-test-token", "unavailable"),
+            ("www.xiaohongshu.com", 302, "/explore/" + NOTE_ONE + "?token=private-test-token", "unavailable"),
+            ("www.xiaohongshu.com", 302, "https://private-test-token.example/login", "unavailable"),
+            ("www.xiaohongshu.com", 302, None, "unavailable"),
             ("www.xiaohongshu.com", 403, None, "verification_required"),
             ("www.xiaohongshu.com", 406, None, "verification_required"),
             ("www.xiaohongshu.com", 429, None, "rate_limited"),
@@ -269,8 +275,10 @@ class XhsHttpTransportTests(unittest.TestCase):
                 class Connection:
                     sock = None
                     closed = False
+                    request_count = 0
 
                     def request(self, method, path, headers):
+                        self.request_count += 1
                         self.requested = (method, path, headers)
 
                     def getresponse(self):
@@ -289,7 +297,43 @@ class XhsHttpTransportTests(unittest.TestCase):
                         _http_get(host, "/explore/" + NOTE_ONE, {"Cookie": "private-test-cookie"}, max_bytes=1024)
                 self.assertEqual(caught.exception.category, category)
                 self.assertTrue(connection.closed)
+                self.assertEqual(connection.request_count, 1)
                 self.assertNotIn("private-test-cookie", str(caught.exception))
+                self.assertNotIn("private-test-token", json.dumps(caught.exception.diagnostics))
+                if status == 302:
+                    diagnostic = caught.exception.diagnostics
+                    self.assertEqual(diagnostic["redirect_location_present"], bool(location))
+                    self.assertEqual(bool(diagnostic["redirect_location_sha256"]), bool(location))
+                    if location and location.startswith("/404"):
+                        self.assertEqual(diagnostic["redirect_path_type"], "error")
+
+    def test_detail_preserves_observed_query_and_native_session_headers(self):
+        token, source = "synthetic+/token==&suffix", "pc_user"
+        response = _listing([NOTE_ONE])
+        response["notes"][0].update(xsec_token=token, xsec_source=source)
+        self.transport._get_api = lambda cursor: response
+        self.transport.recent_page(AUTHOR)
+        references = self.transport.export_page_references(AUTHOR, [NOTE_ONE])
+        self.transport.restore_page_references(AUTHOR, references)
+        sent = []
+
+        def receive(host, path, headers, **kwargs):
+            sent.append((host, path, headers))
+            return _html(NOTE_ONE)
+
+        with patch("creator_archive.adapters.xhs_http._http_get", side_effect=receive):
+            detail = self.transport.detail(AUTHOR, NOTE_ONE)
+        self.assertTrue(detail["text"])
+        self.assertEqual(len(sent), 1)
+        host, path, headers = sent[0]
+        self.assertEqual(host, "www.xiaohongshu.com")
+        self.assertEqual(path, f"/explore/{NOTE_ONE}?" + urlencode({"xsec_token": token, "xsec_source": source}))
+        self.assertEqual(parse_qs(urlsplit(path).query), {"xsec_token": [token], "xsec_source": [source]})
+        self.assertEqual(headers["Cookie"], self.cookie_file.read_text().strip())
+        self.assertEqual(headers["Referer"], "https://www.xiaohongshu.com/")
+        from creator_archive.xhs_account import _UA as account_user_agent
+        self.assertEqual(headers["User-Agent"], account_user_agent)
+        self.assertEqual(headers["Accept-Encoding"], "identity")
 
     def test_signed_api_request_uses_fixed_platform_host_and_maps_refusal(self):
         sent = []

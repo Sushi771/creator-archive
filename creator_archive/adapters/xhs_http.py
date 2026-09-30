@@ -22,7 +22,7 @@ import socket
 import ssl
 import threading
 import time
-from urllib.parse import parse_qs, urlencode, urlsplit, quote
+from urllib.parse import parse_qs, urlencode, urlsplit, urljoin, quote
 import http.client
 
 from creator_archive.validation import AdapterFailure, Item, Page
@@ -97,6 +97,44 @@ def _http_get(host: str, path: str, headers: dict[str, str], *, max_bytes: int) 
     return _https_request("GET", host, path, headers, max_bytes=max_bytes)[0]
 
 
+def _redirect_diagnostics(host: str, path: str, location: str | None) -> dict:
+    """Describe a redirect as data, without retaining its query or following it."""
+    result = {"redirect_location_present": bool(location), "redirect_target_host": None,
+              "redirect_path_type": "unknown", "redirect_location_sha256": None}
+    if not isinstance(location, str) or not location:
+        return result
+    result["redirect_location_sha256"] = sha256(location.encode("utf-8")).hexdigest()
+    try:
+        target = urlsplit(urljoin(f"https://{host}{path}", location))
+        if (target.scheme not in {"https", "http"} or target.username or target.password
+                or target.port not in (None, 80, 443)):
+            return result
+        # Unknown hosts may themselves contain private material. Never log them.
+        if target.hostname not in {_WEB_HOST, _API_HOST, "xiaohongshu.com"}:
+            result["redirect_target_host"] = "external"
+            return result
+        result["redirect_target_host"] = target.hostname
+        route = target.path.rstrip("/")
+        if route in {"/website-login/captcha", "/captcha", "/verify", "/verification"}:
+            kind = "verification"
+        elif route in {"/login", "/website-login", "/user/login"}:
+            kind = "login"
+        elif re.fullmatch(r"/explore/[0-9a-f]{24}", route):
+            kind = "note_explore"
+        elif re.fullmatch(r"/discovery/item/[0-9a-f]{24}", route):
+            kind = "note_discovery"
+        elif re.fullmatch(r"/user/profile/[0-9a-f]{24}/[0-9a-f]{24}", route):
+            kind = "note_profile"
+        elif route in {"/404", "/error"}:
+            kind = "error"
+        else:
+            kind = "other"
+        result["redirect_path_type"] = kind
+    except ValueError:
+        pass
+    return result
+
+
 def _https_request(method: str, host: str, path: str, headers: dict[str, str], *, max_bytes: int,
                    body: bytes | None = None) -> tuple[bytes, list[str]]:
     """One pinned HTTPS request to an exact platform host; no redirects."""
@@ -106,6 +144,7 @@ def _https_request(method: str, host: str, path: str, headers: dict[str, str], *
     address = _public_addresses(host)[0]
     connection = http.client.HTTPSConnection(host, 443, timeout=20, context=ssl.create_default_context())
     status = None
+    redirect = {}
     try:
         # Keep TLS name validation for the requested host after DNS pinning.
         connection.sock = ssl.create_default_context().wrap_socket(
@@ -116,8 +155,12 @@ def _https_request(method: str, host: str, path: str, headers: dict[str, str], *
             connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
         status = response.status
-        if response.status == 401 or response.status in {302, 303} and "/login" in response.getheader("Location", ""):
+        if 300 <= status < 400:
+            redirect = _redirect_diagnostics(host, path, response.getheader("Location"))
+        if response.status == 401 or redirect.get("redirect_path_type") == "login":
             raise AdapterFailure("needs_login")
+        if redirect.get("redirect_path_type") == "verification":
+            raise AdapterFailure("verification_required")
         if response.status == 429:
             raise AdapterFailure("rate_limited", retry_after=60)
         if response.status in {403, 406, 461, 471}:
@@ -139,7 +182,7 @@ def _https_request(method: str, host: str, path: str, headers: dict[str, str], *
     except AdapterFailure as error:
         error.diagnostics = {"http_status": status, "success": None, "business_code": None,
                              "message": "[HTTP failure; no business response retained]",
-                             "stage": "list" if host == _API_HOST else "detail"}
+                             "stage": "list" if host == _API_HOST else "detail", **redirect}
         raise
     except (TimeoutError, socket.timeout):
         raise AdapterFailure("timeout") from None
