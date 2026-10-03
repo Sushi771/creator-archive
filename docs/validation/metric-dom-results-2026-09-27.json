@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "app_version": "0.4.12",
+  "evidence_level": "live_readonly_exact_note_state_and_dom",
+  "g1_passed": false,
+  "scope": {
+    "parent_jobs": [
+      42,
+      43
+    ],
+    "fixed_item_jobs": [
+      44,
+      45
+    ],
+    "metric_jobs_reference": [
+      46,
+      47
+    ],
+    "items_per_author": [
+      10,
+      10
+    ],
+    "unique_detail_navigations": 20,
+    "detail_samples": 60,
+    "extra_observation_delay_ms": [
+      0,
+      1000,
+      2000
+    ],
+    "new_job_count": 0,
+    "new_snapshot_count": 0,
+    "eleventh_item_fetched": false,
+    "jobs_32_35_resumed": false,
+    "application_media_downloads": 0
+  },
+  "outcome": {
+    "original_known": 25,
+    "original_unknown": 35,
+    "known_raw_and_dom_match": 25,
+    "unknown_raw_key_present_empty_string": 35,
+    "unknown_projection_matches_raw": 35,
+    "unknown_dom_nonnumeric": 35,
+    "new_numeric_fields": 0,
+    "unknown_by_field": {
+      "collects": 14,
+      "likes": 11,
+      "comments": 10
+    },
+    "observed_projection_loss": 0,
+    "all_60_identity_samples_matched": true,
+    "raw_stable_across_three_samples": true,
+    "unknown_dom_stable_across_three_samples": true,
+    "known_complete_items_dom_late_mount": 3,
+    "early_dom_absent_samples": 4
+  },
+  "limits": [
+    "contemporaneous_observation_not_reconstruction_of_prior_page_state",
+    "empty_string_or_action_label_does_not_prove_numeric_zero",
+    "no_claim_of_permanent_unavailability_or_reason_for_platform_empty_state",
+    "background_cards_comment_likes_and_other_counts_excluded",
+    "no_database_metric_backfill_or_export_rewrite",
+    "no_application_code_dependency_or_schema_change"
+  ],
+  "diagnostic_interruption": {
+    "after_completed_items": 1,
+    "reason": "console_UnicodeEncodeError",
+    "resume_remaining_items": 19,
+    "completed_item_renavigated": false
+  },
+  "preservation": {
+    "all_business_tables_equal": 16,
+    "archive_files_sha256_mtime_equal": 710,
+    "sqlite_integrity_before_after": "ok",
+    "jobs": 46,
+    "fixed_targets": 280,
+    "metric_snapshots": 228,
+    "items": 1401,
+    "assets": 349,
+    "history_pages": 100,
+    "original_job_states_unchanged": true
+  },
+  "private_evidence_hashes": {
+    "observations.json": "e8128937ebd3c963ba703ad7a632e61b26ac6fe378a1c12fb9bc7cf6d531909e",
+    "before.json": "57ac7c65dcca5546e9d9368457565e939f4e2dac0e793f76b1d463db306ecfc9",
+    "after.json": "080a2d89315052a23d5fa1ff2f467b415285fdbc5e11f7e64381b23f994a7c2e",
+    "probe.py": "43e1ce50c2aaf1fbd50605e86e6a7f1ff20f7b62eedf025b5bc898951954c6bf"
+  },
+  "method": {
+    "raw_path": "__INITIAL_STATE__.note.noteDetailMap[exact_item_id].note.interactInfo",
+    "identity": "exact noteId and user.userId match fixed target",
+    "dom_root": ".note-container .interact-container",
+    "dom_fields": {
+      "likes": ".like-wrapper .count",
+      "collects": ".collect-wrapper .count",
+      "comments": ".chat-wrapper .count"
+    },
+    "timing": "after production detail() returns, sample at 0, +1, +3 seconds; no second navigation",
+    "raw_scope": "whitelisted field presence/type/value and key names; no whole page state or credentials retained",
+    "aliases": "A/B identify fixed jobs 44/45; ordinal is private sorted-ID order, not author publication order"
+  },
+  "evidence_rows": [
+    {"sample":"A01","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A02","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A02","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A02","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A03","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A04","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A04","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A05","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A05","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A06","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A06","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A07","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"A08","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B01","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B03","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B03","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B04","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B04","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B04","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B05","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B05","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B06","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B06","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B07","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B07","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B07","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B08","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B08","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B08","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B09","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B09","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B09","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B10","field":"likes","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B10","field":"collects","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"收藏","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"},
+    {"sample":"B10","field":"comments","raw_present":true,"raw_type":"string","raw_value":"","projection_value":"","dom_text":"评论","dom_visible":true,"samples_agree":3,"classification":"observed_state_empty_dom_nonnumeric"}
+  ]
+}

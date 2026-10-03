@@ -1,0 +1,133 @@
+{
+  "version": "0.4.0",
+  "date": "2026-09-26",
+  "g1_passed": false,
+  "live_scans": [
+    {
+      "alias": "XHS-B",
+      "evidence_kind": "application_normal_browser_live",
+      "pages": 6,
+      "ssr_seed_pages": 1,
+      "api_pages": 5,
+      "unique_ids": 152,
+      "first_page_items": 32,
+      "last_page_items": 2,
+      "terminal_evidence": "xhs user_posted: explicit has_more=false",
+      "per_page_id_hashes": [
+        "458db333a1d400e411a4fb27991ed0cf534842c5ee758eeb53868a7e827d8b5c",
+        "d3fc32ecdefd64d08639fbff1fa9d47aa1c0f1d3471ba7a5abd240a7338dec32",
+        "8d25d80a7cbe456e434d396da8250801c731fa3a2e3600836dd7d3f02480bb41",
+        "840d079f4122f151b83af7a37efa7cac11a5a6172773aff187a95f99301cfd15",
+        "b1e4be659a2f64c97f052be920681dcb7892633a13fb123695eb08936f605bad",
+        "be229ad0fd800bd4a801f71f280ba312d8d7d5071009748c0b04d47a4a8f490f"
+      ],
+      "page_chain_contiguous": true
+    },
+    {
+      "alias": "XHS-A",
+      "evidence_kind": "application_normal_browser_live",
+      "pages": 39,
+      "ssr_seed_pages": 1,
+      "api_pages": 38,
+      "unique_ids": 1159,
+      "first_page_items": 30,
+      "last_page_items": 19,
+      "terminal_evidence": "xhs user_posted: explicit has_more=false",
+      "per_page_id_hashes": [
+        "0bfb7fc9e02486d969b4775e6bec0c291a96ae47daae0375dee6f4549aa958cc",
+        "42dfdc0751b9827617f6f4671b1006d7110265874bc2db895394ef0e728d8659",
+        "af304ad7b9c4afb4cc9543c98d563f4d1c4b08a1195f9f6cce1b4aa71bab14cd",
+        "cda54754a14c57a56042b3552a96b069b9641cd884195b34e8b851de2c76f5f2",
+        "c73f06b4b2c2817fcfebd097a83bd4e586f4e18fb674597ac46a224aa3ecd73c",
+        "93c9d3cf414ee10553ae5385de29f7fa7c99e43b8bda9a73a347f7431dfe8ebc",
+        "ade95193185bc7011741efe3bf148d3a9b51d4612e1cdc29d723808a1c9cbf18",
+        "f3157236dbaac2b56440abe21c72f26c17fefec0e2dbd0083e7514b585fe6ba7",
+        "61b15dec46e297096ecef0960ffd0b246697523767abc5d5ab7e2de6f0051ecd",
+        "043b8ae6d1d50164b1dd353a1b0ceb589a3fc1bc48de49365b83f1dabb809bc9",
+        "b5e31bfdef8d24f11e7558976912f0a7e587c3230ac9c4ffb5bd6708e88f2671",
+        "eae5ceb8513950112aa4967a46f8039370026d20c047b80eba5a4c248ae155e2",
+        "ff760054f53b01c6e360f619589fd7f3c053989e29d2fa4a6644475ba81fac2f",
+        "5fa8a6ad6f4f65e6046898bcf179e9931b8ac0131ddb92a20024e237ec490365",
+        "f6d180fd66b6181c0cb498fe60cc0e7445600387696ba565fb61733fc86374cf",
+        "d75ac06f4843f86118ddfb8f8599f5027ca769e19e45aec964bfccbe39337f89",
+        "daca8ed4303ca1ac45667c985148b4530fdcb07b172cb712aa5708aec011c4bd",
+        "7fcfd18bb19d6c7c06fde7621745238d0e9d980972b17693442eaf6cad24092f",
+        "2d4cd53dcfa706ccf3c5a8c2c649c7790f0dd9dd05ddb2a0dd4d71054926f796",
+        "0cddef2e801fa8aef618cbc41fd278b21ba9bebed07b5d166eb44d9fb44e1b5d",
+        "40130ffab7ed1c7b5f0e9f2545ad8163c34b73583084fec8d29c3867f7582958",
+        "0527f7c32ff3864f404d887c4c51031d5b725a0ffd4a9bc0313a0bb15d0a7ff1",
+        "912568916c5d638535145f102a25474347239a8ee69fc8634dff1c28f4ed1739",
+        "8b5fe1224f6112e4e92ed0f84bf3d9d4d3517c147b9216746f84f6dc33f23867",
+        "9893c59ba7914a0c471c320a50fd1d46354043b2231cfcf3953c764f729b545c",
+        "494bd802d61c528255f9fa2f279c792d3c53e557aa1b60bc98a535ccd2685b93",
+        "ef0937544a4b1f4eacdb2d5468a32982b678ec03b325f024a8031342f755ebfa",
+        "eb18493e8edaa7d90d0c898e593bea2629cd5f0e60a0b505b3be3546c07726b0",
+        "46de73b6e391031c7fb1c83dcc1f50020e26c37b72dac110055569645510c03c",
+        "01b1cd8982f990f9fa975ca4406bb7f3d4b8ba160668c42659641e2cd9608079",
+        "dec886905c2088eb31a885aa0c26f863cf882634d98bca45ecf8afa5d973f773",
+        "6d16915540f81206ba42970756c319e968ae78a146f17ee3755a873516d0ddf0",
+        "000e23efac311a144bdda323a7481970159c594d29357d6174b1740c4562b033",
+        "792e7d9f74e2550a42cc573cc6031e16c528091062cc7a1bb61e716f08a3263e",
+        "b2cf49dfbc9911ccafae5d9f0a0dc6d6e6c69d273a1dca69fa79df7096c6fd06",
+        "7ea49bd411b23feaf136bb978622f372779d7331d212ddf2357e5b46a98da62e",
+        "b4b19557821cbbf08b0c4255a8636473f5db753558c8533c209da9d5f1f53c5e",
+        "6a705164f9073df112f9172ca54d4582f974db5c8f78b0031718d5ec40df33f0",
+        "ceeef67f3fa7fd94fcaa8c685166ee716dedb400aa2e20501bd6fc8a2777776d"
+      ],
+      "page_chain_contiguous": true
+    }
+  ],
+  "browser_restart": {
+    "alias": "XHS-A",
+    "persisted_pages_before_restart": 11,
+    "continued_pages_after_restart": 28,
+    "old_browser_process_exited": true,
+    "new_browser_process_observed": true,
+    "archive_process_restarted": true,
+    "resumed_via_product_ui": true,
+    "replayed_capture_files": false,
+    "long_term_login_persistence_verified": false
+  },
+  "workspace": {
+    "imported_unique_items": 1311,
+    "current_items": 1391,
+    "details": 0,
+    "images": 3,
+    "videos": 1,
+    "a_new_vs_old_ids": 80,
+    "a_old_not_seen_new_ids": 80,
+    "difference_cause": "unknown; all previous records retained"
+  },
+  "browser_checks": {
+    "real_import": true,
+    "pause_persisted_after_restart": true,
+    "pagination": true,
+    "three_images_decoded": true,
+    "video_played_to_end_seconds": 9.984603,
+    "video_dimensions": [
+      720,
+      960
+    ],
+    "video_error": null,
+    "archive_includes_paused": true,
+    "graceful_stop_closed_application_browser": true,
+    "pause_test_restored_enabled": true,
+    "author_index_entries": [
+      1239,
+      152
+    ],
+    "latest_exports_missing_registered_assets": 0
+  },
+  "original_evidence": {
+    "files_checked": 45,
+    "unchanged_files": 44,
+    "append_only_browser_log_files": 1,
+    "old_log_prefix_preserved": true
+  },
+  "unverified": [
+    "wechat full history",
+    "all-item detail and media retrieval",
+    "long-term login renewal",
+    "production adapter approval"
+  ]
+}

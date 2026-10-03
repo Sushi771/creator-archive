@@ -1,0 +1,42 @@
+{
+  "date": "2026-09-27",
+  "level": "actual official MCP SDK stdio client against a synthetic HTTP archive in a temporary workspace",
+  "sdk": "mcp==2.1.1",
+  "not_verified": [
+    "real ChatGPT MCP connection or model session",
+    "real platform access",
+    "real user archive",
+    "remote authenticated tunnel"
+  ],
+  "fixture": {
+    "authors": 1,
+    "list_pages": 5,
+    "cross_page_duplicate": true,
+    "explicit_terminal": true,
+    "unique_items": 6,
+    "registered_images": 6
+  },
+  "client_reads": {
+    "tool_count": 7,
+    "creator_total": 1,
+    "creator_local_items": 6,
+    "creator_saved_bodies": 6,
+    "item_page_size": 2,
+    "item_page_count": 3,
+    "unique_item_ids": 6,
+    "corpus_page_count": 3,
+    "corpus_rows_with_text_and_source": 6,
+    "image_tool_png_signature": true,
+    "image_resource_matches_tool_bytes": true,
+    "same_size_corrupt_registered_image_rejected": true
+  },
+  "read_only_check": {
+    "all_files_sha256_and_mtime_unchanged": true,
+    "jobs_runs_pages_items_assets_counts_unchanged": true,
+    "running_jobs_before_after": [0, 0]
+  },
+  "regression": {
+    "python_unittest_total": 186,
+    "python_unittest_passed": 186
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "date": "2026-09-28",
+  "scope": "xiaohongshu smaller confirmed author; new independent author_archive parent 48, run 22; local archive job 54",
+  "evidence_level": "live platform pages and media; offline local HTTP and browser readback",
+  "starting_state": {
+    "active_jobs": 0,
+    "local_and_remote_head": "c8a41f48e7efb45ba88e5fe36fe92bee8fdedd9b",
+    "sqlite_backup_integrity": "ok",
+    "prior_jobs": 46,
+    "prior_pages": 100,
+    "prior_items": 1401,
+    "prior_assets": 349,
+    "prior_archive_and_download_files_fingerprinted": 1400
+  },
+  "new_parent": {
+    "pages_committed": 5,
+    "unique_observed": 150,
+    "targeted": 150,
+    "content_complete": 150,
+    "previously_complete_targets_reused": 142,
+    "newly_completed_targets": 8,
+    "prior_target_assets": 323,
+    "current_target_assets": 344,
+    "library_only_items": 10,
+    "list_terminal": false,
+    "state": "blocked",
+    "reason": "invalid_cursor",
+    "cross_process_resume": "same parent/run/checkpoint; same invalid_cursor after one restart and one resume; no terminal page committed"
+  },
+  "prior_run_comparison": {
+    "prior_pages": 6,
+    "prior_unique": 152,
+    "first_five_cursor_chain_equal": true,
+    "page_three_set_difference_each_direction": 8,
+    "prior_page_six_items_absent_from_new_first_five": 2,
+    "prior_terminal_not_imported": true,
+    "cause_of_invalid_cursor": "unknown; response conflict and missing requested response not distinguished by persisted reason"
+  },
+  "offline_readback_after_collection_browser_closed": {
+    "new_parent_scan_pages": 5,
+    "new_parent_scan_complete": 150,
+    "all_library_manifest_items": 160,
+    "all_library_corpus_lines": 152,
+    "nonempty_target_texts": 150,
+    "target_article_files_read_from_disk_and_http": 300,
+    "target_images_sha_size_and_http_equal": 344,
+    "target_images_decoded_in_local_browser": 344,
+    "readback_errors": 0,
+    "note": "Archive job 54 exports all 160 local library items; it does not turn the partial 150-item scan into a completed historical run. Expected external media count remains unknown."
+  },
+  "protection_after_export": {
+    "sqlite_integrity": "ok",
+    "prior_protected_rows_changed": 0,
+    "prior_archive_and_download_files_changed": 0,
+    "new_files": 82,
+    "prior_32_35_42_43_scope_unchanged": true
+  },
+  "private_evidence": "Actual backup, fingerprints, readback and browser decode records are outside Git under the workspace sibling private-validation/xhs-b-full-2026-09-28.",
+  "cursor_diagnostic_follow_up": {
+    "starting_local_and_remote_head": "69adfc09b9b62f75fc004bb3e3f3700c77751380",
+    "reproduced_trigger": "Previously, distinct same-cursor responses and SSR has_more=false without the requested API response both persisted as invalid_cursor; SSR could fail before the first scroll.",
+    "expected": "Distinct persisted causes, one normal scroll opportunity for an exact requested response, and no terminal commit without that API response.",
+    "synthetic_result": "Distinct cursor_response_conflict and requested_response_missing categories; SSR false then exact API response succeeds after one scroll; missing response remains blocked; both categories retain one durable checkpoint, child and successful assets through resume.",
+    "final_python_suite": "192 tests run, 191 passed, 1 skipped; synthetic temporary data only",
+    "live_result": {
+      "only_original_parent_resumed_once": true,
+      "persisted_reason": "requested_response_missing",
+      "pages_committed": 5,
+      "unique_observed": 150,
+      "content_complete": 150,
+      "terminal_evidence": false,
+      "platform_root_cause": "unknown; requested cursor response was not observed after normal browser replay and scroll"
+    },
+    "protected_before_and_after": {
+      "new_online_sqlite_backup_integrity": "ok",
+      "previous_files_fingerprinted": 1482,
+      "sqlite_integrity_after": "ok",
+      "changed_existing_rows": {"jobs": [48], "runs": [22]},
+      "pages_before_and_after": 105,
+      "assets_before_and_after": 370,
+      "old_files_changed": 0,
+      "new_files": 0,
+      "active_jobs_after": 0,
+      "server_stopped_after": true
+    },
+    "private_evidence": "workspace sibling private-validation/xhs-b-cursor-2026-09-28; not in Git"
+  },
+  "conclusion": "Observed 150-item content and offline media are complete for this partial five-page scan; current author history terminal, remaining items, and full P0 are unverified."
+}

@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "app_version": "0.4.1",
+  "evidence_level": "live_authorized_browser_and_local_product",
+  "g1_passed": false,
+  "preview": {
+    "refused_connection_reproduced": true,
+    "old_process_exit_cause": "unknown",
+    "start_stop_restart_verified": true,
+    "desktop_shortcuts_created": true,
+    "canonical_data_path_pinned": true
+  },
+  "preservation": {
+    "items_before": 1391,
+    "items_after": 1391,
+    "history_pages_before": 90,
+    "history_pages_after": 90,
+    "old_archive_files_unchanged": 11,
+    "database_backup_before_migration": true,
+    "sqlite_integrity_check": "ok",
+    "manual_content_protection": "offline_regression"
+  },
+  "image": {
+    "real_body_saved": true,
+    "new_images": 2,
+    "decoded_dimensions": [
+      1080,
+      1440
+    ],
+    "core_metric_values_present": true,
+    "snapshots_after_refresh": 2,
+    "metrics_refresh_download_hash_and_mtime_unchanged": true,
+    "old_default_page": 23,
+    "whole_library_threshold_found": true
+  },
+  "video": {
+    "real_body_saved": true,
+    "legacy_video_reused_after_hash_validation": true,
+    "new_cover_saved": true,
+    "playback_dimensions": [
+      720,
+      960
+    ],
+    "playback_duration_seconds": 9.984603,
+    "playback_ended": true,
+    "core_metric_values_present": false,
+    "missing_fields_verified_in_target_state_and_dom": true,
+    "explicit_then_canonical_refresh_succeeded": true,
+    "snapshots_after_refresh": 3,
+    "media_not_redownloaded": true
+  },
+  "exports": {
+    "schema_version": 2,
+    "manifest_item_count": 1391,
+    "actual_body_rows": 2,
+    "metrics_and_snapshots_retained": true,
+    "old_exports_preserved": true
+  },
+  "offline": {
+    "tests": 106,
+    "failures": 0,
+    "errors": 0,
+    "frontend_contract": "passed",
+    "javascript_syntax": "passed",
+    "dependencies": "passed"
+  },
+  "limits": [
+    "full_library_detail_and_media_coverage_not_verified",
+    "historical_ids_may_need_valid_complete_links",
+    "long_term_login_and_live_rate_limit_recovery_not_verified",
+    "media_range_resume_not_implemented",
+    "sharing_and_play_counts_not_available",
+    "wechat_remains_blocked"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "app_version": "0.4.12",
+  "evidence_level": "live_authorized_browser_and_local_product",
+  "g1_passed": false,
+  "scope": {
+    "source_parent_jobs": [42, 43],
+    "source_fixed_item_jobs": [44, 45],
+    "new_metrics_jobs": [46, 47],
+    "items_per_author": [10, 10],
+    "unique_items": 20,
+    "jobs_32_and_35_resumed": false,
+    "new_history_job_created": false,
+    "content_or_media_job_created": false
+  },
+  "outcome": {
+    "jobs_succeeded": 2,
+    "items_succeeded": 20,
+    "items_failed": 0,
+    "new_snapshots": 20,
+    "fields_total": 60,
+    "before_known": 25,
+    "before_unknown": 35,
+    "fresh_known": 25,
+    "fresh_unknown": 35,
+    "after_known": 25,
+    "after_unknown": 35,
+    "newly_known_fields": 0,
+    "previous_known_values_changed": 0,
+    "by_original_fixed_item_job": {
+      "44": {"known": 17, "unknown": 13, "new_snapshots": 10},
+      "45": {"known": 8, "unknown": 22, "new_snapshots": 10}
+    }
+  },
+  "preservation": {
+    "sqlite_integrity_before": "ok",
+    "sqlite_integrity_after": "ok",
+    "before_backup_private": true,
+    "old_jobs_rows_unchanged": 44,
+    "old_job_item_rows_unchanged": 260,
+    "old_snapshot_rows_unchanged": 208,
+    "new_job_item_scopes_equal_original": true,
+    "metric_projection_changed_items_within_original_scope": true,
+    "other_business_tables_row_digest_equal": true,
+    "items_before_after": 1401,
+    "assets_before_after": 349,
+    "history_pages_before_after": 100,
+    "archive_files_sha256_and_mtime_unchanged": 710,
+    "original_parent_job_states_unchanged": true,
+    "actual_item_api_reads_match_database": 20,
+    "archive_index_http_reads_match_disk": 2
+  },
+  "limits": [
+    "unknown_fields_remain_unknown_not_zero",
+    "full_platform_raw_state_was_not_persisted",
+    "unknown_cause_cannot_be_classified_from_these_snapshots",
+    "old_offline_exports_were_not_rewritten",
+    "wechat_and_dual_platform_g1_not_verified"
+  ]
+}

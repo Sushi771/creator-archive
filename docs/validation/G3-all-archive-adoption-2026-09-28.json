@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-28",
+  "evidence_level": "real_workspace_batch_membership_without_platform_requests",
+  "batch_id": 26,
+  "existing_parent_job_ids": [48, 55],
+  "new_parent_jobs": 0,
+  "spawned_collection_threads": 0,
+  "members": 2,
+  "batch_state": "partial",
+  "unchanged_business_tables": 10,
+  "unchanged_archive_and_download_files": 3720,
+  "sqlite_integrity": "ok",
+  "private_backup_and_file_fingerprint": "workspace sibling private-validation/all-archive-adoption-2026-09-28-*",
+  "synthetic_batch_tests": 11,
+  "full_python_tests": {"ran": 195, "skipped": 1, "result": "passed"},
+  "frontend_contract": "passed",
+  "platform_requests": 0,
+  "g3_real_cross_author_execution_and_readback": "not_verified",
+  "g1_wechat_and_xiaohongshu_complete": false,
+  "limitations": ["A/B exact cursor responses absent", "WeChat author identity and historical source not verified", "No real batch resume or new offline readback"]
+}

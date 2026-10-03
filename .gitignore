@@ -20,6 +20,10 @@ media/
 corpus/
 vault/
 Obsidian*/
+folders.json
+sources.json
+refresh-schedule.json
+backups/
 data/
 logs/
 *.log
@@ -27,6 +31,7 @@ logs/
 *.db-*
 *.sqlite*
 *.part
+*.har
 # Build and runtime
 .venv/
 venv/
@@ -37,5 +42,14 @@ dist/
 build/
 .cache/
 .pytest_cache/
+.playwright-cli/
 .DS_Store
 Thumbs.db
+
+# Private account metadata and retired safety markers
+private/
+xhs-account.json
+xhs-network-paused.json
+xhs-manual-validation.json
+# Private observed detail references (contain platform tokens)
+xhs-page-references/

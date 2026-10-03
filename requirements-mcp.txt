@@ -1,0 +1,2 @@
+# Optional local read-only MCP bridge; base application dependencies remain in requirements.lock.
+mcp==2.1.1

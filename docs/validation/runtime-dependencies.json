@@ -1,0 +1,227 @@
+{
+  "python": "3.14.0",
+  "sqlite": "3.50.4",
+  "packages": [
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "annotated_doc-0.0.5.dist-info/licenses/LICENSE",
+          "sha256": "fff170779a6acbf65abdb405c087f1cee1786691e4a96a4034517e4a504a0cdf"
+        }
+      ]
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "annotated_types-0.8.0.dist-info/licenses/LICENSE",
+          "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d"
+        }
+      ]
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "anyio-4.15.1.dist-info/licenses/LICENSE",
+          "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0"
+        }
+      ]
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "license": "MPL-2.0",
+      "license_files": [
+        {
+          "path": "certifi-2026.7.22.dist-info/licenses/LICENSE",
+          "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7"
+        }
+      ]
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "click-8.5.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d"
+        }
+      ]
+    },
+    {
+      "name": "fastapi",
+      "version": "0.141.1",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "fastapi-0.141.1.dist-info/licenses/LICENSE",
+          "sha256": "4ec89ffc81485b97fec584b2d4a961032eeffe834453894fd9c1274906cc744e"
+        }
+      ]
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "h11-0.16.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361"
+        }
+      ]
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "httpcore-1.0.9.dist-info/licenses/LICENSE.md",
+          "sha256": "fdcb59154c74cbaba16a11242f7740bea9f23d6feb5547917d8c5f94a80392a5"
+        }
+      ]
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "httpx-0.28.1.dist-info/licenses/LICENSE.md",
+          "sha256": "4ec59d544f12b5f539a3a716fd321ac58ccd8030b465221f2c880200cdf28d8d"
+        }
+      ]
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "idna-3.20.dist-info/licenses/LICENSE.md",
+          "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
+        }
+      ]
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.5",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "pydantic-2.13.5.dist-info/licenses/LICENSE",
+          "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3"
+        }
+      ]
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.5",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "pydantic_core-2.46.5.dist-info/licenses/LICENSE",
+          "sha256": "fbe7f615f18d135c07000e5a86325db27f42c7729699ef166ac1f7a3f4586bf4"
+        }
+      ]
+    },
+    {
+      "name": "starlette",
+      "version": "1.7.0",
+      "license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "starlette-1.7.0.dist-info/licenses/LICENSE.md",
+          "sha256": "dcb95677a02240243187e964f941847d19b17821cf99e5afae684fab328c19bf"
+        }
+      ]
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "typing_inspection-0.4.4.dist-info/licenses/LICENSE",
+          "sha256": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3"
+        }
+      ]
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "license": "PSF-2.0",
+      "license_files": [
+        {
+          "path": "typing_extensions-4.16.0.dist-info/licenses/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+        }
+      ]
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.54.0",
+      "license": "BSD-3-Clause",
+      "license_files": [
+        {
+          "path": "uvicorn-0.54.0.dist-info/licenses/LICENSE.md",
+          "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371"
+        }
+      ]
+    },
+    {
+      "name": "playwright",
+      "version": "1.58.0",
+      "license": "Apache-2.0",
+      "license_files": [
+        {
+          "path": "playwright-1.58.0.dist-info/licenses/LICENSE",
+          "sha256": "7fab1461b41970ff376f1c9303a637076bfaaeb71cd12dd3a1c44aaf59a1a2b9"
+        },
+        {
+          "path": "playwright/driver/LICENSE",
+          "sha256": "b4c7840e841ab8f14543646bd941d01a459fb0f8ce1249244341b2a63272ca79"
+        },
+        {
+          "path": "playwright/driver/package/LICENSE",
+          "sha256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb"
+        }
+      ]
+    },
+    {
+      "name": "pyee",
+      "version": "13.0.1",
+      "license": "MIT",
+      "license_files": [
+        {
+          "path": "pyee-13.0.1.dist-info/licenses/LICENSE",
+          "sha256": "1ff556ca206b107f10e1c562ae454d3292e0296c3510eb90eb7f114caee32a66"
+        }
+      ]
+    },
+    {
+      "name": "greenlet",
+      "version": "3.5.6",
+      "license": "MIT AND PSF-2.0",
+      "license_files": [
+        {
+          "path": "greenlet-3.5.6.dist-info/licenses/LICENSE",
+          "sha256": "ab977b654605670319509481ece49198f405a129372ac38c96f51cd96c2f452e"
+        },
+        {
+          "path": "greenlet-3.5.6.dist-info/licenses/LICENSE.PSF",
+          "sha256": "69efa689cc7aec7736236d3039c1d665e4b0c734a5bfea5abf633023abb2fff4"
+        }
+      ]
+    }
+  ]
+}

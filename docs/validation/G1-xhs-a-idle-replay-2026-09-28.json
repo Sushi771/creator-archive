@@ -1,0 +1,63 @@
+{
+  "date": "2026-09-28",
+  "scope": "XHS author A parent 55/run 24 idle replay fix and one real resume",
+  "starting_head": "c84890c7d707e8d7d6dc838369c04482dec7b492",
+  "code": {
+    "component": "creator_archive/adapters/xhs_transport.py",
+    "old_behavior": "single 30-second total replay deadline",
+    "new_behavior": "idle deadline resets only after a newly validated same-author list response",
+    "dependencies_or_schema_changed": false
+  },
+  "synthetic": {
+    "red_before_fix": "four-page chain advancing every four seconds timed out before exact target",
+    "green_after_fix": true,
+    "duplicate_response_does_not_extend_idle_deadline": true,
+    "transport_tests_passed": 31,
+    "full_python_tests_passed": 194,
+    "full_python_tests_skipped": 1
+  },
+  "live": {
+    "resume_attempts": 1,
+    "parent_job_id": 55,
+    "run_id": 24,
+    "state": "blocked",
+    "reason": "requested_response_missing",
+    "pages": 10,
+    "occurrences": 300,
+    "unique_ids": 300,
+    "cursor_chain_contiguous": true,
+    "checkpoint_matches_next_cursor": true,
+    "terminal_evidence": false,
+    "coverage": "partial",
+    "content_succeeded": 268,
+    "reference_missing": 8,
+    "queued": 24,
+    "page_ten_succeeded": 6,
+    "page_ten_queued": 24,
+    "new_pages": 0,
+    "new_details": 0,
+    "new_assets": 0,
+    "prior_timeout_root_cause_proven": false
+  },
+  "protection": {
+    "backup_integrity": "ok",
+    "final_sqlite_integrity": "ok",
+    "old_files_fingerprinted": 3720,
+    "old_files_changed_or_missing": 0,
+    "after_files": 3720,
+    "changed_tables": {
+      "runs": "run 24 state/timestamp",
+      "jobs": "parent 55 and child 57 timestamps/state",
+      "metric_snapshots": "8 new failed reference_missing attempts",
+      "item_metrics": "24 last_attempt_at fields"
+    },
+    "active_jobs_after_stop": 0,
+    "server_stopped": true
+  },
+  "limits": [
+    "No exact requested cursor response was observed in the live run.",
+    "Browser terminal display is not trusted API terminal evidence.",
+    "Wechat G1/G2/G3, real all_archive G3, and dual-platform P0 remain unverified."
+  ],
+  "private_evidence": "actual workspace sibling private-validation/xhs-a-full-2026-09-28/before-idle-replay-retry.sqlite3 and before-idle-replay-files.json; excluded from Git"
+}

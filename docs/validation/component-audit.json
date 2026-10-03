@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-09-26",
+  "components": [
+    {
+      "repository": "Sushi771/wewe-rss-ss",
+      "commit": "4cd64f1a50cfd222b2c065e456528b200aac9370",
+      "license_label": "MIT",
+      "evidence_level": "static_source_only",
+      "adopted": false,
+      "files": [
+        {
+          "path": "LICENSE",
+          "source": "https://raw.githubusercontent.com/Sushi771/wewe-rss-ss/4cd64f1a50cfd222b2c065e456528b200aac9370/LICENSE",
+          "sha256": "d65effe95f92c75dd45633111e98b7a7b0a16131499d65d2a1a22ee83ab2c2f9",
+          "bytes": 1063,
+          "marker_lines": {
+            "MIT License": [
+              1
+            ]
+          }
+        },
+        {
+          "path": "apps/server/src/configuration.ts",
+          "source": "https://raw.githubusercontent.com/Sushi771/wewe-rss-ss/4cd64f1a50cfd222b2c065e456528b200aac9370/apps/server/src/configuration.ts",
+          "sha256": "30e3f1fc4f5c109214ba7778c508fcf9b2843024c45e0f36e30522f6db80198d",
+          "bytes": 1270,
+          "marker_lines": {
+            "weread.111965.xyz": [
+              11
+            ]
+          }
+        },
+        {
+          "path": "apps/server/src/trpc/trpc.service.ts",
+          "source": "https://raw.githubusercontent.com/Sushi771/wewe-rss-ss/4cd64f1a50cfd222b2c065e456528b200aac9370/apps/server/src/trpc/trpc.service.ts",
+          "sha256": "acfd4992ef255fdbfa800abdb42714a698e744ad0dd1a81b13124ebeb01a8a34",
+          "bytes": 12044,
+          "marker_lines": {
+            "refreshAllMpArticlesAndUpdateFeed": [
+              341,
+              343
+            ],
+            "getHistoryMpArticles": [
+              271,
+              273,
+              295,
+              311,
+              321
+            ],
+            "inProgressHistoryMp": [
+              266,
+              272,
+              277,
+              282,
+              304,
+              309,
+              317,
+              325,
+              332
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "repository": "rachelos/we-mp-rss",
+      "commit": "126993c81a00466e9a6bbab041eef34ab27abe9c",
+      "license_label": "MIT",
+      "evidence_level": "static_source_only",
+      "adopted": false,
+      "files": [
+        {
+          "path": "LICENSE",
+          "source": "https://raw.githubusercontent.com/rachelos/we-mp-rss/126993c81a00466e9a6bbab041eef34ab27abe9c/LICENSE",
+          "sha256": "8aaac477797f18afb9b8da33a093a770485d380acc6e942761343dc8993ee87a",
+          "bytes": 1106,
+          "marker_lines": {
+            "MIT License": [
+              1
+            ]
+          }
+        },
+        {
+          "path": "core/wx/model/free_publish.py",
+          "source": "https://raw.githubusercontent.com/rachelos/we-mp-rss/126993c81a00466e9a6bbab041eef34ab27abe9c/core/wx/model/free_publish.py",
+          "sha256": "d2bd661c9f6a6b60f2004b600bf846c993feffb968e5dd8a08524464a3d42c02",
+          "bytes": 13903,
+          "marker_lines": {
+            "begin": [
+              42,
+              58,
+              75,
+              91,
+              146,
+              207,
+              208,
+              220,
+              224
+            ],
+            "count": [
+              43,
+              59,
+              76,
+              92,
+              135,
+              207
+            ]
+          }
+        },
+        {
+          "path": "docs/weread-mp.md",
+          "source": "https://raw.githubusercontent.com/rachelos/we-mp-rss/126993c81a00466e9a6bbab041eef34ab27abe9c/docs/weread-mp.md",
+          "sha256": "97ec988beaaa917a90b8268738844b67d8c757612bad71948aabaa2762ac61a9",
+          "bytes": 2517,
+          "marker_lines": {
+            "最新": [
+              27,
+              29,
+              41
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "repository": "xpzouying/xiaohongshu-mcp",
+      "commit": "a5c8f7799980ba1fdd501999843eb2d17e4c9a9f",
+      "license_label": "Apache-2.0",
+      "evidence_level": "static_source_only",
+      "adopted": false,
+      "files": [
+        {
+          "path": "LICENSE",
+          "source": "https://raw.githubusercontent.com/xpzouying/xiaohongshu-mcp/a5c8f7799980ba1fdd501999843eb2d17e4c9a9f/LICENSE",
+          "sha256": "9d8b162d4b4822b793666e2a8cb6c94df7ecdb8204f23a20e6042f93e691cb0d",
+          "bytes": 11339,
+          "marker_lines": {
+            "Apache License": [
+              1,
+              178,
+              180,
+              191
+            ]
+          }
+        },
+        {
+          "path": "xiaohongshu/user_profile.go",
+          "source": "https://raw.githubusercontent.com/xpzouying/xiaohongshu-mcp/a5c8f7799980ba1fdd501999843eb2d17e4c9a9f/xiaohongshu/user_profile.go",
+          "sha256": "de4579a108c84f5c2af7e8a22ea6afebad1fc9b56737454c85a4c263988eed83",
+          "bytes": 6032,
+          "marker_lines": {
+            "__INITIAL_STATE__": [
+              65,
+              68,
+              69,
+              70,
+              71,
+              81,
+              84,
+              86,
+              96,
+              159
+            ],
+            "notes": [
+              26,
+              85,
+              87,
+              89,
+              90,
+              92,
+              95,
+              96,
+              108,
+              109,
+              113,
+              114,
+              122,
+              123,
+              133,
+              134
+            ]
+          }
+        },
+        {
+          "path": "xiaohongshu/types.go",
+          "source": "https://raw.githubusercontent.com/xpzouying/xiaohongshu-mcp/a5c8f7799980ba1fdd501999843eb2d17e4c9a9f/xiaohongshu/types.go",
+          "sha256": "d18a9af9f724278806a31f4fbd69fd621c594f2406f72b4f96546b0c258ab2c4",
+          "bytes": 9675,
+          "marker_lines": {
+            "Video": [
+              58,
+              98,
+              99,
+              100,
+              103,
+              104,
+              128,
+              131,
+              132,
+              133,
+              134,
+              135,
+              137,
+              143,
+              144,
+              158,
+              159,
+              164,
+              169,
+              170,
+              175,
+              176,
+              177,
+              178,
+              181,
+              184,
+              185,
+              195,
+              197,
+              213,
+              214,
+              215,
+              232,
+              233
+            ],
+            "UserID": [
+              63
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "repository": "JoeanAmier/XHS-Downloader",
+      "commit": "3261312721f0b37c705ba6515885bc7f34349f2f",
+      "license_label": "GPL-3.0 (README additional statements need review)",
+      "evidence_level": "static_source_only",
+      "adopted": false,
+      "files": [
+        {
+          "path": "LICENSE",
+          "source": "https://raw.githubusercontent.com/JoeanAmier/XHS-Downloader/3261312721f0b37c705ba6515885bc7f34349f2f/LICENSE",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+          "bytes": 35149,
+          "marker_lines": {
+            "GNU GENERAL PUBLIC LICENSE": [
+              1
+            ]
+          }
+        },
+        {
+          "path": "source/application/user_posted.py",
+          "source": "https://raw.githubusercontent.com/JoeanAmier/XHS-Downloader/3261312721f0b37c705ba6515885bc7f34349f2f/source/application/user_posted.py",
+          "sha256": "2511ca81db177f7fe1e6f97ebf7ae4ec539283ed0c23afa0af36319e548e9085",
+          "bytes": 1548,
+          "marker_lines": {
+            "def run": [
+              37
+            ],
+            "...": [
+              40
+            ]
+          }
+        },
+        {
+          "path": "README.md",
+          "source": "https://raw.githubusercontent.com/JoeanAmier/XHS-Downloader/3261312721f0b37c705ba6515885bc7f34349f2f/README.md",
+          "sha256": "b136600ccc37e9053d87913151f02c1445a201dbf08f79ba6ac08fd41fe1b645",
+          "bytes": 42580,
+          "marker_lines": {
+            "商业": [
+              723,
+              733,
+              735
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

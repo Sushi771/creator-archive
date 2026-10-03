@@ -1,0 +1,54 @@
+{
+  "date": "2026-09-28",
+  "scope": "xiaohongshu confirmed author A; independent author_archive parent 55, run 24",
+  "evidence_level": "live platform list and content with local SQLite/file hash verification",
+  "prior_read_only_evidence": {
+    "runs": [1, 6],
+    "pages_per_run": 39,
+    "unique_ids_per_run": 1159,
+    "explicit_terminal_per_run": true,
+    "used_as_new_run_terminal": false
+  },
+  "starting_state": {
+    "local_and_remote_head": "a1f8ed9a342455ad436719b0e8d020e8a1b33403",
+    "active_jobs": 0,
+    "platform_cooldown": false,
+    "sqlite_backup_integrity": "ok",
+    "old_files_fingerprinted": 1482
+  },
+  "new_parent": {
+    "job_id": 55,
+    "run_id": 24,
+    "pages_committed": 5,
+    "observed_occurrences": 150,
+    "unique_observed_ids": 150,
+    "cursor_chain_contiguous": true,
+    "checkpoint_matches_last_next_cursor": true,
+    "list_terminal": false,
+    "coverage": "partial",
+    "state_after_graceful_stop": "interrupted",
+    "targeted": 150,
+    "content_succeeded": 128,
+    "content_reference_missing": 8,
+    "content_queued": 14,
+    "cross_process_resume": "same parent 55/run 24; retained first two pages and 42 successful items, then advanced to page five"
+  },
+  "integrity": {
+    "sqlite_integrity": "ok",
+    "old_files_changed_or_missing": 0,
+    "new_archive_and_download_files": 807,
+    "old_asset_rows_changed": 0,
+    "old_jobs_runs_pages_subscriptions_and_pipeline_rows_changed": 0,
+    "successful_items_missing_text_or_media_state": 0,
+    "successful_registered_assets_hashed": 286,
+    "invalid_success_assets": 0,
+    "active_jobs_after_stop": 0
+  },
+  "limits": [
+    "New run has no trusted terminal page; old 39-page terminal is not imported.",
+    "Reference-missing items need valid same-note official links or a later observed link; their text/media are incomplete.",
+    "No fresh HTTP/browser decode or all-author batch readback was performed in this unit.",
+    "Wechat G1/G2/G3 and dual-platform P0 remain unverified."
+  ],
+  "private_evidence": "workspace sibling private-validation/xhs-a-full-2026-09-28; excluded from Git"
+}

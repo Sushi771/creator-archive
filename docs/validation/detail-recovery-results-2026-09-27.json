@@ -1,0 +1,749 @@
+{
+  "schema_version": 1,
+  "evidence_level": "live_application_and_browser",
+  "g1_passed": false,
+  "old_items": 1391,
+  "history_pages": 90,
+  "bodies": 15,
+  "assets": 35,
+  "old_files": 26,
+  "old_files_hash_unchanged": true,
+  "checkpoint_files": 39,
+  "checkpoint_files_hash_mtime_unchanged": true,
+  "succeeded_item_snapshot_count_unchanged": true,
+  "batch_19": {
+    "state": "partial",
+    "reason": "content_partial",
+    "targets": 7,
+    "succeeded": 6,
+    "reference_missing": 1
+  },
+  "batch_20": {
+    "state": "succeeded",
+    "reason": "content_complete",
+    "targets": 8,
+    "succeeded_before_stop": 1,
+    "succeeded_after_restart": 8
+  },
+  "login_expiry_renewal_live_tested": false,
+  "exported_items": 1391,
+  "exported_body_rows": 15,
+  "old_files_unchanged_after_export": true,
+  "local_new_image_decode": {
+    "complete": true,
+    "width": 1080,
+    "height": 1440,
+    "source": "loopback_archive"
+  },
+  "renewal_preparation": {
+    "job": 23,
+    "state": "interrupted",
+    "success": 1,
+    "pending": 2,
+    "existing_files": 85,
+    "existing_hash_mtime_unchanged": true,
+    "awaiting_user_logout": false,
+    "renewal_verified": true
+  },
+  "controlled_login_renewal": {
+    "job": 23,
+    "state": "succeeded",
+    "reason": "content_complete",
+    "targets": 3,
+    "succeeded": 3,
+    "pending": 0,
+    "failed": 0,
+    "items": 1391,
+    "pages": 90,
+    "existing_files": 85,
+    "existing_hash_mtime_unchanged": true,
+    "successful_snapshot_counts_unchanged": true,
+    "explicit_logout_then_login_live_verified": true,
+    "natural_long_term_expiry_tested": false,
+    "first_attempt": {
+      "state": "blocked",
+      "reason": "transport_unavailable",
+      "underlying_cause": "unknown"
+    }
+  },
+  "user_selected_alternate_sample": {
+    "new_sample_task": 24,
+    "state": "succeeded",
+    "succeeded": 1,
+    "original_task": 19,
+    "original_state": "partial",
+    "original_succeeded": 6,
+    "original_targets": 7,
+    "original_scope_unchanged": true,
+    "original_success_snapshot_counts_unchanged": true,
+    "old_files": 85,
+    "old_file_hash_mtime_unchanged": true,
+    "items": 1392,
+    "history_pages": 90,
+    "body_characters": 377,
+    "sample_assets": 3,
+    "all_sample_asset_hashes_valid": true,
+    "original_supplemental_recovery_verified": false,
+    "foreign_scope_http": 422,
+    "decoded_image_sizes": [
+      [
+        1080,
+        1440
+      ],
+      [
+        1080,
+        1440
+      ],
+      [
+        1080,
+        1440
+      ]
+    ],
+    "export_job": 25,
+    "export_succeeded": true,
+    "bodies": 16,
+    "assets": 38,
+    "export_body_rows": 1,
+    "old_files_unchanged_after_export": true
+  },
+  "verified_reference_reuse": {
+    "evidence_level": "live_production_service_transport",
+    "failure_injection": false,
+    "initial_reference_pages": 2,
+    "existing_sample_verified": true,
+    "job": 27,
+    "state": "succeeded",
+    "target_count": 2,
+    "item_count": 2,
+    "failed_count": 0,
+    "pending_count": 0,
+    "batch_reference_pages": 0,
+    "same_session_verified_link_count": 2,
+    "real_partial_failure_observed": false,
+    "real_partial_failure_recovery_verified": false,
+    "verified_links_cleared_on_close": true,
+    "original_task19_unchanged": true,
+    "task19_success_snapshots_unchanged": true,
+    "counts": {
+      "items": 1393,
+      "pages": 90,
+      "assets": 40,
+      "details": 17
+    },
+    "old_file_count": 93,
+    "old_file_hash_mtime_unchanged": true,
+    "new_sample_asset_count": 2,
+    "new_sample_assets_valid": true,
+    "new_author_still_paused": true,
+    "access_parameters_not_in_sql_dump": true,
+    "new_sample_image_sizes": [
+      [
+        1080,
+        1440
+      ],
+      [
+        1080,
+        1440
+      ]
+    ],
+    "export_job": 28,
+    "export_state": "succeeded",
+    "running_service_version": "0.4.5",
+    "old_files_unchanged_after_export": true,
+    "exported_corpus_rows": 2,
+    "local_archive_index_readable": true,
+    "parameters_absent_from_text_exports": true,
+    "user_waived_original_task19_link_lookup": true,
+    "real_probe_initial_issue": "profile_note_link_rejected_by_classifier; fixed and repeated successfully"
+  },
+  "short_link_v047": {
+    "evidence_level": "live_official_redirect_and_application_ui",
+    "app_version": "0.4.7",
+    "real_short_host": "xhslink.cn",
+    "http_status": 302,
+    "matches_full_link_item_and_author": true,
+    "job_id": 29,
+    "state": "succeeded",
+    "targets": 1,
+    "succeeded": 1,
+    "failed": 0,
+    "history_pages": 90,
+    "items": 1393,
+    "bodies": 17,
+    "assets": 40,
+    "old_files": 100,
+    "old_files_hash_mtime_unchanged": true,
+    "all_old_jobs_and_scopes_unchanged": true,
+    "history_tables_unchanged": true,
+    "subscriptions_unchanged": true,
+    "items_assets_unchanged": true,
+    "sql_access_parameters_absent": true,
+    "xhslink_com_live_verified": false,
+    "real_partial_failure_recovery_verified": false,
+    "g1_passed": false
+  },
+  "controlled_local_media_failure": {
+    "evidence_level": "real_platform_with_controlled_local_filesystem_fault",
+    "platform_mocked": false,
+    "natural_platform_failure": false,
+    "execution_version": "0.4.8",
+    "error_message_fix_version": "0.4.9",
+    "job": 30,
+    "before": {
+      "succeeded": 1,
+      "failed": 1
+    },
+    "after": {
+      "succeeded": 2,
+      "failed": 0
+    },
+    "same_job_after_new_process": true,
+    "initial_reference_pages": 2,
+    "resume_reference_pages": 1,
+    "resume_detail_visits": 1,
+    "resume_media_downloads": 3,
+    "deep_history_long_lived_reference_verified": false,
+    "natural_login_expiry_verified": false,
+    "protection": {
+      "archive_job": 31,
+      "archive_state": "succeeded",
+      "existing_files": 100,
+      "old_files_hash_mtime_unchanged": true,
+      "integrity": "ok",
+      "subscriptions_unchanged": true,
+      "subscription_confirmations_unchanged": true,
+      "pages_unchanged": true,
+      "untargeted_items_unchanged": true,
+      "old_jobs_unchanged": true,
+      "old_job_items_unchanged": true,
+      "old_assets_preserved": true,
+      "counts": {
+        "items": 1393,
+        "pages": 90,
+        "assets": 46,
+        "jobs": 30,
+        "bodies": 19
+      },
+      "success_snapshot_count_unchanged": true,
+      "success_assets_not_rewritten_during_resume": true,
+      "exported_body_rows": 16,
+      "runs_old_rows_unchanged": true,
+      "runs_new_rows": 1,
+      "batches_old_rows_unchanged": true,
+      "batches_new_rows": 1,
+      "access_parameters_absent_from_database": true
+    },
+    "local_read": {
+      "version": "0.4.9",
+      "http_index_read": true,
+      "corpus_rows": 16,
+      "target_html_pages_read": 2,
+      "local_media_reads": 6,
+      "platform_browser_closed": true,
+      "pending_confirmation": 1,
+      "job30_state": "succeeded",
+      "job31_state": "succeeded"
+    },
+    "media_decode": {
+      "decoded": 6,
+      "sizes": [
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1440
+        ],
+        [
+          1080,
+          1440
+        ],
+        [
+          1080,
+          1440
+        ]
+      ]
+    }
+  },
+  "latest_evidence_section": "controlled_local_media_failure",
+  "prior_sections_are_historical": true,
+  "page_archive_v0410": {
+    "evidence_level": "live_platform_controlled_process_boundary_and_local_http",
+    "parent_job": 32,
+    "child_jobs": [
+      33,
+      34
+    ],
+    "pages": 2,
+    "raw_page_sizes": [
+      32,
+      30
+    ],
+    "unique_targets": 61,
+    "content_success": 61,
+    "coverage": "partial",
+    "g1_passed": false,
+    "first_phase_success": 30,
+    "after_first_resume_success": 59,
+    "after_ssr_fix_success": 61,
+    "final_resume_requests": {
+      "list_page": 1,
+      "detail": 2,
+      "download": 3
+    },
+    "prior_59_success_not_revisited": true,
+    "separate_pages_same_context": true,
+    "listing_position_preserved": true,
+    "ssr_missing_reference_root_cause": "validated_ssr_card_token_present_but_dom_anchor_absent_and_projection_omitted_token",
+    "tokens_persisted": false,
+    "controlled_page_boundary_stop": true,
+    "natural_login_expiry_tested": false,
+    "old_history_pages_preserved": 90,
+    "old_archive_files_hash_mtime_preserved": 113,
+    "offline": {
+      "job": 32,
+      "state": "succeeded",
+      "list_pages": 2,
+      "targets": 61,
+      "content_success": 61,
+      "history_coverage": "partial",
+      "corpus_rows": 63,
+      "target_html_read": 61,
+      "assets_read_and_hashed": 130,
+      "images_completely_decoded": 130,
+      "image_dimensions": [
+        [
+          728,
+          968
+        ],
+        [
+          810,
+          1080
+        ],
+        [
+          1078,
+          1387
+        ],
+        [
+          1080,
+          1438
+        ],
+        [
+          1080,
+          1440
+        ],
+        [
+          1080,
+          1441
+        ],
+        [
+          1080,
+          1470
+        ],
+        [
+          1080,
+          1731
+        ],
+        [
+          1080,
+          1735
+        ],
+        [
+          1080,
+          1920
+        ]
+      ],
+      "mp4_headers_checked": 0,
+      "browser_closed_during_offline_read": true,
+      "first_phase_files_preserved": true,
+      "old_bodies_preserved": true,
+      "old_item_id_set_preserved": true,
+      "pending_confirmation_count": 1
+    },
+    "data_protection": {
+      "integrity": "ok",
+      "old_files_unchanged": true,
+      "old_file_count": 113,
+      "current_files": 310,
+      "old_rows_preserved": {
+        "assets": true,
+        "batches": true,
+        "item_metrics": true,
+        "job_items": true,
+        "jobs": true,
+        "metric_snapshots": true,
+        "pages": true,
+        "platform_cooldowns": true,
+        "runs": true,
+        "subscription_confirmations": true,
+        "subscription_intents": true,
+        "subscriptions": true,
+        "validation_imports": true
+      },
+      "counts": {
+        "assets": 143,
+        "batches": 18,
+        "item_metrics": 204,
+        "items": 1393,
+        "job_items": 86,
+        "jobs": 33,
+        "metric_snapshots": 87,
+        "page_pipelines": 1,
+        "pages": 92,
+        "pipeline_pages": 2,
+        "platform_cooldowns": 0,
+        "runs": 18,
+        "subscription_confirmations": 0,
+        "subscription_intents": 0,
+        "subscriptions": 3,
+        "validation_imports": 2
+      }
+    },
+    "offline_regression_tests": 155,
+    "real_ui_result_visible": true,
+    "real_job_launched_through_ui": false
+  },
+  "author_archive_2026_09_27": {
+    "evidence_level": "real_platform_service_browser_and_local_archive",
+    "platform_mock": false,
+    "g1_passed": false,
+    "mode": "author_archive",
+    "job": 35,
+    "children": [
+      36,
+      37,
+      38,
+      39,
+      40,
+      41
+    ],
+    "list_pages": 6,
+    "terminal_evidence": "xhs user_posted: explicit has_more=false",
+    "coverage": "complete_for_accessible_scope",
+    "state": "partial",
+    "targets": 152,
+    "succeeded": 144,
+    "reference_missing": 8,
+    "first_process": {
+      "list_pages": 3,
+      "targets": 91,
+      "succeeded": 76,
+      "failed": 6,
+      "pending": 9,
+      "stop_reason": "unavailable",
+      "controlled_page_stop_passed": false,
+      "detail_calls": 19,
+      "downloads": 36
+    },
+    "resumed_new_process": {
+      "list_calls": 4,
+      "detail_calls": 76,
+      "downloads": 156,
+      "prior_success_not_revisited": true,
+      "prior_success_snapshot_counts_unchanged": true
+    },
+    "reference_replay_diagnostic": {
+      "missing": 8,
+      "in_ssr": 0,
+      "in_ssr_with_token": 0,
+      "in_target_api_page": 0,
+      "in_replayed_api_pages": 0,
+      "in_cached_references": 0,
+      "missing_after_prepare": 8,
+      "prior_page_count": 30,
+      "current_page_count": 30,
+      "prior_only": 8,
+      "current_only": 8,
+      "prior_only_equals_missing": true,
+      "observed_ssr_states": 1,
+      "no_details_requested": true,
+      "database_unchanged": true
+    },
+    "offline": {
+      "job": 35,
+      "state": "partial",
+      "list_pages": 6,
+      "targets": 152,
+      "content_success": 144,
+      "history_coverage": "complete_for_accessible_scope",
+      "corpus_rows": 144,
+      "target_body_rows": 144,
+      "target_body_missing": 8,
+      "target_html_read": 144,
+      "assets_read_and_hashed": 327,
+      "images_completely_decoded": 327,
+      "mp4_headers_checked": 0,
+      "browser_closed_during_offline_read": true,
+      "first_phase_files_preserved": true,
+      "old_bodies_preserved": true,
+      "old_item_id_set_preserved": true,
+      "pending_confirmation_count": 1
+    },
+    "protection": {
+      "integrity": "ok",
+      "old_files_unchanged": true,
+      "old_file_count": 310,
+      "current_files": 671,
+      "old_rows_preserved": {
+        "assets": true,
+        "batches": true,
+        "item_metrics": false,
+        "job_items": true,
+        "jobs": true,
+        "metric_snapshots": true,
+        "page_pipelines": true,
+        "pages": true,
+        "pipeline_pages": true,
+        "platform_cooldowns": true,
+        "runs": true,
+        "subscription_confirmations": true,
+        "subscription_intents": true,
+        "subscriptions": true,
+        "validation_imports": true
+      },
+      "counts": {
+        "assets": 335,
+        "batches": 19,
+        "item_metrics": 468,
+        "items": 1401,
+        "job_items": 240,
+        "jobs": 40,
+        "metric_snapshots": 198,
+        "page_pipelines": 2,
+        "pages": 98,
+        "pipeline_pages": 8,
+        "platform_cooldowns": 0,
+        "runs": 19,
+        "subscription_confirmations": 0,
+        "subscription_intents": 0,
+        "subscriptions": 3,
+        "validation_imports": 2
+      }
+    },
+    "existing_metric_change": {
+      "changed_metric_rows": 3,
+      "changed_items": 1,
+      "old_changed_detail_states": [
+        [
+          "missing",
+          "unknown"
+        ]
+      ]
+    },
+    "ui": {
+      "version": "0.4.11",
+      "job_state": "partial",
+      "pages": 6,
+      "success": 144,
+      "target": 152,
+      "failed": 8,
+      "author_latest_state": "partial",
+      "author_reason": "author_archive_partial",
+      "task32_success": 61,
+      "active": 0,
+      "stats": {
+        "subscriptions": 3,
+        "items": 1401,
+        "details": 147,
+        "running": 0
+      },
+      "ui_extra_resume_attempts": 2,
+      "extra_resume_only_failed_item_snapshots": true,
+      "extra_resume_snapshot_count": 16
+    },
+    "tests": {
+      "python_full_passed": 163,
+      "node_frontend_contract": true,
+      "node_syntax": true,
+      "pip_check": true
+    },
+    "pending": [
+      "8 fixed-scope IDs absent from current replay; no replacement IDs added to old child",
+      "Cross-process nonempty cursor SSR reference caching gap only reproduced with synthetic source; not this live failure",
+      "Long-term reference/session expiry",
+      "All-subscription orchestration",
+      "WeChat and dual-platform G1"
+    ]
+  },
+  "demo_ten_2026_09_27": {
+    "latest_user_scope": "first_10_unique_per_confirmed_author_in_observed_homepage_order",
+    "real_run": {
+      "real_platform": true,
+      "platform_mock": false,
+      "max_unique_detail_targets_per_author": 10,
+      "jobs": [
+        {
+          "id": 43,
+          "mode": "demo_archive",
+          "state": "succeeded",
+          "reason": "demo_archive_complete",
+          "run_id": 21,
+          "pages": 1,
+          "target_count": 10,
+          "item_count": 10,
+          "failed_count": 0,
+          "pending_count": 0,
+          "coverage": "partial",
+          "item_limit": 10,
+          "list_finished": false,
+          "children": [
+            {
+              "page_number": 1,
+              "id": 45,
+              "state": "succeeded",
+              "reason": "content_complete"
+            }
+          ]
+        },
+        {
+          "id": 42,
+          "mode": "demo_archive",
+          "state": "succeeded",
+          "reason": "demo_archive_complete",
+          "run_id": 20,
+          "pages": 1,
+          "target_count": 10,
+          "item_count": 10,
+          "failed_count": 0,
+          "pending_count": 0,
+          "coverage": "partial",
+          "item_limit": 10,
+          "list_finished": false,
+          "children": [
+            {
+              "page_number": 1,
+              "id": 44,
+              "state": "succeeded",
+              "reason": "content_complete"
+            }
+          ]
+        }
+      ],
+      "unique_detail_requests_per_author": [
+        10
+      ],
+      "details_total": 10,
+      "downloads": 14,
+      "list_fetches": 2,
+      "confirmed_authors_tested": 2,
+      "pending_confirmation_count": 1,
+      "sql_has_access_parameters": false,
+      "old_task_32_35": [
+        [
+          32,
+          "page_archive",
+          "succeeded"
+        ],
+        [
+          35,
+          "author_archive",
+          "partial"
+        ]
+      ]
+    },
+    "offline": {
+      "jobs": [
+        {
+          "job": 43,
+          "targets": 10,
+          "html_read": 10,
+          "corpus_target_rows": 10,
+          "assets_hashed": 24,
+          "images_decoded": 24,
+          "mp4_headers_checked": 0,
+          "metrics_rows": 30,
+          "metrics_with_value": 8,
+          "metric_qualities": {
+            "exact": 8,
+            "unknown": 22
+          }
+        },
+        {
+          "job": 42,
+          "targets": 10,
+          "html_read": 10,
+          "corpus_target_rows": 10,
+          "assets_hashed": 14,
+          "images_decoded": 14,
+          "mp4_headers_checked": 0,
+          "metrics_rows": 30,
+          "metrics_with_value": 17,
+          "metric_qualities": {
+            "exact": 17,
+            "unknown": 13
+          }
+        }
+      ],
+      "browser_closed": true,
+      "old_bodies_preserved": true,
+      "old_id_set_preserved": true,
+      "complete_bodies": 157,
+      "active_jobs": 0
+    },
+    "protection": {
+      "integrity": "ok",
+      "old_files_unchanged": true,
+      "old_file_count": 671,
+      "current_files": 710,
+      "old_rows_preserved": {
+        "assets": true,
+        "batches": true,
+        "item_metrics": true,
+        "job_items": true,
+        "jobs": true,
+        "metric_snapshots": true,
+        "page_pipelines": true,
+        "pages": true,
+        "pipeline_pages": true,
+        "platform_cooldowns": true,
+        "runs": true,
+        "subscription_confirmations": true,
+        "subscription_intents": true,
+        "subscriptions": true,
+        "validation_imports": true
+      },
+      "counts": {
+        "assets": 349,
+        "batches": 21,
+        "item_metrics": 498,
+        "items": 1401,
+        "job_items": 260,
+        "jobs": 44,
+        "metric_snapshots": 208,
+        "page_pipelines": 4,
+        "pages": 100,
+        "pipeline_pages": 10,
+        "platform_cooldowns": 0,
+        "runs": 21,
+        "subscription_confirmations": 0,
+        "subscription_intents": 0,
+        "subscriptions": 3,
+        "validation_imports": 2
+      }
+    },
+    "python_tests": 167,
+    "new_demo_tests": 4,
+    "test_platform": "simulated; real_run separately uses real platform and CDN",
+    "ui_verified": {
+      "default_mode": "demo_archive",
+      "full_experiments_collapsed": true,
+      "job_42_43": "10/10 each",
+      "collection_active": false
+    },
+    "limits": [
+      "35 unknown interaction fields of 60; retained as unknown",
+      "one pending author excluded",
+      "full-history continuation deferred",
+      "dual-platform G1 not passed"
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "date": "2026-09-28",
+  "scope": "xiaohongshu confirmed author A; resume only author_archive parent 55, run 24; separate offline export job 66",
+  "evidence_level": "live platform list and content plus SQLite, file hash, and loopback HTTP readback",
+  "starting_state": {
+    "local_and_remote_head": "def12b3c1820b17724864ab93fb5ae1dbb6b603e",
+    "parent_pages": 5,
+    "parent_unique_targets": 150,
+    "parent_success": 128,
+    "parent_reference_missing": 8,
+    "parent_queued": 14,
+    "active_jobs": 0,
+    "platform_cooldown": false,
+    "private_backup_integrity": "ok"
+  },
+  "resumed_parent": {
+    "job_id": 55,
+    "run_id": 24,
+    "pages_committed": 10,
+    "observed_occurrences": 300,
+    "unique_observed_ids": 300,
+    "page_numbers_and_cursor_chain_contiguous": true,
+    "checkpoint_matches_last_next_cursor": true,
+    "list_terminal": false,
+    "coverage": "partial",
+    "state_after_graceful_stop": "interrupted",
+    "content_succeeded": 268,
+    "content_reference_missing": 8,
+    "content_queued": 24
+  },
+  "offline_export": {
+    "job_id": 66,
+    "scope": "all existing local items for author A, not run 24 targets",
+    "library_items": 1247,
+    "library_details": 269,
+    "run24_success_items_found_in_manifest_and_corpus": 268,
+    "run24_success_text_files_missing": 0,
+    "run24_success_assets_hashed": 590,
+    "run24_success_assets_invalid": 0,
+    "loopback_http_files_read_byte_identically": 1129,
+    "loopback_http_bytes_read": 123156388,
+    "readback_errors": 0,
+    "manifest_coverage_source": "historical complete run; does not establish terminal evidence for run 24"
+  },
+  "protection": {
+    "sqlite_integrity": "ok",
+    "old_files_fingerprinted": 1482,
+    "old_files_changed_or_missing": 0,
+    "old_jobs_runs_pages_subscriptions_pipelines_batches_assets_and_job_items_changed_or_missing": 0,
+    "active_jobs_after_stop": 0
+  },
+  "limits": [
+    "Run 24 has no trusted terminal page; historical 39-page terminal was not imported.",
+    "Eight observed works still lack valid access references and 24 page-ten works remain queued.",
+    "The export is a local full-library snapshot, not evidence that run 24 or all subscriptions finished.",
+    "HTTP bytes and asset hashes were checked; browser image decode and real cross-author G3 were not performed.",
+    "Wechat G1/G2/G3 and dual-platform P0 remain unverified."
+  ],
+  "private_baseline": "workspace sibling private-validation/xhs-a-full-2026-09-28; excluded from Git"
+}
