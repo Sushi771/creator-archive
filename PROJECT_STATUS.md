@@ -6,7 +6,10 @@
 - 主导航精简为阅读、下载与任务、设置；订阅列表增加全部平台；当前作者更新/下载与全部订阅操作分开。作品列表只保留标题/时间/平台/类型/归档状态，正文与本机媒体优先，ID/指标/引用/补存及任务技术进度收进高级详情。账号、目录、外观、刷新频率归设置；管理页筛选变更清空勾选，保留标签、暂停、取消和来源能力。
 - 保留原默认前三篇及已有最近一页最多30篇选项，没有扩大默认采集范围。后端接口、数据库、协议、安全控制和定时关闭状态未改。成功、部分、正文/图片/视频缺口与HTTP/业务错误分别呈现，没有将界面简化当作来源修复。
 - 验证：JS语法/前端合同通过；受socket隔离的后端314项（307通过、7跳过）；临时浏览器读取真实静态页面但全请求拦截为fixture，11类交互及桌面/平板/手机/深色检查通过，JS错误0、真实平台请求0。复验脚本与虚构截图/结果见 [技术文档](docs/03_双平台内容归档_技术设计与验证.md)。浏览器、模拟页面已关闭，没有遗留模拟服务。
-- 本单元代码、测试、产品/技术/运行文档、CHANGELOG和本状态同批提交，按已有开发分支推送并核对 [草稿PR #1](https://github.com/Sushi771/creator-archive/pull/1) 对应head及CI。不合并main，不发布生产；CI以对应commit的检查结果为准，不用旧CI冒充。
+- GitHub实际结果：代码、测试、相关文档及模拟证据同批提交 `829d18fd0b623fcda5017d92f5ef4564cab2ca5c`，已非强推至 `codex/first-release`；GitHub [草稿PR #1](https://github.com/Sushi771/creator-archive/pull/1) head核对一致，base为main，保持未合并。该实现的 [Windows CI run 37119110625](https://github.com/Sushi771/creator-archive/actions/runs/37119110625) 完成，offline job及后端回归、前端合同、无凭据包构建步骤全部success。
+- PR标题/说明更新被GitHub连接拒绝：HTTP403 `Resource not accessible by integration`。代码和文档已同步，但PR原rc6标题/正文尚未更新；拟更新文本在本机 `.cache/frontend-pr-description.md`、标题在 `.cache/frontend-pr-title.txt`。此项需要现有连接获得PR写权限或由仓库本人粘贴，未读取凭据或另换认证。
+- 收尾仅补本状态和CHANGELOG中的同步/CI/阻塞事实，使用 `[skip ci]` 避免重复全库测试；不把文档提交称为新的代码验收。上述CI严格对应实现SHA，后续只读核对确认前端、测试和依赖树没有变化。
+- 本地隔离构建核验：`.cache/frontend-release-829d18f/CreatorArchive-0.6.0rc10-windows.zip`，release-info commit为上述实现SHA，ZIP完整性通过，SHA256为 `18262e5c2d7289ec91f8fb57e63fd66b26da6e8156bc930c6b0d3bcfc9c4252b`。未覆盖旧dist包，未安装、发布或重启。
 - 本轮未读取真实凭据、登录、采集、订阅/刷新测试、升级或重启真实服务。最后记录安装仍为 `0.6.0rc10` / `4af5bb030e15079d3b5546eec3a12e6d3fa6c3c3`，本轮未核实当前运行SHA；历史地址 `http://127.0.0.1:8765/`、桌面Start/Stop/Files和真实workspace/archive位置保留，下方有路径。仓库新界面不会自动进入旧安装。
 - 未解：真实任务#75详情302到官方登录路径，新增正文/媒体0；#76不可用，471/-100具体根因未证实，旧#72/#74不恢复，公众号验收暂缓。真实账号、正文、图片、视频和双平台P0均不能据本轮模拟判通过。用户可先审阅源码与模拟界面；实际安装升级按原备份流程另行执行，不要求重复扫码或失败采集。
 
